@@ -1,0 +1,22 @@
+local wezterm = require 'wezterm';
+local act = wezterm.action;
+local config = wezterm.config_builder();
+config.color_scheme = 'Sweet Eliverlara (Gogh)';
+config.use_fancy_tab_bar = false;
+config.hide_tab_bar_if_only_one_tab = true;
+config.tab_bar_at_bottom = true;
+config.font = wezterm.font('JetBrains Mono');
+config.font_size = 10;
+config.enable_wayland = true;
+config.scrollback_lines = 65536;
+config.keys = {
+{ key = 'h', mods = 'SHIFT|CTRL', action = act.ActivatePaneDirection 'Left' },
+{ key = 'h', mods = 'SHIFT|ALT|CTRL', action = act.AdjustPaneSize{ 'Left', 1 } },
+{ key = 'l', mods = 'SHIFT|CTRL', action = act.ActivatePaneDirection 'Right' },
+{ key = 'l', mods = 'SHIFT|ALT|CTRL', action = act.AdjustPaneSize{ 'Right', 1 } },
+{ key = 'k', mods = 'SHIFT|CTRL', action = act.ActivatePaneDirection 'Up' },
+{ key = 'k', mods = 'SHIFT|ALT|CTRL', action = act.AdjustPaneSize{ 'Up', 1 } },
+{ key = 'j', mods = 'SHIFT|CTRL', action = act.ActivatePaneDirection 'Down' },
+{ key = 'j', mods = 'SHIFT|ALT|CTRL', action = act.AdjustPaneSize{ 'Down', 1 } },
+};
+return config;
