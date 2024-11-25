@@ -18,7 +18,6 @@
 {
   imports =
     [ # Include the results of the hardwae scan.
-      ../secrets.nix
       inputs.hyprland.nixosModules.default
       inputs.impermanence.nixosModules.impermanence
       inputs.lanzaboote.nixosModules.lanzaboote
