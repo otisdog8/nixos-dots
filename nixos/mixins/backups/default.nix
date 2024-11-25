@@ -1,6 +1,5 @@
 { lib, pkgs, ... }:
 {
-  imports = [../../../secrets.nix];
   environment.systemPackages = with pkgs; [ borgbackup ];
   services.btrbk = {
     instances = {
