@@ -50,7 +50,9 @@ in
     enableCompletion = true;
     #autosuggestion.enable = true;
     syntaxHighlighting.enable = true;
-
+    extraConfig = ''
+      SOUND_PREFIX=${inputs.self}/sounds/
+'' + builtins.readFile ../../../config/zsh;
   };
   programs.starship.enable = true;
   programs.starship.settings = {

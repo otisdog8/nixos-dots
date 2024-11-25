@@ -1,0 +1,10 @@
+function play_sound_after() {
+    "$@"
+    local sound_files=(
+        c1.wav c1s.wav d1.wav d1s.wav e1.wav f1.wav f1s.wav
+        g1.wav g1s.wav a1.wav a1s.wav b1.wav c2.wav
+    )
+    local index=$(( $(echo -n "$WEZTERM_PANE" | cksum | cut -f1 -d' ') % ${#sound_files[@]} ))
+    local sound_file="${SOUND_PREFIX}${sound_files[$index]}"
+    pw-play "$sound_file"
+}
