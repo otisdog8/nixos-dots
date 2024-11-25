@@ -41,6 +41,12 @@
     ];
   nix.settings.experimental-features = [ "nix-command" "flakes" ];
 
+	nix.gc = {
+		automatic = true;
+		dates = "daily";
+		options = "--delete-older-than 30d";
+	};
+
   boot.kernelPackages = pkgs.linuxPackages_latest;
   # boot.kernelPackages = pkgs.linuxPackages_testing;
   boot.initrd.systemd.enable = true;

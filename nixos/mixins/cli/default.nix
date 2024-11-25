@@ -18,6 +18,11 @@
     git
     playerctl
     libsecret
+    shellcheck
+    bashate
+    bash-language-server
+    shfmt
+    ncdu
   ];
 
  
