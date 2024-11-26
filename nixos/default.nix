@@ -41,6 +41,8 @@
     ];
   nix.settings.experimental-features = [ "nix-command" "flakes" ];
 
+  systemd.coredump.enable = false;
+
 	nix.gc = {
 		automatic = true;
 		dates = "daily";

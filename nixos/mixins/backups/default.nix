@@ -14,6 +14,7 @@
               subvolume = {
                 "persist" = {};
                 "large" = {};
+                "dots" = {};
               };
             };
           };

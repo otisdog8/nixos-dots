@@ -32,6 +32,15 @@ _: {
     };
 
 
+  fileSystems."/dots" =
+    { device = "/dev/disk/by-uuid/fa3ce55b-21ee-4fb3-bbb0-c4208e203223";
+      fsType = "btrfs";
+      options = [ "subvol=cache" "compress=zstd" "noatime" ];
+      neededForBoot = true;
+    };
+
+
+
   fileSystems."/persist" =
     { device = "/dev/disk/by-uuid/fa3ce55b-21ee-4fb3-bbb0-c4208e203223";
       fsType = "btrfs";

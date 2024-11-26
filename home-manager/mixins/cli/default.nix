@@ -50,7 +50,7 @@ in
     enableCompletion = true;
     #autosuggestion.enable = true;
     syntaxHighlighting.enable = true;
-    extraConfig = ''
+    initExtra = ''
       SOUND_PREFIX=${inputs.self}/sounds/
 '' + builtins.readFile ../../../config/zsh;
   };

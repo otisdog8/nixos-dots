@@ -64,7 +64,6 @@
     directories = [
       "/root/.ssh/"
       "/root/.config/borg"
-      "/var/log"
       "/var/lib/tailscale"
       "/var/lib/bluetooth"
       "/var/lib/nixos"
@@ -86,7 +85,6 @@
         "Documents"
         "Videos"
         ".steam"
-        ".local/share/Steam"
         ".zen"
         ".emacs.d"
         ".config/op"
@@ -107,16 +105,28 @@
          ".face.icon"
          ".face"
          ".kwalletrc"
-         ".spacemacs"
       ];
     };
   };
   environment.persistence."/large" = {
     enable = true;
     hideMounts = true;
+    directories = [
+      "/var/log"
+    ];
     users.jrt = {
       directories = [
         "Downloads"
+        ".local/share/Steam"
+      ];
+    };
+  };
+  environment.persistence."/dots" = {
+    enable = true;
+    hideMounts = true;
+    users.jrt = {
+      files = [
+        ".spacemacs"
       ];
     };
   };
