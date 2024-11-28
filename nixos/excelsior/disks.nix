@@ -1,22 +1,22 @@
 _: {
 
-  boot.initrd.luks.devices."luks".device = "/dev/disk/by-uuid/1a259459-627b-4112-88b4-569c4fb24660";
+  boot.initrd.luks.devices."luks".device = "/dev/disk/by-uuid/b9c68457-7c6b-4e56-9142-93944047a4e4";
 
   fileSystems."/" =
-    { device = "/dev/disk/by-uuid/fa3ce55b-21ee-4fb3-bbb0-c4208e203223";
+    { device = "/dev/mapper/luks";
       fsType = "btrfs";
       options = [ "subvol=root" "compress=zstd" "noatime" ];
     };
 
   fileSystems."/mnt/btrfs_root" =
-    { device = "/dev/disk/by-uuid/fa3ce55b-21ee-4fb3-bbb0-c4208e203223";
+    { device = "/dev/mapper/luks";
       fsType = "btrfs";
       neededForBoot = true;
     };
 
 
   fileSystems."/large" =
-    { device = "/dev/disk/by-uuid/fa3ce55b-21ee-4fb3-bbb0-c4208e203223";
+    { device = "/dev/mapper/luks";
       fsType = "btrfs";
       options = [ "subvol=large" "compress=zstd" "noatime" ];
       neededForBoot = true;
@@ -24,7 +24,7 @@ _: {
 
 
   fileSystems."/cache" =
-    { device = "/dev/disk/by-uuid/fa3ce55b-21ee-4fb3-bbb0-c4208e203223";
+    { device = "/dev/mapper/luks";
       fsType = "btrfs";
       options = [ "subvol=cache" "compress=zstd" "noatime" ];
       neededForBoot = true;
@@ -32,30 +32,29 @@ _: {
 
 
   fileSystems."/dots" =
-    { device = "/dev/disk/by-uuid/fa3ce55b-21ee-4fb3-bbb0-c4208e203223";
+    { device = "/dev/mapper/luks";
       fsType = "btrfs";
       options = [ "subvol=cache" "compress=zstd" "noatime" ];
       neededForBoot = true;
     };
 
 
-
   fileSystems."/persist" =
-    { device = "/dev/disk/by-uuid/fa3ce55b-21ee-4fb3-bbb0-c4208e203223";
+    { device = "/dev/mapper/luks";
       fsType = "btrfs";
       options = [ "subvol=persist" "compress=zstd" "noatime" ];
       neededForBoot = true;
     };
 
   fileSystems."/nix" =
-    { device = "/dev/disk/by-uuid/fa3ce55b-21ee-4fb3-bbb0-c4208e203223";
+    { device = "/dev/mapper/luks";
       fsType = "btrfs";
       options = [ "subvol=nix" "compress=zstd" "noatime" ];
       neededForBoot = true;
     };
 
   fileSystems."/boot" =
-    { device = "/dev/disk/by-uuid/7A63-677D";
+    { device = "/dev/disk/by-uuid/CEA4-5E32";
       fsType = "vfat";
       options = [ "fmask=0022" "dmask=0022" ];
     };
