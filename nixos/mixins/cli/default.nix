@@ -23,6 +23,7 @@
     bash-language-server
     shfmt
     ncdu
+    kdePackages.ksshaskpass
   ];
 
  

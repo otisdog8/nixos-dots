@@ -18,7 +18,7 @@ in
       general = {
         ignore_dbus_inhibit = false;
         ignore_systemd_inhibit = false;
-        lock_cmd = "hyprlock";
+        lock_cmd = "sudo -K && hyprlock";
         unlock_cmd = "pkill -USR1 hyprlock && rm /tmp/10midle";
       };
 

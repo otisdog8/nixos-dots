@@ -22,7 +22,7 @@ in
       name = "candy-icons";
     };
     theme = {
-      package = pkgs.gnome.gnome-themes-extra;
+      package = pkgs.gnome-themes-extra;
       name = "Sweet";
     };
   };

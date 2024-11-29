@@ -1,10 +1,10 @@
-
 {
   hostname,
   inputs,
   lib,
   pkgs,
   username,
+  config,
   ...
 }:
 {
@@ -16,12 +16,17 @@
   imports = [
     ./disks.nix
     inputs.nixos-hardware.nixosModules.common-cpu-amd
-    inputs.nixos-hardware.nixosModules.common-gpu-nvidia
     inputs.nixos-hardware.nixosModules.common-pc
     inputs.nixos-hardware.nixosModules.common-pc-ssd
   ];
 
-  hardware.cpu.intel.updateMicrocode = true;
-  boot.kernelModules = [ "kvm-intel" ];
+  services.xserver.videoDrivers = [ "nvidia" ];
 
+  hardware.nvidia.open = true;
+  hardware.nvidia.package = config.boot.kernelPackages.nvidiaPackages.beta;
+  hardware.nvidia.prime = {
+    amdgpuBusId = "PCI:71:0:0";
+    nvidiaBusId = "PCI:1:0:0";
+  };
+  hardware.nvidia.modesetting.enable = true;
 }

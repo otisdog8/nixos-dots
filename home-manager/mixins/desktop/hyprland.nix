@@ -35,7 +35,7 @@ in
       ];
       bind = [
         "SUPER, V, exec, cliphist list | fuzzel --dmenu | cliphist decode | wl-copy"
-        "CTRL_ALT, l, exec, hyprlock"
+        "CTRL_ALT, l, exec, loginctl lock-session"
         "CTRL_ALT, t, exec, wezterm"
         "CTRL, Space, exec, rofi -show drun"
         "CTRL_SHIFT, q, exec, wlogout -b 2 -c 0 -r 0 -m 0 --protocol layer-shell"
@@ -131,7 +131,6 @@ in
         "XDG_SESSION_DESKTOP,Hyprland"
         "QT_AUTO_SCREEN_SCALE_FACTOR,1"
         "XCURSOR_SIZE,20"
-        "SSH_AUTH_SOCK,$home/.1password/agent.sock"
         "QT_WAYLAND_DISABLE_WINDOWDECORATION,1"
       ];
       plugin = {

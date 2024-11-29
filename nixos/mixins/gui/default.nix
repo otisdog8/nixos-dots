@@ -23,6 +23,6 @@
 
   hardware.flipperzero.enable = true;
 
-  chaotic.mesa-git.enable = true;
+  # chaotic.mesa-git.enable = true;
   services.udisks2.enable = true;
 }

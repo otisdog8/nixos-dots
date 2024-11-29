@@ -23,7 +23,7 @@
       inputs.nixpkgs.follows = "nixpkgs";
     };
     zen-browser.url = "github:MarceColl/zen-browser-flake";
-    hyprland.url = "github:hyprwm/Hyprland?submodules=1&ref=v0.45.2";
+    hyprland.url = "github:hyprwm/Hyprland?submodules=1";
     Hyprspace = {
       url = "github:KZDKM/Hyprspace";
 
@@ -53,6 +53,10 @@ wezterm-flake.inputs.nixpkgs.follows = "nixpkgs";
     };
     nixosConfigurations.constitution = helper.mkNixos {
       hostname = "constitution";
+      stateVersion = "24.05";
+    };
+    nixosConfigurations.excelsior = helper.mkNixos {
+      hostname = "excelsior";
       stateVersion = "24.05";
     };
   };
