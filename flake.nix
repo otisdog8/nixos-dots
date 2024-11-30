@@ -59,5 +59,10 @@ wezterm-flake.inputs.nixpkgs.follows = "nixpkgs";
       hostname = "excelsior";
       stateVersion = "24.05";
     };
+    nixosConfigurations.recusant = helper.mkNixos {
+      hostname = "recusant";
+      stateVersion = "24.05";
+    };
+
   };
 }
