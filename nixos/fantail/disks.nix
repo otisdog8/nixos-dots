@@ -60,7 +60,7 @@ _: {
     };
 
   swapDevices = [ {
-    device = "/dev/sdb3";
+    device = "/dev/disk/by-partuuid/9ea2c1aa-2382-4889-93c6-e1fd18bc3078";
     randomEncryption.enable = true;
   } ];
 
