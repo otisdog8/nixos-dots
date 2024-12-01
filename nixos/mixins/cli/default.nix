@@ -24,6 +24,7 @@
     shfmt
     ncdu
     kdePackages.ksshaskpass
+    jdk
   ];
 
  

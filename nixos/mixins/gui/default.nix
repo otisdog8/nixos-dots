@@ -15,6 +15,7 @@
     _1password-gui
     steam
     kdePackages.ark
+    prismlauncher
   ];
   hardware.graphics = {
     enable = true;
