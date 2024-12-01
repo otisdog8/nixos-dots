@@ -44,5 +44,6 @@ in
      description = "For Minecraft Servers";
      group = "mc";
   };
+  users.groups.mc = {};
 
 }
