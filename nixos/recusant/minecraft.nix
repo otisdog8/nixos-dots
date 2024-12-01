@@ -29,12 +29,6 @@ in
       User = "mc";
       Group = "mc";
       WorkingDirectory = "/mc/atm9-${ATM9_VERSION}";
-      ProtectControlGroups = true;
-      ProtectHome = true;
-      ProtectKernelModules = true;
-      ProtectKernelTunables = true;
-      ProtectSystem = "full";
-      PrivateUsers = true;
     };
   };
 
