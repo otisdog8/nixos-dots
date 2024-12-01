@@ -21,9 +21,9 @@ in
         @libraries/net/minecraftforge/forge/1.20.1-${FORGE_VERSION}/unix_args.txt nogui
       '';
       ExecStop = ''
-        ${pkgs.screen}/bin/screen -S mc -X stuff "save-all^M"
-        /bin/sleep 5
-        ${pkgs.screen}/bin/screen -S mc -X stuff "stop^M"
+        ${pkgs.screen}/bin/screen -S mc -X stuff "save-all^M" \
+        /bin/sleep 5 \
+        ${pkgs.screen}/bin/screen -S mc -X stuff "stop^M" \
         /bin/sleep 5
       '';
       User = "mc";
@@ -43,6 +43,7 @@ in
      isSystemUser = true;
      description = "For Minecraft Servers";
      group = "mc";
+     shell = pkgs.bash;
   };
   users.groups.mc = {};
 
