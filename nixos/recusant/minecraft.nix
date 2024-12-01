@@ -34,7 +34,6 @@ in
       ProtectKernelModules = true;
       ProtectKernelTunables = true;
       ProtectSystem = "full";
-      PrivateDevices = true;
       PrivateUsers = true;
     };
   };
