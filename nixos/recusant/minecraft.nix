@@ -11,9 +11,6 @@ in
     wantedBy = [ "multi-user.target" ];
 
     serviceConfig = {
-      ExecReload = ''
-        ${pkgs.screen}/bin/screen -S mc -X stuff "reload^M"
-      '';
       ExecStart = ''
         ${pkgs.screen}/bin/screen -DmS mc \
         "${pkgs.jdk}/bin/java" \
