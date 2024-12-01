@@ -42,6 +42,7 @@ in
   users.users.mc = {
      isSystemUser = true;
      description = "For Minecraft Servers";
+     group = "mc";
   };
 
 }
