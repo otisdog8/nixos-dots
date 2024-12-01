@@ -121,6 +121,7 @@
     users.jrt = {
       directories = [
         "Downloads"
+        ".local/share/PrismLauncher"
         ".local/share/Steam"
       ];
     };

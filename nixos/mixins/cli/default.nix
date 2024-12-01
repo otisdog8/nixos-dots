@@ -25,6 +25,7 @@
     ncdu
     kdePackages.ksshaskpass
     jdk
+    screen
   ];
 
  
