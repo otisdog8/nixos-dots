@@ -67,5 +67,9 @@ wezterm-flake.inputs.nixpkgs.follows = "nixpkgs";
       hostname = "fantail";
       stateVersion = "24.05";
     };
+    nixosConfigurations.munificent = helper.mkNixos {
+      hostname = "munificent";
+      stateVersion = "24.05";
+    };
   };
 }
