@@ -16,7 +16,7 @@ in
       '';
       ExecStart = ''
         ${pkgs.screen}/bin/screen -DmS mc \
-        "${pkgs.jdk}/bin/java}" \
+        "${pkgs.jdk}/bin/java" \
         @user_jvm_args.txt \
         @libraries/net/minecraftforge/forge/1.20.1-${FORGE_VERSION}/unix_args.txt nogui
       '';
