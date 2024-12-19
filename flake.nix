@@ -22,7 +22,7 @@
       url = "github:nix-community/lanzaboote/v0.4.1";
       inputs.nixpkgs.follows = "nixpkgs";
     };
-    zen-browser.url = "github:MarceColl/zen-browser-flake";
+    zen-browser.url = "github:0xc000022070/zen-browser-flake";
     hyprland.url = "github:hyprwm/Hyprland?submodules=1";
     Hyprspace = {
       url = "github:KZDKM/Hyprspace";
@@ -31,7 +31,7 @@
       inputs.hyprland.follows = "hyprland";
     };
     hyprsplit = {
-      url = "github:shezdy/hyprsplit/main";
+      url = "github:otisdog8/hyprsplit/main";
       inputs.hyprland.follows = "hyprland";
     };
     rose-pine-hyprcursor.url = "github:ndom91/rose-pine-hyprcursor";

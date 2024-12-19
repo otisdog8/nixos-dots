@@ -16,6 +16,7 @@
     steam
     kdePackages.ark
     prismlauncher
+    zoom-us
   ];
   hardware.graphics = {
     enable = true;

@@ -2,7 +2,6 @@
 {
 
   fonts.packages = with pkgs; [
-    nerdfonts
     texlivePackages.fontawesome
     liberation_ttf
     roboto
@@ -13,7 +12,7 @@
     fira-code
     fira-code-symbols
     gyre-fonts
-  ];
+  ] ++ builtins.filter lib.attrsets.isDerivation (builtins.attrValues pkgs.nerd-fonts);
   fonts.enableDefaultPackages = true;
 
 
