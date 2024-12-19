@@ -518,11 +518,11 @@
         ]
       },
       "locked": {
-        "lastModified": 1734576447,
-        "narHash": "sha256-kh1mshtt4OEe3Q7AuxvrSlUdKl99OZMOP1hxWVzyoic=",
+        "lastModified": 1734583086,
+        "narHash": "sha256-m8+ej+4P9jCyGCoUYpSYNULikIRubfIfZ/GvbENG1Do=",
         "owner": "otisdog8",
         "repo": "hyprsplit",
-        "rev": "9a80bc76788f2cacedab294247ece37adf2ada3b",
+        "rev": "b96432a5aa4915bcb5d10628ecf3fcde1b5e0291",
         "type": "github"
       },
       "original": {

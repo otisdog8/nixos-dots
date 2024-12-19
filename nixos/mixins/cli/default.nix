@@ -26,6 +26,7 @@
     kdePackages.ksshaskpass
     jdk
     screen
+    neovim
   ];
 
  
