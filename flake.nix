@@ -71,5 +71,14 @@ wezterm-flake.inputs.nixpkgs.follows = "nixpkgs";
       hostname = "munificent";
       stateVersion = "24.05";
     };
+    nixosConfigurations.arquitens = helper.mkNixos {
+      hostname = "munificent";
+      stateVersion = "24.05";
+    };
+    nixosConfigurations.carrack = helper.mkNixos {
+      hostname = "munificent";
+      stateVersion = "24.05";
+    };
+
   };
 }
