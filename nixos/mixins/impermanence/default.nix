@@ -72,6 +72,7 @@
       "/var/lib/upower"
       "/etc/nixos"
       "/etc/secureboot"
+      "/var/lib/sbctl"
       "/etc/NetworkManager/system-connections"
     ];
     files = [

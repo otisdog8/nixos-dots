@@ -34,7 +34,7 @@ _: {
   fileSystems."/dots" =
     { device = "/dev/mapper/luks";
       fsType = "btrfs";
-      options = [ "subvol=cache" "compress=zstd" "noatime" ];
+      options = [ "subvol=dots" "compress=zstd" "noatime" ];
       neededForBoot = true;
     };
 
@@ -50,13 +50,6 @@ _: {
     { device = "/dev/mapper/luks";
       fsType = "btrfs";
       options = [ "subvol=nix" "compress=zstd" "noatime" ];
-      neededForBoot = true;
-    };
-
-  fileSystems."/mc" =
-    { device = "/dev/mapper/luks";
-      fsType = "btrfs";
-      options = [ "subvol=mc" "compress=zstd" "noatime" ];
       neededForBoot = true;
     };
 
