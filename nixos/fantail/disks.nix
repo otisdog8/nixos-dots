@@ -34,7 +34,7 @@ _: {
   fileSystems."/dots" =
     { device = "/dev/mapper/luks";
       fsType = "btrfs";
-      options = [ "subvol=cache" "compress=zstd" "noatime" ];
+      options = [ "subvol=dots" "compress=zstd" "noatime" ];
       neededForBoot = true;
     };
 
