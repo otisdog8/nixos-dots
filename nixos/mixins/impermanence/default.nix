@@ -118,6 +118,7 @@
     hideMounts = true;
     directories = [
       "/var/log"
+      "/var/lib/libvirt"
     ];
     users.jrt = {
       directories = [
