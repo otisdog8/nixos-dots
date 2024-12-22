@@ -16,6 +16,11 @@
   imports = [
      inputs.k0s.nixosModules.default
   ];
+
+  environment.systemPackages = with pkgs; [
+    inputs.k0s.packages."${pkgs.system}".k0s
+  ];
+
   services.k0s = {
     package = inputs.k0s.packages."${pkgs.system}".k0s;
     enable = true;
