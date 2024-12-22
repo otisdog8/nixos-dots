@@ -23,7 +23,7 @@
 
   services.k0s = {
     package = inputs.k0s.packages."${pkgs.system}".k0s;
-    enable = false;
+    enable = true;
     role = "controller+worker";
     spec.network.provider = "custom";
   };
