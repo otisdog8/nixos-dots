@@ -34,12 +34,16 @@
       url = "github:otisdog8/hyprsplit/main";
       inputs.hyprland.follows = "hyprland";
     };
+    k0s = {
+      url = "github:johbo/k0s-nix";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
     rose-pine-hyprcursor.url = "github:ndom91/rose-pine-hyprcursor";
-wezterm-flake.url = "github:wez/wezterm/main?dir=nix";
-wezterm-flake.inputs.nixpkgs.follows = "nixpkgs";
+    wezterm-flake.url = "github:wez/wezterm/main?dir=nix";
+    wezterm-flake.inputs.nixpkgs.follows = "nixpkgs";
   };
 
-  outputs = { self, nixpkgs, nixos-hardware, chaotic, impermanence, lanzaboote, home-manager, zen-browser, hyprland, hyprsplit, Hyprspace, wezterm-flake, ... }@inputs:
+  outputs = { self, nixpkgs, nixos-hardware, chaotic, impermanence, lanzaboote, home-manager, zen-browser, hyprland, hyprsplit, Hyprspace, wezterm-flake, k0s, ... }@inputs:
     let
       inherit (self) outputs;
       stateVersion = "24.05";

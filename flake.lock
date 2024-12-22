@@ -619,6 +619,26 @@
         "type": "github"
       }
     },
+    "k0s": {
+      "inputs": {
+        "nixpkgs": [
+          "nixpkgs"
+        ]
+      },
+      "locked": {
+        "lastModified": 1732387774,
+        "narHash": "sha256-9GkVaF6mOy0LxhJxH5gY/CJZltd5GoWMp/E/TttCN1A=",
+        "owner": "johbo",
+        "repo": "k0s-nix",
+        "rev": "f765634c5950de5cd7c44be614241a10ed80d6f0",
+        "type": "github"
+      },
+      "original": {
+        "owner": "johbo",
+        "repo": "k0s-nix",
+        "type": "github"
+      }
+    },
     "lanzaboote": {
       "inputs": {
         "crane": "crane",
@@ -873,6 +893,7 @@
         "hyprland": "hyprland",
         "hyprsplit": "hyprsplit",
         "impermanence": "impermanence",
+        "k0s": "k0s",
         "lanzaboote": "lanzaboote",
         "nixos-hardware": "nixos-hardware",
         "nixpkgs": "nixpkgs_3",
