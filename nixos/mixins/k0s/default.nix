@@ -52,7 +52,7 @@
   ];
 
   services.k3s = {
-    enable = true;
+    enable = false;
     role = "server";
     extraFlags = [ "--flannel-backend=none"
                    "--disable-network-policy"
@@ -63,10 +63,10 @@
 
   networking.firewall.enable = lib.mkForce false;
 
-  #services.k0s = {
-  #  package = inputs.k0s.packages."${pkgs.system}".k0s;
-  #  enable = true;
-  #  role = "controller+worker";
-  #  spec.network.provider = "custom";
-  #};
+  services.k0s = {
+    package = inputs.k0s.packages."${pkgs.system}".k0s;
+    enable = true;
+    role = "controller+worker";
+    spec.network.provider = "custom";
+  };
 }
