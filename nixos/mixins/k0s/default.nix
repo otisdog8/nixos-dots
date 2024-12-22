@@ -17,6 +17,7 @@
      inputs.k0s.nixosModules.default
   ];
   services.k0s = {
+    package = inputs.k0s.packages."${pkgs.system}".k0s;
     enable = true;
     role = "controller+worker";
     spec.network.provider = "custom";
