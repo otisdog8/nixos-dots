@@ -36,29 +36,12 @@ in
   programs.btop.enable = true;
   programs.emacs.enable = true;
   services.emacs.enable = true;
+  services.ssh-agent.enable = true;
 
-    home.sessionVariablesExtra = ''
-      if [ -z "$SSH_AUTH_SOCK" ]; then
-        export SSH_AUTH_SOCK=$XDG_RUNTIME_DIR/ssh-agent
-      fi
-    '';
+  home.file.".profile".text = ''
+  export SSH_AUTH_SOCK=$XDG_RUNTIME_DIR/ssh-agent
+  '';
 
-    systemd.user.services.ssh-agent = {
-      Install.WantedBy = [ "graphical-session.target" ];
-
-      Unit = {
-        Description = "SSH authentication agent";
-        Documentation = "man:ssh-agent(1)";
-      };
-
-      Service = {
-        ExecStart = "${pkgs.openssh}/bin/ssh-agent -D -a %t/ssh-agent";
-        Environment = [
-          "SSH_ASKPASS=${pkgs.ksshaskpass}/bin/ksshaskpass"
-          "SSH_ASKPASS_REQUIRE=prefer"
-        ];
-      };
-    };
   programs.ssh = {
     enable = true;
     addKeysToAgent = "yes";

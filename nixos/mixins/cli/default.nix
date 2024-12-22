@@ -27,9 +27,12 @@
     jdk
     screen
     neovim
+    k0sctl
+    kubectl
+    cilium-cli
+    k9s
   ];
 
- 
   programs.zsh = {
     syntaxHighlighting = {
       enable = true;
