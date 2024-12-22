@@ -13,6 +13,9 @@
 }:
 
 {
+  imports = [
+     inputs.k0s.nixosModules.default
+  ];
   services.k0s = {
     enable = true;
     role = "controller+worker";
