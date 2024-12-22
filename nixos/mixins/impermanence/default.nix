@@ -120,6 +120,7 @@
       "/var/log"
       "/var/lib/libvirt"
       "/var/lib/k0s"
+      "/etc/k0s"
     ];
     users.jrt = {
       directories = [
