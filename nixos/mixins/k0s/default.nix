@@ -61,6 +61,8 @@
                    "--tls-san=100.80.37.112" ];
   };
 
+  networking.firewall.enable = lib.mkForce false;
+
   #services.k0s = {
   #  package = inputs.k0s.packages."${pkgs.system}".k0s;
   #  enable = true;
