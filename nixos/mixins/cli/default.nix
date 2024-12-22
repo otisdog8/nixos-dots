@@ -27,7 +27,6 @@
     jdk
     screen
     neovim
-    k0sctl
     kubectl
     cilium-cli
     k9s

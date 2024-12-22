@@ -14,7 +14,6 @@
 
 {
   imports = [
-     inputs.k0s.nixosModules.default
      ./secrets.nix
   ];
 
@@ -47,7 +46,6 @@
 
 
   environment.systemPackages = with pkgs; [
-    inputs.k0s.packages."${pkgs.system}".k0s
     k3s
   ];
 
@@ -62,11 +60,4 @@
   };
 
   networking.firewall.enable = lib.mkForce false;
-
-  services.k0s = {
-    package = inputs.k0s.packages."${pkgs.system}".k0s;
-    enable = true;
-    role = "controller+worker";
-    spec.network.provider = "custom";
-  };
 }
