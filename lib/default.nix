@@ -69,7 +69,18 @@ in
           ;
       };
       # If the hostname starts with "iso-", generate an ISO image
-      modules = [ ../nixos ];
+      modules = [
+          ({
+              nixpkgs.system = "x86_64-linux";
+              inputs.nixpkgs.pkgs = import inputs.nixpkgs {
+                system = "x86_64-linux";
+                overlays = [
+                  inputs.k0s.overlays.default
+                ];
+              };
+          })
+        ../nixos
+      ];
     };
 
   # TBD: left blank

@@ -15,14 +15,6 @@
 {
   imports = [
      inputs.k0s.nixosModules.default
-     {
-        inputs.nixpkgs.pkgs = import inputs.nixpkgs {
-          system = "x86_64-linux";
-          overlays = [
-            inputs.k0s.overlays.default
-          ];
-        };
-     }
   ];
   services.k0s = {
     enable = true;
