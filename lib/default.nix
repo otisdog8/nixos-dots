@@ -72,7 +72,7 @@ in
       modules = [
           ({
               nixpkgs.system = "x86_64-linux";
-              inputs.nixpkgs.pkgs = import inputs.nixpkgs {
+              nixpkgs.pkgs = import inputs.nixpkgs {
                 system = "x86_64-linux";
                 overlays = [
                   inputs.k0s.overlays.default
