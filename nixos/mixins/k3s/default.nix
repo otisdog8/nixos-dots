@@ -50,7 +50,7 @@
   ];
 
   services.k3s = {
-    enable = false;
+    enable = true;
     role = "server";
     extraFlags = [ "--flannel-backend=none"
                    "--disable-network-policy"
