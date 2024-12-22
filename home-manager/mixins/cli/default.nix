@@ -69,6 +69,7 @@ in
     ];
     shellAliases = {
       cd = "z";
+      k0s = "/var/lib/k0s/k0s";
     };
     enableCompletion = true;
     #autosuggestion.enable = true;
