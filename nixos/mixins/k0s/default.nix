@@ -23,13 +23,8 @@
 
   services.k0s = {
     package = inputs.k0s.packages."${pkgs.system}".k0s;
-    enable = true;
+    enable = false;
     role = "controller+worker";
     spec.network.provider = "custom";
-    spec.api.sans = [
-      "100.126.30.73" # arquitens
-      "100.103.225.29" # carrack
-      "100.65.16.13" # munificent
-    ];
   };
 }
