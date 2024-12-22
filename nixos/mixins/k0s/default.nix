@@ -55,7 +55,10 @@
     enable = true;
     role = "server";
     extraFlags = [ "--flannel-backend=none"
-                   "--disable-network-policy" ];
+                   "--disable-network-policy"
+                   "--tls-san=100.126.30.73"
+                   "--tls-san=100.65.16.13"
+                   "--tls-san=100.80.37.112" ];
   };
 
   #services.k0s = {
