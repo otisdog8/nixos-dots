@@ -26,4 +26,5 @@
   services.k0s.spec.api.address = "100.126.30.73";
   services.k0s.spec.api.sans = [ "100.126.30.73" ];
   services.k0s.isLeader = true;
+  services.k3s.clusterInit = true;
 }
