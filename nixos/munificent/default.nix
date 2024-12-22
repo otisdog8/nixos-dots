@@ -24,6 +24,7 @@
   boot.initrd.kernelModules = [ "amdgpu" ];
   services.xserver.videoDrivers = [ "amdgpu" ];
   services.k0s.spec.api.address = "100.65.16.13";
+  services.k0s.spec.api.sans = [ "100.65.16.13" ];
   services.k0s.isLeader = false;
 
 }
