@@ -63,7 +63,7 @@
 
   systemd.services.k3sloop = {
     wantedBy = [ "local-fs.target" ];
-    after = [ "/large.mount" ];
+    after = [ "large.mount" ];
     description = "loopback device that k3s rook uses";
     serviceConfig = {
       Type = "oneshot";
