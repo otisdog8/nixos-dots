@@ -73,3 +73,9 @@ spec:
   telemetry:
     enabled: false
 ```
+
+Install flux:
+`sudo flux bootstrap github --token-auth --owner=uorux --repository=homelab --branch=main --kubeconfig $KUBECONFIG   --components-extra image-reflector-controller,image-automation-controller`
+
+
+

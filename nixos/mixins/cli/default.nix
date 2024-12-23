@@ -30,6 +30,7 @@
     kubectl
     cilium-cli
     k9s
+    fluxcd
   ];
 
   programs.zsh = {

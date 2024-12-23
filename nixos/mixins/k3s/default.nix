@@ -60,4 +60,16 @@
   };
 
   networking.firewall.enable = lib.mkForce false;
+
+  systemd.services.k3sloop = {
+    wantedBy = [ "local-fs.target" ];
+    after = [ "/large.mount" ];
+    description = "loopback device that k3s rook uses";
+    serviceConfig = {
+      Type = "oneshot";
+      User = "root";
+      ExecStart = ''${pkgs.util-linux}/bin/losetup -f /large/disk.img'';
+      RemainAfterExit = "yes";
+    };
+  };
 }

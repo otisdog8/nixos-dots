@@ -14,7 +14,6 @@ _: {
       neededForBoot = true;
     };
 
-
   fileSystems."/large" =
     { device = "/dev/mapper/luks";
       fsType = "btrfs";
