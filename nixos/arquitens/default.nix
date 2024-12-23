@@ -24,4 +24,5 @@
   boot.initrd.kernelModules = [ "amdgpu" ];
   services.xserver.videoDrivers = [ "amdgpu" ];
   services.k3s.clusterInit = true;
+  services.k3s.extraFlags = [ "--bind-address=100.126.30.73" ];
 }

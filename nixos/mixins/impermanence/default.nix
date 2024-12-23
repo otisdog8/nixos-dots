@@ -120,6 +120,7 @@
       "/var/log"
       "/var/lib/libvirt"
       "/var/lib/rancher"
+      "/var/lib/rook"
       "/etc/rancher"
     ];
     users.jrt = {

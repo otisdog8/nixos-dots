@@ -31,6 +31,7 @@
     cilium-cli
     k9s
     fluxcd
+    helm
   ];
 
   programs.zsh = {
