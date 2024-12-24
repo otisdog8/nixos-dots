@@ -24,5 +24,5 @@
   boot.initrd.kernelModules = [ "amdgpu" ];
   services.xserver.videoDrivers = [ "amdgpu" ];
   services.k3s.serverAddr = "https://100.126.30.73:6443";
-  services.k3s.extraFlags = [ "--bind-address=100.103.225.29" ];
+  services.k3s.extraFlags = [ "--bind-address=100.103.225.29" "--node-ip=100.103.225.29" "--advertise-address=100.103.225.29" ];
 }
