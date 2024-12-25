@@ -32,6 +32,12 @@
     k9s
     fluxcd
     helm
+    hubble
+    tcpdump
+    authelia
+    cloudflared
+    imagemagick
+    ncdu
   ];
 
   programs.zsh = {

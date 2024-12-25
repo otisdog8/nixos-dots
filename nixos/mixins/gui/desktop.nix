@@ -34,6 +34,8 @@
     kdePackages.networkmanager-qt
     udisks
     udiskie
+    pavucontrol
+    gparted
   ];
 
   services.libinput.enable = true;
