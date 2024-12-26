@@ -31,4 +31,6 @@
   services.nfs.server.exports = ''
     /export/k8s  100.126.30.73(rw,nohide,insecure,no_subtree_check) 100.103.225.29(rw,nohide,insecure,no_subtree_check) 100.65.16.13(rw,nohide,insecure,no_subtree_check)
   '';
+
+  networking.firewall.allowedTCPPorts = [ 2049 ];
 }

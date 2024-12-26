@@ -38,6 +38,7 @@
     cloudflared
     imagemagick
     ncdu
+    nfs-utils
   ];
 
   programs.zsh = {

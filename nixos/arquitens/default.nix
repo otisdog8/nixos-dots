@@ -21,8 +21,13 @@
     inputs.nixos-hardware.nixosModules.common-pc
     inputs.nixos-hardware.nixosModules.common-pc-ssd
   ];
-  boot.initrd.kernelModules = [ "amdgpu" ];
+  boot.initrd = {
+    supportedFilesystems = [ "nfs" ];
+    kernelModules = [ "nfs" "amdgpu" ];
+  };
   services.xserver.videoDrivers = [ "amdgpu" ];
   services.k3s.clusterInit = true;
   services.k3s.extraFlags = [ "--bind-address=100.126.30.73" "--node-ip=100.126.30.73" "--advertise-address=100.126.30.73"];
+
+
 }
