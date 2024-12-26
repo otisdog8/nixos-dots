@@ -59,6 +59,13 @@ _: {
       options = [ "fmask=0022" "dmask=0022" ];
     };
 
+  fileSystems."/mnt/net-k8s" = {
+    device = "recusant:/export/k8s";
+    fsType = "nfs";
+  };
+
+
+
   swapDevices = [ {
     device = "/dev/nvme0n1p3";
     randomEncryption.enable = true;
