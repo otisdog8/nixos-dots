@@ -14,6 +14,15 @@ _: {
       neededForBoot = true;
     };
 
+  fileSystems."/mnt/largedev_root" =
+    { device = "/dev/disk/by-uuid/0bddf9fb-bbbe-4046-b77f-00c5f4d3094e";
+      fsType = "btrfs";
+    };
+
+  fileSystems."/export/k8s" = {
+    device = "/mnt/largedev_root/k8s";
+    options = [ "bind" ];
+  };
 
   fileSystems."/large" =
     { device = "/dev/mapper/luks";
