@@ -21,11 +21,18 @@
     inputs.nixos-hardware.nixosModules.common-pc-ssd
   ];
 
-  services.xserver.videoDrivers = [ "nvidia" ];
+  services.xserver.videoDrivers = [ "modesetting" ];
+  hardware.graphics.extraPackages32 = with pkgs.pkgsi686Linux; [ intel-media-driver ];
+  hardware.graphics = { # hardware.graphics since NixOS 24.11
+    enable = true;
+    extraPackages = with pkgs; [
+      libvdpau-va-gl
+      intel-media-driver
+      intel-compute-runtime
+      vpl-gpu-rt          # for newer GPUs on NixOS >24.05 or unstable
+    ];
+  };
 
-  hardware.nvidia.open = false;
-  hardware.nvidia.package = config.boot.kernelPackages.nvidiaPackages.beta;
-  hardware.nvidia.modesetting.enable = true;
 
   services.nfs.server.enable = true;
   services.nfs.server.exports = ''
