@@ -39,6 +39,8 @@
     imagemagick
     ncdu
     nfs-utils
+    bcachefs-tools
+    clevis
   ];
 
   programs.zsh = {
