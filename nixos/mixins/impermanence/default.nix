@@ -74,6 +74,7 @@
       "/var/lib/systemd"
       "/var/lib/tlp"
       "/var/lib/upower"
+      "/var/lib/sabnzbd"
       "/etc/nixos"
       "/etc/secureboot"
       "/var/lib/sbctl"
