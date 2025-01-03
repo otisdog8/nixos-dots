@@ -23,7 +23,7 @@
     };
 
   fileSystems."/mnt/bcachefs" =
-    { device = "/dev/disk/by-uuid/ac9c0018-574a-4ecc-a3cd-5facca09b173";
+    { device = "/dev/disk/by-uuid/35e74177-8be0-4de6-90d4-62aa305956db";
       fsType = "bcachefs";
       depends = [
           # The mounts above have to be mounted in this given order
@@ -47,7 +47,7 @@
 
 
   fileSystems."/cache" =
-    { device = "/dev/mapper/luks";
+    { device = "/dev/35e74177-8be0-4de6-90d4-62aa305956db";
       fsType = "btrfs";
       options = [ "subvol=cache" "compress=zstd" "noatime" ];
       neededForBoot = true;
