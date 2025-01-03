@@ -26,6 +26,7 @@ _: {
           # The mounts above have to be mounted in this given order
           "/persist"
       ];
+      options = [ "nofail" ];
     };
 
   fileSystems."/export/k8s" = {
