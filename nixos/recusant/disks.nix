@@ -28,8 +28,6 @@ _: {
       ];
     };
 
-
-
   fileSystems."/export/k8s" = {
     device = "/mnt/largedev_root/k8s";
     options = [ "bind" ];
@@ -87,7 +85,7 @@ _: {
     };
 
   swapDevices = [ {
-    device = "/dev/nvme0n1p3";
+    device = "/dev/disk/by-partuuid/db8f005c-41f6-4d38-8f6c-36985f60a6dd";
     randomEncryption.enable = true;
   } ];
 
