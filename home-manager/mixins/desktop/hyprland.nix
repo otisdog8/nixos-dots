@@ -98,7 +98,7 @@ in
         ",switch:on:Lid Switch,exec,loginctl lock-session && touch /tmp/10midle && test $(cat /sys/class/power_supply/AC0/online) = 0 && systemctl suspend"
       ];
       monitor = [
-        ",highres,auto,1"
+        ",highres,auto,1,bitdepth,10"
       ];
       exec-once = [
         "hyprpaper"

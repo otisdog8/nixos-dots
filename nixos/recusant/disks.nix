@@ -47,13 +47,13 @@
 
 
   fileSystems."/cache" =
-    { device = "/dev/35e74177-8be0-4de6-90d4-62aa305956db";
+    { device = "/dev/mapper/luks";
       fsType = "btrfs";
       options = [ "subvol=cache" "compress=zstd" "noatime" ];
       neededForBoot = true;
     };
 
-
+ mapper/luks 
   fileSystems."/dots" =
     { device = "/dev/mapper/luks";
       fsType = "btrfs";
