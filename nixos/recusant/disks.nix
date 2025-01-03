@@ -58,11 +58,13 @@
       fsType = "btrfs";
       options = [ "subvol=dots" "compress=zstd" "noatime" ];
       neededForBoot = true;
+    };
 
 
   fileSystems."/persist" =
     { device = "/dev/mapper/luks";
       fsType = "btrfs";
+    };
       options = [ "subvol=persist" "compress=zstd" "noatime" ];
       neededForBoot = true;
     };
