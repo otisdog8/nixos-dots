@@ -39,7 +39,7 @@
     options = [ "bind" "nofail" ];
   };
 
-  fileSystems."/media/" = {
+  fileSystems."/media" = {
     device = "/mnt/bcachefs/k8s/media";
     options = [ "bind" "nofail" ];
   };
