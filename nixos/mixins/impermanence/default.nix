@@ -55,6 +55,7 @@
     btrfs subvolume create /btrfs_tmp/root
     mkdir -p /btrfs_tmp/root/etc/clevis/dev
     cp /btrfs_tmp/persist/secret.jwe /btrfs_tmp/root/etc/clevis/dev/nvme1n1.jwe || echo
+    mkdir -p /btrfs_tmp/root/etc/clevis/dev/disk/by-uuid
     cp /btrfs_tmp/persist/secret.jwe /btrfs_tmp/root/etc/clevis/dev/disk/by-uuid/35e74177-8be0-4de6-90d4-62aa305956db.jwe || echo
     umount /btrfs_tmp
     '';
