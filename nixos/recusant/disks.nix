@@ -53,6 +53,7 @@
       neededForBoot = true;
     };
 
+
   fileSystems."/dots" =
     { device = "/dev/mapper/luks";
       fsType = "btrfs";
@@ -64,7 +65,6 @@
   fileSystems."/persist" =
     { device = "/dev/mapper/luks";
       fsType = "btrfs";
-    };
       options = [ "subvol=persist" "compress=zstd" "noatime" ];
       neededForBoot = true;
     };
@@ -81,7 +81,7 @@
       fsType = "btrfs";
       options = [ "subvol=mc" "compress=zstd" "noatime" ];
       neededForBoot = true;
-    };
+mapper/luks    };
 
   fileSystems."/boot" =
     { device = "/dev/disk/by-uuid/E7CD-C534";
