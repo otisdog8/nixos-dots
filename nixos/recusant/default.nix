@@ -13,6 +13,7 @@
 
   boot.supportedFilesystems = [ "btrfs" "bcachefs" ];
   boot.initrd.availableKernelModules = [ "tpm_crb" "tpm_tis" ];
+  boot.plymouth.enable = lib.mkOverride false;
 
   boot.initrd.clevis = {
     enable = true;
