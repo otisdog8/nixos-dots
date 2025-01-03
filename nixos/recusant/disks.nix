@@ -35,8 +35,13 @@
     };
 
   fileSystems."/export/k8s" = {
-    device = "/mnt/largedev_root/k8s";
-    options = [ "bind" ];
+    device = "/mnt/bcachefs/k8s";
+    options = [ "bind" "nofail" ];
+  };
+
+  fileSystems."/media/" = {
+    device = "/mnt/bcachefs/k8s/media";
+    options = [ "bind" "nofail" ];
   };
 
   fileSystems."/large" =

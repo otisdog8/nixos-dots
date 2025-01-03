@@ -45,7 +45,7 @@
 
   services.nfs.server.enable = true;
   services.nfs.server.exports = ''
-    /export/k8s  100.0.0.0/8(rw,nohide,insecure,no_subtree_check,all_squash,anonuid=1001,anongid=1001,no_root_squash)
+    /export/k8s  100.0.0.0/8(rw,nohide,insecure,no_subtree_check,all_squash)
   '';
 
   networking.firewall.allowedTCPPorts = [ 2049 ];
