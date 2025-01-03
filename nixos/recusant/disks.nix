@@ -19,6 +19,13 @@ _: {
       fsType = "btrfs";
     };
 
+  fileSystems."/mnt/bcachefs" =
+    { device = "/dev/nvme1n1";
+      fsType = "bcachefs";
+    };
+
+
+
   fileSystems."/export/k8s" = {
     device = "/mnt/largedev_root/k8s";
     options = [ "bind" ];

@@ -11,7 +11,13 @@
   networking.hostName = "recusant";
   time.timeZone = "America/Los_Angeles";
 
-  boot.supportedFilesystems = [ "btrfs" ];
+  boot.supportedFilesystems = [ "btrfs" "bcachefs" ];
+  boot.initrd.availableKernelModules = [ "tpm_crb" "tpm_tis" ];
+
+  boot.initrd.clevis = {
+    enable = true;
+    devices."${config.fileSystems."/mnt/bcachefs".device}".secretFile = /large/secret.jwe;
+  };
 
   imports = [
     ./disks.nix
