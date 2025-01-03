@@ -53,13 +53,11 @@
       neededForBoot = true;
     };
 
- mapper/luks 
   fileSystems."/dots" =
     { device = "/dev/mapper/luks";
       fsType = "btrfs";
       options = [ "subvol=dots" "compress=zstd" "noatime" ];
       neededForBoot = true;
-    };
 
 
   fileSystems."/persist" =
