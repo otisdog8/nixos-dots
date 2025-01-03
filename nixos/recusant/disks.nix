@@ -1,4 +1,7 @@
-_: {
+{
+  pkgs,
+  ...
+}: {
 
   boot.initrd.luks.devices."luks".device = "/dev/disk/by-uuid/1d7cd1ea-6803-42bd-bbfd-659abfa846e2";
 
@@ -20,7 +23,7 @@ _: {
     };
 
   fileSystems."/mnt/bcachefs" =
-    { device = "/dev/nvme1n1";
+    { device = "/dev/disk/by-uuid/ac9c0018-574a-4ecc-a3cd-5facca09b173";
       fsType = "bcachefs";
       depends = [
           # The mounts above have to be mounted in this given order
