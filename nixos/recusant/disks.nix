@@ -29,6 +29,7 @@
           # The mounts above have to be mounted in this given order
           "/etc/clevis"
           "/persist"
+          "/mnt/largedev_root"
       ];
       options = [ "nofail" ];
     };
