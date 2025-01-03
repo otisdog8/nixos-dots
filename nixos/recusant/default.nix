@@ -16,7 +16,7 @@
 
   boot.initrd.clevis = {
     enable = true;
-    devices."${config.fileSystems."/mnt/bcachefs".device}".secretFile = /large/secret.jwe;
+    devices."${config.fileSystems."/mnt/bcachefs".device}".secretFile = /persist/secret.jwe;
   };
 
   imports = [
