@@ -75,6 +75,7 @@
       "/var/lib/tlp"
       "/var/lib/upower"
       "/var/lib/sabnzbd"
+      "/var/lib/jellyfin"
       "/etc/nixos"
       "/etc/secureboot"
       "/var/lib/sbctl"
