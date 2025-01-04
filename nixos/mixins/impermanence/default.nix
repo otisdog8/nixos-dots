@@ -138,6 +138,13 @@
       ];
     };
   };
+  environment.persistence."/cache" = {
+    enable = true;
+    hideMounts = true;
+    directories = [
+      "/var/cache/jellyfin"
+    ];
+  };
   environment.persistence."/dots" = {
     enable = true;
     hideMounts = true;
