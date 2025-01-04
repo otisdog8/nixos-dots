@@ -14,8 +14,8 @@
   nixpkgs.overlays = [
         (final: prev: {
           jellyfin-ffmpeg = prev.jellyfin-ffmpeg.override {
-            withVPL = true;
-            withMFX = false;
+            withVpl = true;
+            withMfx = false;
           };
         })
       ];
