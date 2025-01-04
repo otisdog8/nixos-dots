@@ -10,4 +10,13 @@
     enable = true;
     openFirewall = true;
   };
+
+  nixpkgs.overlays = [
+        (final: prev: {
+          jellyfin-ffmpeg = prev.jellyfin-ffmpeg.override {
+            withVPL = true;
+            withMFX = false;
+          };
+        })
+      ];
 }
