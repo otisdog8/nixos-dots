@@ -55,7 +55,7 @@ in
   services.mako = {
     enable = true;
     borderColor = "#282a36";
-    extraConfig = builtins.readFile ../../../config/wezterm;
+    extraConfig = builtins.readFile ../../../config/mako;
   };
   programs.wezterm = {
     enable = true;

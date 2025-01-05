@@ -153,7 +153,6 @@ in
       decoration = {
         rounding = 0;
         active_opacity = 0.97;
-        fullscreen_opacity = 0.97;
         inactive_opacity = 0.9;
         blurls = [ "rofi" "wofi" ];
       };
