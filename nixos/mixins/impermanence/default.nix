@@ -103,6 +103,7 @@
         ".config/kdeconnect"
         ".config/vesktop"
         ".config/Proton"
+        ".config/BraveSoftware"
         ".cache/cliphist"
         { directory = ".config/1Password"; mode = "0700"; }
         { directory = ".local/share/kwalletd/"; mode = "0700"; }
