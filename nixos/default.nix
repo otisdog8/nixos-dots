@@ -72,7 +72,10 @@
   boot.initrd.availableKernelModules = [ "xhci_pci" "thunderbolt" "nvme" "usb_storage" "sd_mod" ];
   boot.initrd.kernelModules = [ ];
   networking.useDHCP = lib.mkDefault true;
-  networking.networkmanager.enable = true;
+  networking.networkmanager = {
+    enable = true;
+    wifi.scanRandMacAddress = false;
+  };
 
   nixpkgs.hostPlatform = lib.mkDefault platform;
   # Set your time zone.

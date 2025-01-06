@@ -17,6 +17,7 @@
     kdePackages.ark
     prismlauncher
     zoom-us
+    brave
   ];
   hardware.graphics = {
     enable = true;
