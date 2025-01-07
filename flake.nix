@@ -9,6 +9,7 @@
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+    nixpkgs-otisdog8.url = "github:otisdog8/nixpkgs";
     nixos-hardware.url = "github:NixOS/nixos-hardware/master";
     chaotic.url = "github:chaotic-cx/nyx/nyxpkgs-unstable";
     impermanence = {
@@ -45,6 +46,7 @@
       stateVersion = "24.05";
       helper = import ./lib { inherit inputs outputs stateVersion; };
       in {
+    overlays = import ./overlays {inherit inputs;};
     homeConfigurations = {
       "jrt@constitution" = helper.mkHome {
         hostname = "constitution";

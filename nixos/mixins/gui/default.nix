@@ -1,4 +1,4 @@
-{ inputs, lib, pkgs, ... }:
+{ inputs, lib, pkgs, outputs, ... }:
 {
   imports = [ ./auth.nix ./desktop.nix ./desktop.nix ./fonts.nix ./plymouth.nix ./printing.nix ./sddm.nix ./theming.nix ];
   environment.systemPackages = with pkgs; [
@@ -18,6 +18,7 @@
     prismlauncher
     zoom-us
     brave
+    otisdog8.amazing-marvin
   ];
   hardware.graphics = {
     enable = true;
@@ -28,4 +29,10 @@
 
   # chaotic.mesa-git.enable = true;
   services.udisks2.enable = true;
+
+  nixpkgs = {
+    overlays = [
+      outputs.overlays.otisdog8-packages
+    ];
+  };
 }
