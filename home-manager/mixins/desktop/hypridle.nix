@@ -31,6 +31,11 @@ in
           timeout = 600;
           on-timeout = "touch /tmp/10midle && test $(cat /sys/class/power_supply/AC0/online) = 0 && systemctl suspend";
         }
+        {
+          timeout = 450;
+          on-timeout = "hyprctl dispatch dpms off";
+          on-resume = "hyprctl dispatch dpms on";
+        }
       ];
     };
   };
