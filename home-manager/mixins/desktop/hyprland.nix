@@ -20,7 +20,7 @@ in
     enable = true;
     plugins = [
       inputs.hyprsplit.packages.${pkgs.stdenv.hostPlatform.system}.hyprsplit
-      inputs.Hyprspace.packages.${pkgs.system}.Hyprspace
+      # inputs.Hyprspace.packages.${pkgs.system}.Hyprspace
     ];
     systemd.variables = ["--all"];
     settings = {
