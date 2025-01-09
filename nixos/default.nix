@@ -91,6 +91,12 @@
 
   security.rtkit.enable = true;
 
+  # Don't garbage collect flakes sources
+  system.extraDependencies = let
+      collectFlakeInputs = input: [ input ] ++ builtins.concatMap collectFlakeInputs (builtins.attrValues (input.inputs or {}));
+  in
+      builtins.concatMap collectFlakeInputs (builtins.attrValues inputs);
+
   users.users.jrt = {
      isNormalUser = true;
      extraGroups = [ "wheel" "tss" "input" "audio" "video" "ydotool" "libvirtd" ]; # Enable ‘sudo’ for the user.

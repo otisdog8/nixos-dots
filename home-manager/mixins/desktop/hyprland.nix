@@ -95,7 +95,7 @@ in
         "$mod, mouse:273, resizewindow"
       ];
       bindl = [
-        ",switch:on:Lid Switch,exec,loginctl lock-session && touch /tmp/10midle && test $(cat /sys/class/power_supply/AC0/online) = 0 && systemctl suspend"
+        ",switch:on:Lid Switch,exec,loginctl lock-session && touch /tmp/10midle && test $(cat /sys/class/power_supply/AC0/online) = 0 && sleep 1 && systemctl suspend"
       ];
       monitor = [
         ",highres,auto,1,bitdepth,10"

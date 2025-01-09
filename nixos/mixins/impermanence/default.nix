@@ -104,6 +104,7 @@
         ".config/vesktop"
         ".config/Proton"
         ".config/BraveSoftware"
+        ".config/Marvin"
         ".cache/cliphist"
         { directory = ".config/1Password"; mode = "0700"; }
         { directory = ".local/share/kwalletd/"; mode = "0700"; }
