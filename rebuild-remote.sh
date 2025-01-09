@@ -1,3 +1,6 @@
 #!/usr/bin/env bash
 
-sudo nixos-rebuild switch --flake $(dirname $0) --build-host jrt@recusant
+select server in recusant excelsior
+do
+	sudo nixos-rebuild switch --flake $(dirname $0) --build-host jrt@$(server)
+done
