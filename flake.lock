@@ -518,15 +518,15 @@
         ]
       },
       "locked": {
-        "lastModified": 1734584352,
-        "narHash": "sha256-VvNMtaogoB3k8+NsVEZW9IfOBz37Fo7uXlaaBchYAEU=",
-        "owner": "otisdog8",
+        "lastModified": 1736359846,
+        "narHash": "sha256-qLKaKP+2INTzeC4wXPw92tATAla+O43kc0pkm78HBMU=",
+        "owner": "shezdy",
         "repo": "hyprsplit",
-        "rev": "0067652c2d25373469b9b5a1a11aef3f455fa325",
+        "rev": "7aa814726afbde88b78cb62c3bac1d0e50708e9e",
         "type": "github"
       },
       "original": {
-        "owner": "otisdog8",
+        "owner": "shezdy",
         "ref": "main",
         "repo": "hyprsplit",
         "type": "github"

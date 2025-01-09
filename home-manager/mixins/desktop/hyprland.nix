@@ -33,6 +33,7 @@ in
         ", XF86AudioRaiseVolume, exec, wpctl set-volume -l 1.4 @DEFAULT_AUDIO_SINK@ 5%+"
         ", XF86AudioLowerVolume, exec, wpctl set-volume -l 1.4 @DEFAULT_AUDIO_SINK@ 5%-"
       ];
+        # "$mod, tab, overview:toggle"
       bind = [
         "SUPER, V, exec, cliphist list | fuzzel --dmenu | cliphist decode | wl-copy"
         "CTRL_ALT, l, exec, loginctl lock-session"
@@ -47,7 +48,6 @@ in
         "$mod_SHIFT, m, fullscreenstate, -1, 2"
         "$mod, p, pseudo"
         "$mod, s, togglefloating"
-        "$mod, tab, overview:toggle"
         "$mod, d, split:swapactiveworkspaces, current + 1"
         "$mod, g, split:grabroguewindows"
         "$mod, r, layoutmsg, togglesplit"
