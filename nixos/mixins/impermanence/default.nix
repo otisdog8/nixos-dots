@@ -98,6 +98,7 @@
         "Videos"
         ".steam"
         ".zen"
+        ".cargo"
         ".emacs.d"
         ".config/op"
         ".config/kdeconnect"

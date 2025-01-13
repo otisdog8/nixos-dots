@@ -41,7 +41,16 @@
     nfs-utils
     bcachefs-tools
     clevis
+    nixfmt-rfc-style
+    direnv
+    dive
+    podman-tui
+    docker-compose
+    podman-compose
+
   ];
+
+  programs.direnv.enable = true;
 
   programs.zsh = {
     syntaxHighlighting = {
@@ -56,4 +65,12 @@
 
   environment.variables = { EDITOR = "nvim"; VISUAL = "nvim"; };
   environment.enableAllTerminfo = true;
+  virtualisation.containers.enable = true;
+  virtualisation = {
+    podman = {
+      enable = true;
+      dockerCompat = true;
+      defaultNetwork.settings.dns_enabled = true;
+    };
+  };
 }
