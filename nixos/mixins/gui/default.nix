@@ -1,6 +1,21 @@
-{ inputs, lib, pkgs, outputs, ... }:
 {
-  imports = [ ./auth.nix ./desktop.nix ./desktop.nix ./fonts.nix ./plymouth.nix ./printing.nix ./sddm.nix ./theming.nix ];
+  inputs,
+  lib,
+  pkgs,
+  outputs,
+  ...
+}:
+{
+  imports = [
+    ./auth.nix
+    ./desktop.nix
+    ./desktop.nix
+    ./fonts.nix
+    ./plymouth.nix
+    ./printing.nix
+    ./sddm.nix
+    ./theming.nix
+  ];
   environment.systemPackages = with pkgs; [
     # Apps
     inputs.wezterm-flake.packages."${pkgs.system}".default
@@ -19,6 +34,7 @@
     zoom-us
     brave
     otisdog8.amazing-marvin
+    tetrio-desktop
   ];
   hardware.graphics = {
     enable = true;
