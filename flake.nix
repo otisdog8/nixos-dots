@@ -47,9 +47,14 @@
       helper = import ./lib { inherit inputs outputs stateVersion; };
       in {
     overlays = import ./overlays {inherit inputs;};
+    defaultPackage.x86_64-linux = home-manager.defaultPackage.x86_64-linux;
     homeConfigurations = {
       "jrt@constitution" = helper.mkHome {
         hostname = "constitution";
+        username = "jrt";
+      };
+      "jrt@matthew" = helper.mkHome {
+        hostname = "matthew";
         username = "jrt";
       };
     };
