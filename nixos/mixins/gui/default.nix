@@ -35,6 +35,7 @@
     brave
     otisdog8.amazing-marvin
     tetrio-desktop
+    quartus-prime-lite
   ];
   hardware.graphics = {
     enable = true;
