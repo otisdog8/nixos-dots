@@ -110,6 +110,7 @@
         ".config/Marvin"
         ".config/tetrio-desktop"
         ".cache/cliphist"
+        ".local/share/direnv"
         {
           directory = ".config/1Password";
           mode = "0700";
@@ -165,6 +166,11 @@
     directories = [
       "/var/cache/jellyfin"
     ];
+    users.jrt = {
+      directories = [
+        ".cache/uv"
+      ];
+    };
   };
   environment.persistence."/dots" = {
     enable = true;
