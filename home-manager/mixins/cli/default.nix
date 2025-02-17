@@ -19,11 +19,9 @@ in
     userName = "Jacob Root";
     signing.signByDefault = true;
     lfs.enable = true;
-
-        signing.key = "~/.ssh/id_ed25519.pub";
+      signing.key = "~/.ssh/id_ed25519.pub";
       extraConfig = {
         # Sign all commits using ssh key
-        commit.gpgsign = true;
         gpg.format = "ssh";
         user.signingkey = "~/.ssh/id_ed25519.pub";
       };

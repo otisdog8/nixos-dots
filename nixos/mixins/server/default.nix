@@ -28,9 +28,6 @@
       PermitRootLogin = "no"; # "yes", "without-password", "prohibit-password", "forced-commands-only", "no"
     };
   };
-  services.fail2ban= {
-    enable = true;
-  };
   networking.firewall.allowedTCPPorts = [ 22 ];
   networking.firewall.enable = true;
 }

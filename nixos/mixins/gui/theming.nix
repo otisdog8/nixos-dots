@@ -19,7 +19,6 @@
     rose-pine-cursor
     gnome-themes-extra
     sweet
-    sweet-folders
     nwg-look
   ];
 
