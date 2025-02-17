@@ -36,6 +36,8 @@
     otisdog8.amazing-marvin
     tetrio-desktop
     quartus-prime-lite
+    discord
+    lunar-client
   ];
   hardware.graphics = {
     enable = true;

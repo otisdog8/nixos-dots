@@ -47,7 +47,9 @@
     podman-tui
     docker-compose
     podman-compose
-
+    enscript
+    ghostscript
+    a2ps
   ];
 
   programs.direnv.enable = true;
