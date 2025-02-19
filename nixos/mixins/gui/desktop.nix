@@ -24,6 +24,7 @@
     kwalletmanager
     hypridle
     hyprpaper
+    inputs.hyprland.packages."${pkgs.system}".hyprland
     xdg-desktop-portal-hyprland
     xdg-desktop-portal
     xdg-desktop-portal-kde
