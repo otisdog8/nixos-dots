@@ -21,7 +21,29 @@
     inputs.nixos-hardware.nixosModules.common-pc-ssd
   ];
 
+  systemd.services.connect-wifi = {
+    script = ''
+      sleep 10
+      ${pkgs.networkmanager}/bin/nmcli device connect wlan0
+    '';
+    serviceConfig = {
+      Type = "oneshot";
+      User = "jrt";
+    };
+
+    wantedBy = [
+      "multi-user.target"
+    ];
+
+    after = [
+      "NetworkManager.service"
+      "iwd.service"
+      "multi-user.target"
+    ];
+  };
+
   services.xserver.videoDrivers = [ "nvidia" ];
+  networking.networkmanager.wifi.backend = "iwd";
 
   hardware.nvidia.open = true;
   hardware.nvidia.package = config.boot.kernelPackages.nvidiaPackages.beta;

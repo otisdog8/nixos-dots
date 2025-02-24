@@ -132,6 +132,7 @@
       "ydotool"
       "libvirtd"
       "hidraw"
+      "networkmanager"
     ]; # Enable ‘sudo’ for the user.
     packages = with pkgs; [
       firefox
