@@ -50,6 +50,12 @@
     enscript
     ghostscript
     a2ps
+    smartmontools
+    python3
+    lsof
+    cloc
+    zip
+    gnumake
   ];
 
   programs.direnv.enable = true;
@@ -65,7 +71,10 @@
   };
   environment.pathsToLink = [ "/share/zsh" ];
 
-  environment.variables = { EDITOR = "nvim"; VISUAL = "nvim"; };
+  environment.variables = {
+    EDITOR = "nvim";
+    VISUAL = "nvim";
+  };
   environment.enableAllTerminfo = true;
   virtualisation.containers.enable = true;
   virtualisation = {
