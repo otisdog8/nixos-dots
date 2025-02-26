@@ -11,8 +11,21 @@
   networking.hostName = "recusant";
   time.timeZone = "America/Los_Angeles";
 
-  boot.supportedFilesystems = [ "btrfs" "bcachefs" ];
-  boot.initrd.availableKernelModules = [ "tpm_crb" "tpm_tis" ];
+  boot.supportedFilesystems = [
+    "btrfs"
+    "bcachefs"
+  ];
+  boot.initrd.availableKernelModules = [
+    "tpm_crb"
+    "tpm_tis"
+  ];
+
+  boot.kernelParams = [
+    "nvme_core.default_ps_max_latency_us=0"
+    "pcie_aspm=off"
+    "pcie_port_pm=off"
+  ];
+
   boot.plymouth.enable = lib.mkForce false;
 
   boot.initrd.clevis = {
@@ -31,19 +44,19 @@
 
   services.xserver.videoDrivers = [ "modesetting" ];
   hardware.graphics.extraPackages32 = with pkgs.pkgsi686Linux; [ intel-media-driver ];
-  hardware.graphics = { # hardware.graphics since NixOS 24.11
+  hardware.graphics = {
+    # hardware.graphics since NixOS 24.11
     enable = true;
     extraPackages = with pkgs; [
       libvdpau-va-gl
       intel-media-sdk
       intel-media-driver
       intel-compute-runtime
-      vpl-gpu-rt          # for newer GPUs on NixOS >24.05 or unstable
+      vpl-gpu-rt # for newer GPUs on NixOS >24.05 or unstable
       intel-vaapi-driver # previously vaapiIntel
       vaapiVdpau
     ];
   };
-
 
   services.nfs.server.enable = true;
   services.nfs.server.exports = ''
