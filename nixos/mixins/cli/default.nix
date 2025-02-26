@@ -56,6 +56,7 @@
     cloc
     zip
     gnumake
+    nvme-cli
   ];
 
   programs.direnv.enable = true;
