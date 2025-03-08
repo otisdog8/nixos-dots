@@ -18,16 +18,16 @@
     waybar
     brightnessctl
     kdePackages.kwallet
-    polkit-kde-agent
-    kwallet-pam
+    hyprpolkitagent
+    kdePackages.kwallet-pam
     mako
-    kwalletmanager
+    kdePackages.kwalletmanager
     hypridle
     hyprpaper
     inputs.hyprland.packages."${pkgs.system}".hyprland
     xdg-desktop-portal-hyprland
     xdg-desktop-portal
-    xdg-desktop-portal-kde
+    kdePackages.xdg-desktop-portal-kde
     xdg-desktop-portal-gtk
     blueman
     networkmanager-openvpn
@@ -87,7 +87,7 @@ wireplumber.extraConfig.bluetoothEnhancements = {
       "org.freedesktop.impl.portal.Secret" = [ "kwallet" ];
     };
     extraPortals = [
-      pkgs.xdg-desktop-portal-kde
+      pkgs.kdePackages.xdg-desktop-portal-kde
       pkgs.xdg-desktop-portal-gtk
     ];
   };

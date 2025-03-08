@@ -8,9 +8,8 @@
 
     # Desktop
     kdePackages.kwallet
-    polkit-kde-agent
-    kwallet-pam
-    kwalletmanager
+    kdePackages.kwallet-pam
+    kdePackages.kwalletmanager
   ];
 
     environment.etc = {
@@ -32,34 +31,18 @@
   security.pam.services = {
    login.kwallet = {
      enable = true;
-     package = pkgs.kwallet-pam;
+     package = pkgs.kdePackages.kwallet-pam;
    };
    kde = {
      allowNullPassword = true;
      kwallet = {
        enable = true;
-       package = pkgs.kwallet-pam;
+       package = pkgs.kdePackages.kwallet-pam;
      };
    };
   };
   security.pam.services.kwallet = {
   name = "kwallet";
   enableKwallet = true;
-  };
-
-  systemd = {
-  user.services.polkit-kde-authentication-agent-1 = {
-    description = "polkit-kde-authentication-agent-1";
-    wantedBy = [ "graphical-session.target" ];
-    wants = [ "graphical-session.target" ];
-    after = [ "graphical-session.target" ];
-    serviceConfig = {
-        Type = "simple";
-        ExecStart = "${pkgs.polkit-kde-agent}/libexec/polkit-kde-authentication-agent-1";
-        Restart = "on-failure";
-        RestartSec = 1;
-        TimeoutStopSec = 10;
-      };
-  };
   };
 }

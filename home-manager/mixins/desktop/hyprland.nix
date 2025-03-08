@@ -137,6 +137,7 @@ in
         "hyprpaper"
         "1password --silent"
         "kwalletd6"
+        "systemctl --user start hyprpolkitagent"
         "polkit-agent-helper-1"
         "${pkgs.kdePackages.kwallet-pam}/libexec/pam_kwallet_init"
         "waybar"
