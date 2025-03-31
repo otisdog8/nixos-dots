@@ -757,15 +757,16 @@
     },
     "nixpkgs-otisdog8": {
       "locked": {
-        "lastModified": 1736231119,
-        "narHash": "sha256-nqb7SO/mH52nMiWdbZjetH0OQjwErCK9zEr0MVvy3qw=",
+        "lastModified": 1741480960,
+        "narHash": "sha256-YyYmX2LxwbpTYCYxSYuiR08B2rL500e8RohBAz2Sh2Q=",
         "owner": "otisdog8",
         "repo": "nixpkgs",
-        "rev": "a0d5f837ec5a759de6dd4716dc6f66167ca66078",
+        "rev": "82ad4f6f92e3bd30df57eda09f006c055310da0c",
         "type": "github"
       },
       "original": {
         "owner": "otisdog8",
+        "ref": "marvin",
         "repo": "nixpkgs",
         "type": "github"
       }

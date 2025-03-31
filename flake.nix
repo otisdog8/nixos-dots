@@ -9,7 +9,7 @@
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
-    nixpkgs-otisdog8.url = "github:otisdog8/nixpkgs";
+    nixpkgs-otisdog8.url = "github:otisdog8/nixpkgs/marvin";
     nixos-hardware.url = "github:NixOS/nixos-hardware/master";
     chaotic.url = "github:chaotic-cx/nyx/nyxpkgs-unstable";
     impermanence = {
