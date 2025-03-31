@@ -111,6 +111,7 @@
         ".config/tetrio-desktop"
         ".cache/cliphist"
         ".local/share/direnv"
+        ".local/share/FasterThanLight"
         {
           directory = ".config/1Password";
           mode = "0700";
@@ -157,6 +158,7 @@
         "Downloads"
         ".local/share/PrismLauncher"
         ".local/share/Steam"
+        ".local/share/slipstream"
       ];
     };
   };

@@ -38,6 +38,7 @@
     quartus-prime-lite
     discord
     lunar-client
+    slipstream
   ];
   hardware.graphics = {
     enable = true;

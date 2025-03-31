@@ -148,9 +148,6 @@ in
         "wl-paste --watch cliphist store"
       ];
       windowrule = [
-        "float,polkit-kde-authentication-agent-1"
-        "center,polkit-kde-authentication-agent-1"
-        "size 500 500,polkit-kde-authentication-agent-1"
       ];
       env = [
         "XDG_SCREENSHOTS_DIR,$home/Pictures/Screenshots/"
