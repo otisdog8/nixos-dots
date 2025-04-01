@@ -39,6 +39,7 @@
     discord
     lunar-client
     slipstream
+    obsidian
   ];
   hardware.graphics = {
     enable = true;
