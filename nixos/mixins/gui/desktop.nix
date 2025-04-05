@@ -1,4 +1,9 @@
-{ inputs, lib, pkgs, ... }:
+{
+  inputs,
+  lib,
+  pkgs,
+  ...
+}:
 {
   environment.systemPackages = with pkgs; [
     # Desktop
@@ -23,7 +28,6 @@
     mako
     kdePackages.kwalletmanager
     hypridle
-    hyprpaper
     inputs.hyprland.packages."${pkgs.system}".hyprland
     xdg-desktop-portal-hyprland
     xdg-desktop-portal
@@ -42,12 +46,12 @@
   programs.hyprland.enable = true; # enable Hyprland
   programs.hyprland.package = inputs.hyprland.packages."${pkgs.system}".hyprland;
 
-	systemd.tmpfiles.rules = [
-	  "L+ /usr/share/xdg-desktop-portal/portals - - - - /run/current-system/sw/share/xdg-desktop-portal/portals "
-	  "L+ /usr/libexec/xdg-desktop-portal-gtk - - - - ${pkgs.xdg-desktop-portal-gtk}/libexec/xdg-desktop-portal-gtk "
-	  "L+ /usr/libexec/xdg-desktop-portal-hyprland - - - - ${pkgs.xdg-desktop-portal-hyprland}/libexec/xdg-desktop-portal-hyprland "
-	  "L+ /usr/libexec/xdg-desktop-portal - - - - ${pkgs.xdg-desktop-portal}/libexec/xdg-desktop-portal "
-	];
+  systemd.tmpfiles.rules = [
+    "L+ /usr/share/xdg-desktop-portal/portals - - - - /run/current-system/sw/share/xdg-desktop-portal/portals "
+    "L+ /usr/libexec/xdg-desktop-portal-gtk - - - - ${pkgs.xdg-desktop-portal-gtk}/libexec/xdg-desktop-portal-gtk "
+    "L+ /usr/libexec/xdg-desktop-portal-hyprland - - - - ${pkgs.xdg-desktop-portal-hyprland}/libexec/xdg-desktop-portal-hyprland "
+    "L+ /usr/libexec/xdg-desktop-portal - - - - ${pkgs.xdg-desktop-portal}/libexec/xdg-desktop-portal "
+  ];
 
   programs.obs-studio = {
     enable = true;
@@ -61,11 +65,11 @@
     lidSwitch = "ignore";
   };
   services.pipewire = {
-     enable = true;
-     pulse.enable = true;
-     alsa.enable = true;
-     alsa.support32Bit = true;
-     jack.enable = true;
+    enable = true;
+    pulse.enable = true;
+    alsa.enable = true;
+    alsa.support32Bit = true;
+    jack.enable = true;
   };
 
   services.playerctld.enable = true;
@@ -86,6 +90,6 @@
   };
 
   services.udisks2.enable = true;
-services.blueman.enable = true;
-hardware.bluetooth.enable = true;
+  services.blueman.enable = true;
+  hardware.bluetooth.enable = true;
 }

@@ -134,7 +134,6 @@ in
         ",highres,auto,1,bitdepth,10"
       ];
       exec-once = [
-        "hyprpaper"
         "1password --silent"
         "kwalletd6"
         "systemctl --user start hyprpolkitagent"
@@ -144,7 +143,6 @@ in
         "nm-applet"
         "blueman-applet"
         "mako"
-        "hypridle"
         "wl-paste --watch cliphist store"
       ];
       windowrule = [

@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
 cache_file="$HOME/.cache/ip_cache.txt"
 

@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
 cache_file="$HOME/.cache/wttr_cache.txt"
 
