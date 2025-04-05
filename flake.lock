@@ -755,6 +755,22 @@
         "type": "github"
       }
     },
+    "nixpkgs-older": {
+      "locked": {
+        "lastModified": 1741373318,
+        "narHash": "sha256-0USZO/shTDtk+K4yNVQCUd5cuNVuqmqw/ZTVZ+b1huU=",
+        "owner": "NixOS",
+        "repo": "nixpkgs",
+        "rev": "3e042434c17eff8ed5528faa4c4503facc2bdf6c",
+        "type": "github"
+      },
+      "original": {
+        "owner": "NixOS",
+        "repo": "nixpkgs",
+        "rev": "3e042434c17eff8ed5528faa4c4503facc2bdf6c",
+        "type": "github"
+      }
+    },
     "nixpkgs-otisdog8": {
       "locked": {
         "lastModified": 1741480960,
@@ -912,6 +928,7 @@
         "lanzaboote": "lanzaboote",
         "nixos-hardware": "nixos-hardware",
         "nixpkgs": "nixpkgs_3",
+        "nixpkgs-older": "nixpkgs-older",
         "nixpkgs-otisdog8": "nixpkgs-otisdog8",
         "rose-pine-hyprcursor": "rose-pine-hyprcursor",
         "wezterm-flake": "wezterm-flake",

@@ -6,4 +6,12 @@
       config.allowUnfree = true;
     };
   };
+  older-packages = final: _prev: {
+    older = import inputs.nixpkgs-older {
+      system = final.system;
+      config.allowUnfree = true;
+    };
+  };
+
+
 }

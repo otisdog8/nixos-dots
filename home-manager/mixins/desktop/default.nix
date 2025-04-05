@@ -12,11 +12,20 @@ let
   inherit (pkgs.stdenv) isDarwin isLinux;
 in
 {
-  imports = [ ./hypridle.nix ./hyprland.nix ./hyprlock.nix ./hyprpaper.nix ./theming.nix ./waybar.nix ./wlogout.nix ./xdg.nix ];
+  imports = [
+    ./hypridle.nix
+    ./hyprland.nix
+    ./hyprlock.nix
+    ./hyprpaper.nix
+    ./theming.nix
+    ./waybar.nix
+    ./wlogout.nix
+    ./xdg.nix
+  ];
   dconf.settings = {
     "org/virt-manager/virt-manager/connections" = {
-      autoconnect = ["qemu:///system"];
-      uris = ["qemu:///system"];
+      autoconnect = [ "qemu:///system" ];
+      uris = [ "qemu:///system" ];
     };
   };
   services.kdeconnect = {
@@ -35,5 +44,14 @@ in
       obs-backgroundremoval
       obs-pipewire-audio-capture
     ];
+  };
+  xdg.mimeApps = {
+    enable = true;
+    defaultApplications = {
+      "inode/directory" = [ "pcmanfm-qt.desktop" ];
+    };
+    associations.added = {
+      "inode/directory" = [ "pcmanfm-qt.desktop" ];
+    };
   };
 }

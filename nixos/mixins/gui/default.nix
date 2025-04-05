@@ -40,6 +40,7 @@
     lunar-client
     slipstream
     obsidian
+    linux-firmware
   ];
   hardware.graphics = {
     enable = true;

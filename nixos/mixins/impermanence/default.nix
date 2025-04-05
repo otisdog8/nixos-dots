@@ -98,6 +98,7 @@
         ".zen"
         ".cargo"
         ".emacs.d"
+        ".zoom"
         ".lunarclient"
         ".minecraft"
         ".config/lunarclient"
@@ -108,7 +109,9 @@
         ".config/Proton"
         ".config/BraveSoftware"
         ".config/Marvin"
+        ".config/obs-studio"
         ".config/tetrio-desktop"
+        ".config/obsidian"
         ".cache/cliphist"
         ".local/share/direnv"
         ".local/share/FasterThanLight"
@@ -135,6 +138,8 @@
         }
       ];
       files = [
+        ".config/zoom.conf"
+        ".config/zoomus.conf"
         ".bash_history"
         ".zsh_history"
         ".face.icon"

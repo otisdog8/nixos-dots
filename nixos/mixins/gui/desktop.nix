@@ -27,7 +27,6 @@
     inputs.hyprland.packages."${pkgs.system}".hyprland
     xdg-desktop-portal-hyprland
     xdg-desktop-portal
-    kdePackages.xdg-desktop-portal-kde
     xdg-desktop-portal-gtk
     blueman
     networkmanager-openvpn
@@ -43,6 +42,13 @@
   programs.hyprland.enable = true; # enable Hyprland
   programs.hyprland.package = inputs.hyprland.packages."${pkgs.system}".hyprland;
 
+	systemd.tmpfiles.rules = [
+	  "L+ /usr/share/xdg-desktop-portal/portals - - - - /run/current-system/sw/share/xdg-desktop-portal/portals "
+	  "L+ /usr/libexec/xdg-desktop-portal-gtk - - - - ${pkgs.xdg-desktop-portal-gtk}/libexec/xdg-desktop-portal-gtk "
+	  "L+ /usr/libexec/xdg-desktop-portal-hyprland - - - - ${pkgs.xdg-desktop-portal-hyprland}/libexec/xdg-desktop-portal-hyprland "
+	  "L+ /usr/libexec/xdg-desktop-portal - - - - ${pkgs.xdg-desktop-portal}/libexec/xdg-desktop-portal "
+	];
+
   programs.obs-studio = {
     enable = true;
     enableVirtualCamera = true;
@@ -57,18 +63,9 @@
   services.pipewire = {
      enable = true;
      pulse.enable = true;
-     jack.enable = true;
      alsa.enable = true;
      alsa.support32Bit = true;
-wireplumber.extraConfig.bluetoothEnhancements = {
-  "monitor.bluez.properties" = {
-      "bluez5.enable-sbc-xq" = true;
-      "bluez5.enable-msbc" = true;
-      "bluez5.enable-hw-volume" = true;
-      "bluez5.roles" = [ "hsp_hs" "hsp_ag" "hfp_hf" "hfp_ag" ];
-  };
-};
-
+     jack.enable = true;
   };
 
   services.playerctld.enable = true;
@@ -86,10 +83,6 @@ wireplumber.extraConfig.bluetoothEnhancements = {
       "org.freedesktop.impl.portal.FileChooser" = [ "kde" ];
       "org.freedesktop.impl.portal.Secret" = [ "kwallet" ];
     };
-    extraPortals = [
-      pkgs.kdePackages.xdg-desktop-portal-kde
-      pkgs.xdg-desktop-portal-gtk
-    ];
   };
 
   services.udisks2.enable = true;
