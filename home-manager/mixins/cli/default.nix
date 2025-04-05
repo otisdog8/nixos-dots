@@ -1,4 +1,3 @@
-
 {
   config,
   inputs,
@@ -19,12 +18,12 @@ in
     userName = "Jacob Root";
     signing.signByDefault = true;
     lfs.enable = true;
-      signing.key = "~/.ssh/id_ed25519.pub";
-      extraConfig = {
-        # Sign all commits using ssh key
-        gpg.format = "ssh";
-        user.signingkey = "~/.ssh/id_ed25519.pub";
-      };
+    signing.key = "~/.ssh/id_ed25519.pub";
+    extraConfig = {
+      # Sign all commits using ssh key
+      gpg.format = "ssh";
+      user.signingkey = "~/.ssh/id_ed25519.pub";
+    };
   };
   programs.ripgrep.enable = true;
   programs.jq.enable = true;
@@ -37,7 +36,7 @@ in
   services.ssh-agent.enable = true;
 
   home.file.".profile".text = ''
-  export SSH_AUTH_SOCK=$XDG_RUNTIME_DIR/ssh-agent
+    export SSH_AUTH_SOCK=$XDG_RUNTIME_DIR/ssh-agent
   '';
 
   programs.ssh = {
@@ -71,9 +70,11 @@ in
     enableCompletion = true;
     #autosuggestion.enable = true;
     syntaxHighlighting.enable = true;
-    initExtra = ''
-      SOUND_PREFIX=${inputs.self}/sounds/
-'' + builtins.readFile ../../../config/zsh;
+    initExtra =
+      ''
+        SOUND_PREFIX=${inputs.self}/sounds/
+      ''
+      + builtins.readFile ../../../config/zsh;
   };
   programs.starship.enable = true;
   programs.starship.settings = {

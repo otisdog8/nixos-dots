@@ -12,7 +12,10 @@ let
   inherit (pkgs.stdenv) isDarwin isLinux;
 in
 {
-  imports = [ ./mixins/cli ./mixins/desktop ];
+  imports = [
+    ./mixins/cli
+    ./mixins/desktop
+  ];
   home.username = username;
   home.homeDirectory = "/home/${username}";
   home.stateVersion = stateVersion;

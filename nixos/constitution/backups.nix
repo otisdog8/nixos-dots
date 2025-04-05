@@ -11,9 +11,9 @@
             "/mnt/btrfs_root" = {
               snapshot_dir = "/mnt/btrfs_root/btrbk_snapshots";
               subvolume = {
-                "persist" = {};
-                "large" = {};
-                "dots" = {};
+                "persist" = { };
+                "large" = { };
+                "dots" = { };
               };
             };
           };

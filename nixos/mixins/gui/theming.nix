@@ -1,4 +1,9 @@
-{ inputs, lib, pkgs, ... }:
+{
+  inputs,
+  lib,
+  pkgs,
+  ...
+}:
 {
   environment.systemPackages = with pkgs; [
     # Theming
@@ -22,7 +27,11 @@
     nwg-look
   ];
 
-  environment.pathsToLink = [ "/share/Kvantum" "/share/icons" "/share/pixmaps" ];
+  environment.pathsToLink = [
+    "/share/Kvantum"
+    "/share/icons"
+    "/share/pixmaps"
+  ];
 
   xdg.icons.enable = true;
   xdg.menus.enable = true;

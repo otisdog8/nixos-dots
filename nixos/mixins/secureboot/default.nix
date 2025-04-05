@@ -16,11 +16,11 @@
 }:
 
 {
-# Define systemd service to run on boot to load avatars for sddm
+  # Define systemd service to run on boot to load avatars for sddm
   security.tpm2.enable = true;
   systemd.tpm2.enable = true;
-  security.tpm2.pkcs11.enable = true;  # expose /run/current-system/sw/lib/libtpm2_pkcs11.so
-  security.tpm2.tctiEnvironment.enable = true;  # TPM2TOOLS_TCTI and TPM2_PKCS11_TCTI env variables
+  security.tpm2.pkcs11.enable = true; # expose /run/current-system/sw/lib/libtpm2_pkcs11.so
+  security.tpm2.tctiEnvironment.enable = true; # TPM2TOOLS_TCTI and TPM2_PKCS11_TCTI env variables
 
   # boot.kernelPackages = pkgs.linuxPackages_latest;
   boot.initrd.systemd.enable = true;
@@ -28,13 +28,13 @@
 
   # Use the systemd-boot EFI boot loader.
   boot.loader.systemd-boot.enable = lib.mkForce false;
-    boot.lanzaboote = {
+  boot.lanzaboote = {
     enable = true;
     pkiBundle = "/var/lib/sbctl";
   };
   boot.loader.efi.canTouchEfiVariables = true;
   environment.systemPackages = with pkgs; [
-     sbctl
-     tpm2-tss
+    sbctl
+    tpm2-tss
   ];
 }

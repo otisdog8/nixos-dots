@@ -17,7 +17,7 @@
   services.tailscale.openFirewall = true;
   services.tailscale.useRoutingFeatures = "both";
   environment.enableDebugInfo = true;
-  
+
   services.openssh = {
     enable = true;
     ports = [ 22 ];

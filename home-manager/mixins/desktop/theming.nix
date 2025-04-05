@@ -44,12 +44,12 @@ in
   programs.fuzzel = {
     enable = true;
     settings.main = {
-      font="monospace:size=6";
-      icon-theme="candy-icons";
-      lines=25;
-      width=90;
-      horizontal-pad=20;
-      vertical-pad=0;
+      font = "monospace:size=6";
+      icon-theme = "candy-icons";
+      lines = 25;
+      width = 90;
+      horizontal-pad = 20;
+      vertical-pad = 0;
     };
   };
   services.mako = {

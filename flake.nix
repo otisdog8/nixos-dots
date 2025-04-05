@@ -41,52 +41,68 @@
     wezterm-flake.inputs.nixpkgs.follows = "nixpkgs";
   };
 
-  outputs = { self, nixpkgs, nixos-hardware, chaotic, impermanence, lanzaboote, home-manager, zen-browser, hyprland, hyprsplit, Hyprspace, wezterm-flake, ... }@inputs:
+  outputs =
+    {
+      self,
+      nixpkgs,
+      nixos-hardware,
+      chaotic,
+      impermanence,
+      lanzaboote,
+      home-manager,
+      zen-browser,
+      hyprland,
+      hyprsplit,
+      Hyprspace,
+      wezterm-flake,
+      ...
+    }@inputs:
     let
       inherit (self) outputs;
       stateVersion = "24.05";
       helper = import ./lib { inherit inputs outputs stateVersion; };
-      in {
-    overlays = import ./overlays {inherit inputs;};
-    defaultPackage.x86_64-linux = home-manager.defaultPackage.x86_64-linux;
-    homeConfigurations = {
-      "jrt@constitution" = helper.mkHome {
+    in
+    {
+      overlays = import ./overlays { inherit inputs; };
+      defaultPackage.x86_64-linux = home-manager.defaultPackage.x86_64-linux;
+      homeConfigurations = {
+        "jrt@constitution" = helper.mkHome {
+          hostname = "constitution";
+          username = "jrt";
+        };
+        "jrt@matthew" = helper.mkHome {
+          hostname = "matthew";
+          username = "jrt";
+        };
+      };
+      nixosConfigurations.constitution = helper.mkNixos {
         hostname = "constitution";
-        username = "jrt";
+        stateVersion = "24.05";
       };
-      "jrt@matthew" = helper.mkHome {
-        hostname = "matthew";
-        username = "jrt";
+      nixosConfigurations.excelsior = helper.mkNixos {
+        hostname = "excelsior";
+        stateVersion = "24.05";
       };
-    };
-    nixosConfigurations.constitution = helper.mkNixos {
-      hostname = "constitution";
-      stateVersion = "24.05";
-    };
-    nixosConfigurations.excelsior = helper.mkNixos {
-      hostname = "excelsior";
-      stateVersion = "24.05";
-    };
-    nixosConfigurations.recusant = helper.mkNixos {
-      hostname = "recusant";
-      stateVersion = "24.05";
-    };
-    nixosConfigurations.fantail = helper.mkNixos {
-      hostname = "fantail";
-      stateVersion = "24.05";
-    };
-    nixosConfigurations.munificent = helper.mkNixos {
-      hostname = "munificent";
-      stateVersion = "24.05";
-    };
-    nixosConfigurations.arquitens = helper.mkNixos {
-      hostname = "arquitens";
-      stateVersion = "24.05";
-    };
-    nixosConfigurations.carrack = helper.mkNixos {
-      hostname = "carrack";
-      stateVersion = "24.05";
-    };
+      nixosConfigurations.recusant = helper.mkNixos {
+        hostname = "recusant";
+        stateVersion = "24.05";
+      };
+      nixosConfigurations.fantail = helper.mkNixos {
+        hostname = "fantail";
+        stateVersion = "24.05";
+      };
+      nixosConfigurations.munificent = helper.mkNixos {
+        hostname = "munificent";
+        stateVersion = "24.05";
+      };
+      nixosConfigurations.arquitens = helper.mkNixos {
+        hostname = "arquitens";
+        stateVersion = "24.05";
+      };
+      nixosConfigurations.carrack = helper.mkNixos {
+        hostname = "carrack";
+        stateVersion = "24.05";
+      };
 
-  };
+    };
 }

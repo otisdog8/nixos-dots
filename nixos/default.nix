@@ -70,13 +70,13 @@
   nixpkgs = {
     overlays = [
       outputs.overlays.older-packages
-    (final: prev: {
-      linux-firmware = prev.linux-firmware.overrideAttrs (old: {
-        postInstall = ''
-          cp ${../files/ibt-0190-0291-usb.sfi} $out/lib/firmware/intel/ibt-0190-0291-usb.sfi
-        '';
-      });
-    })
+      (final: prev: {
+        linux-firmware = prev.linux-firmware.overrideAttrs (old: {
+          postInstall = ''
+            cp ${../files/ibt-0190-0291-usb.sfi} $out/lib/firmware/intel/ibt-0190-0291-usb.sfi
+          '';
+        });
+      })
 
     ];
 

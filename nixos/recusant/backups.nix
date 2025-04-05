@@ -1,4 +1,3 @@
-
 { lib, pkgs, ... }:
 {
   services.btrbk = {
@@ -12,7 +11,7 @@
             "/mnt/btrfs_root" = {
               snapshot_dir = "/mnt/btrfs_root/btrbk_snapshots";
               subvolume = {
-                "mc" = {};
+                "mc" = { };
               };
             };
           };

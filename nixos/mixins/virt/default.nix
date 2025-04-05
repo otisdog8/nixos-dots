@@ -1,5 +1,9 @@
-
-{ inputs, lib, pkgs, ... }:
+{
+  inputs,
+  lib,
+  pkgs,
+  ...
+}:
 {
   # Ensure the system installs the desired virtualization packages
   environment.systemPackages = with pkgs; [

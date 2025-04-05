@@ -14,7 +14,7 @@
 
 {
   imports = [
-     ./secrets.nix
+    ./secrets.nix
   ];
 
   networking.firewall.allowedTCPPorts = [
@@ -44,7 +44,6 @@
     51871 # WireGuard encryption tunnel endpoint
   ];
 
-
   environment.systemPackages = with pkgs; [
     k3s
   ];
@@ -52,17 +51,23 @@
   services.k3s = {
     enable = true;
     role = "server";
-    extraFlags = [ "--flannel-backend=none"
-                   "--disable-network-policy"
-                   "--tls-san=100.126.30.73"
-                   "--tls-san=100.65.16.13"
-                   "--tls-san=100.80.37.112"
-                   "--kube-apiserver-arg default-not-ready-toleration-seconds=60"
-                   "--kube-apiserver-arg default-unreachable-toleration-seconds=60"
-                   "--kubelet-arg node-status-update-frequency=2s" ];
+    extraFlags = [
+      "--flannel-backend=none"
+      "--disable-network-policy"
+      "--tls-san=100.126.30.73"
+      "--tls-san=100.65.16.13"
+      "--tls-san=100.80.37.112"
+      "--kube-apiserver-arg default-not-ready-toleration-seconds=60"
+      "--kube-apiserver-arg default-unreachable-toleration-seconds=60"
+      "--kubelet-arg node-status-update-frequency=2s"
+    ];
   };
 
-  boot.kernelModules = [ "rbd" "nbd" "ceph" ];
+  boot.kernelModules = [
+    "rbd"
+    "nbd"
+    "ceph"
+  ];
 
   networking.firewall.enable = lib.mkForce false;
 

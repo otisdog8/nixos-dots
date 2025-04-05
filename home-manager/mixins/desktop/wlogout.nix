@@ -13,7 +13,7 @@ let
 in
 {
   programs.wlogout = {
-    enable=true;
+    enable = true;
     style = ''
       @define-color bar-bg rgba(0, 0, 0, 0);
 
@@ -100,34 +100,34 @@ in
           border-radius: 0px 0px 0px 0px;
           margin : 0px 896px 400px 0px;
       }
-'';
+    '';
     layout = [
       {
-          "label" = "lock";
-          "action" = "~/.scripts/lock";
-          "text" = "Lock";
-          "keybind" = "l";
+        "label" = "lock";
+        "action" = "~/.scripts/lock";
+        "text" = "Lock";
+        "keybind" = "l";
       }
 
       {
-          "label" = "logout";
-          "action" = "hyprctl dispatch exit 0";
-          "text" = "Logout";
-          "keybind" = "e";
+        "label" = "logout";
+        "action" = "hyprctl dispatch exit 0";
+        "text" = "Logout";
+        "keybind" = "e";
       }
 
       {
-          "label" = "shutdown";
-          "action" = "systemctl poweroff";
-          "text" = "Shutdown";
-          "keybind" = "s";
+        "label" = "shutdown";
+        "action" = "systemctl poweroff";
+        "text" = "Shutdown";
+        "keybind" = "s";
       }
 
       {
-          "label" = "reboot";
-          "action" = "systemctl reboot";
-          "text" = "Reboot";
-          "keybind" = "r";
+        "label" = "reboot";
+        "action" = "systemctl reboot";
+        "text" = "Reboot";
+        "keybind" = "r";
       }
 
     ];

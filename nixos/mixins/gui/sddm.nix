@@ -1,4 +1,10 @@
-{ inputs, lib, pkgs, username, ... }:
+{
+  inputs,
+  lib,
+  pkgs,
+  username,
+  ...
+}:
 {
   environment.systemPackages = with pkgs; [
     # Theming
@@ -17,17 +23,15 @@
     inputs.rose-pine-hyprcursor.packages.${pkgs.system}.default
     rose-pine-cursor
     sweet
-(
-  symlinkJoin {
-    name = "sweet-wrapped";
-    paths = [ pkgs.sweet-nova ];
-    nativeBuildInputs = [ pkgs.makeBinaryWrapper ];
-    postBuild = ''
-     rm $out/share/sddm/themes/Sweet/assets/bg.jpg
-     ln -s ${inputs.self}/images/wallpaper.jpg $out/share/sddm/themes/Sweet/assets/bg.jpg
-    '';
-  }
-)
+    (symlinkJoin {
+      name = "sweet-wrapped";
+      paths = [ pkgs.sweet-nova ];
+      nativeBuildInputs = [ pkgs.makeBinaryWrapper ];
+      postBuild = ''
+        rm $out/share/sddm/themes/Sweet/assets/bg.jpg
+        ln -s ${inputs.self}/images/wallpaper.jpg $out/share/sddm/themes/Sweet/assets/bg.jpg
+      '';
+    })
   ];
 
   system.activationScripts.copyIcon = ''

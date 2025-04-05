@@ -30,11 +30,11 @@ in
   };
 
   users.users.mc = {
-     isSystemUser = true;
-     description = "For Minecraft Servers";
-     group = "mc";
-     shell = pkgs.bash;
+    isSystemUser = true;
+    description = "For Minecraft Servers";
+    group = "mc";
+    shell = pkgs.bash;
   };
-  users.groups.mc = {};
+  users.groups.mc = { };
 
 }

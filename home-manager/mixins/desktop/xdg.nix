@@ -11,17 +11,23 @@
 let
   inherit (pkgs.stdenv) isDarwin isLinux;
 in
-  {
-    xdg.portal = {
+{
+  xdg.portal = {
     enable = true;
     xdgOpenUsePortal = true;
     config.common = {
-      default = [ "hyprland" "gtk" ];
+      default = [
+        "hyprland"
+        "gtk"
+      ];
       "org.freedesktop.impl.portal.FileChooser" = [ "kde" ];
       "org.freedesktop.impl.portal.Secret" = [ "kwallet" ];
     };
     config.hyprland = {
-      default = [ "hyprland" "gtk" ];
+      default = [
+        "hyprland"
+        "gtk"
+      ];
       "org.freedesktop.impl.portal.FileChooser" = [ "kde" ];
       "org.freedesktop.impl.portal.Secret" = [ "kwallet" ];
     };
@@ -31,14 +37,14 @@ in
     ];
   };
   xdg.mimeApps = {
-      enable                              =  true;
-      defaultApplications = {
-          "default-web-browser"           = [ "zen.desktop" ];
-          "text/html"                     = [ "zen.desktop" ];
-          "x-scheme-handler/http"         = [ "zen.desktop" ];
-          "x-scheme-handler/https"        = [ "zen.desktop" ];
-          "x-scheme-handler/about"        = [ "zen.desktop" ];
-          "x-scheme-handler/unknown"      = [ "zen.desktop" ];
-      };
+    enable = true;
+    defaultApplications = {
+      "default-web-browser" = [ "zen.desktop" ];
+      "text/html" = [ "zen.desktop" ];
+      "x-scheme-handler/http" = [ "zen.desktop" ];
+      "x-scheme-handler/https" = [ "zen.desktop" ];
+      "x-scheme-handler/about" = [ "zen.desktop" ];
+      "x-scheme-handler/unknown" = [ "zen.desktop" ];
+    };
   };
 }

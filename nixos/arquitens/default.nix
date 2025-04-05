@@ -23,11 +23,17 @@
   ];
   boot.initrd = {
     supportedFilesystems = [ "nfs" ];
-    kernelModules = [ "nfs" "amdgpu" ];
+    kernelModules = [
+      "nfs"
+      "amdgpu"
+    ];
   };
   services.xserver.videoDrivers = [ "amdgpu" ];
   services.k3s.clusterInit = true;
-  services.k3s.extraFlags = [ "--bind-address=100.126.30.73" "--node-ip=100.126.30.73" "--advertise-address=100.126.30.73"];
-
+  services.k3s.extraFlags = [
+    "--bind-address=100.126.30.73"
+    "--node-ip=100.126.30.73"
+    "--advertise-address=100.126.30.73"
+  ];
 
 }
