@@ -17,7 +17,7 @@ if [[ -d /sys/class/power_supply/BAT0/ ]] then
     icon_index=$((battery_percentage / 10))
 
     # Get the corresponding icon
-    battery_icon=$\{battery_icons[icon_index]}
+    battery_icon=${battery_icons[icon_index]}
 
     # Check if the battery is charging
     if [ "$battery_status" = "Charging" ]; then
