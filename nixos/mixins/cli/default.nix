@@ -57,6 +57,7 @@
     zip
     gnumake
     nvme-cli
+    pandoc
   ];
 
   programs.direnv.enable = true;
