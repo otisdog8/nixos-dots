@@ -88,8 +88,9 @@
   };
   # boot.kernelPackages = pkgs.linuxPackagesFor (pkgs.linux_6_13.override { argsOverride = { version = "6.13.5"; }; });
   #boot.kernelPackages = pkgs.linuxKernel.packages.linux_6_13_5;
-  boot.kernelPackages = pkgs.older.linuxKernel.packages.linux_6_13;
+  # boot.kernelPackages = pkgs.older.linuxKernel.packages.linux_6_13;
   # boot.kernelPackages = pkgs.linuxPackages_testing;
+  boot.kernelPackages = pkgs.linuxPackages_latest;
   boot.initrd.systemd.enable = true;
 
   hardware.enableAllFirmware = true;
