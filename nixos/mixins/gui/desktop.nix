@@ -45,6 +45,7 @@
   services.libinput.enable = true;
   programs.hyprland.enable = true; # enable Hyprland
   programs.hyprland.package = inputs.hyprland.packages."${pkgs.system}".hyprland;
+  programs.hyprland.portalPackage = inputs.hyprland.packages.${pkgs.stdenv.hostPlatform.system}.xdg-desktop-portal-hyprland;
 
   systemd.tmpfiles.rules = [
     "L+ /usr/share/xdg-desktop-portal/portals - - - - /run/current-system/sw/share/xdg-desktop-portal/portals "

@@ -94,6 +94,7 @@
         "Pictures"
         "Documents"
         "Videos"
+        ".cursor"
         ".steam"
         ".zen"
         ".cargo"

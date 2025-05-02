@@ -22,6 +22,8 @@ in
       inputs.hyprsplit.packages.${pkgs.stdenv.hostPlatform.system}.hyprsplit
       # inputs.Hyprspace.packages.${pkgs.system}.Hyprspace
     ];
+    package = inputs.hyprland.packages.${pkgs.stdenv.hostPlatform.system}.hyprland;
+    portalPackage = inputs.hyprland.packages.${pkgs.stdenv.hostPlatform.system}.xdg-desktop-portal-hyprland;
     systemd.variables = [ "--all" ];
     settings = {
       debug = {

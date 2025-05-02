@@ -24,8 +24,15 @@
       url = "github:nix-community/lanzaboote/v0.4.2";
       inputs.nixpkgs.follows = "nixpkgs";
     };
-    zen-browser.url = "github:0xc000022070/zen-browser-flake";
-    hyprland.url = "github:hyprwm/Hyprland?submodules=1";
+    zen-browser = {
+      url = "github:0xc000022070/zen-browser-flake";
+      inputs.nixpkgs.follows = "nixpkgs";
+      inputs.home-manager.follows = "home-manager";
+    };
+    hyprland = {
+      url = "github:hyprwm/Hyprland?submodules=1";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
     Hyprspace = {
       url = "github:KZDKM/Hyprspace";
 
@@ -33,10 +40,13 @@
       inputs.hyprland.follows = "hyprland";
     };
     hyprsplit = {
-      url = "github:shezdy/hyprsplit/main";
+      url = "github:otisdog8/hyprsplit/main";
       inputs.hyprland.follows = "hyprland";
     };
-    rose-pine-hyprcursor.url = "github:ndom91/rose-pine-hyprcursor";
+    rose-pine-hyprcursor = {
+      url = "github:ndom91/rose-pine-hyprcursor";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
     wezterm-flake.url = "github:wez/wezterm?dir=nix&rev=4506a7648e2ebef266225c1acdcd79967a4fc73b";
     wezterm-flake.inputs.nixpkgs.follows = "nixpkgs";
   };
