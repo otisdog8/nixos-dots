@@ -40,7 +40,7 @@
       inputs.hyprland.follows = "hyprland";
     };
     hyprsplit = {
-      url = "github:otisdog8/hyprsplit/main";
+      url = "github:shezdy/hyprsplit/main";
       inputs.hyprland.follows = "hyprland";
     };
     rose-pine-hyprcursor = {
