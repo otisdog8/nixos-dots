@@ -81,7 +81,6 @@ in
     command_timeout = 100;
   };
   programs.zoxide.enable = true;
-  programs.thefuck.enable = true;
   programs.neomutt.enable = true;
   services.mpris-proxy.enable = true;
 }
