@@ -36,4 +36,9 @@
     "--advertise-address=100.126.30.73"
   ];
 
+  services.nfs.server.enable = true;
+  services.nfs.server.exports = ''
+    /tmp 100.0.0.0/8(rw,nohide,insecure,no_subtree_check,all_squash)
+  '';
+
 }
