@@ -28,7 +28,7 @@
   };
 
   fileSystems."/mnt/bcachefs" = {
-    device = "/dev/disk/by-uuid/35e74177-8be0-4de6-90d4-62aa305956db";
+    device = "/dev/disk/by-uuid/bd79c925-1d8b-4e56-b91b-c1c4c5c303fc";
     fsType = "bcachefs";
     depends = [
       # The mounts above have to be mounted in this given order
