@@ -72,6 +72,7 @@
       "/var/lib/systemd"
       "/var/lib/tlp"
       "/var/lib/upower"
+      "/var/lib/acme"
       "/var/lib/sabnzbd"
       "/var/lib/jellyfin"
       "/etc/nixos"

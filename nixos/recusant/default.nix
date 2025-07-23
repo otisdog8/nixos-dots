@@ -37,6 +37,7 @@
     ./disks.nix
     ./minecraft.nix
     ./media.nix
+    ./secrets.nix
     inputs.nixos-hardware.nixosModules.common-cpu-amd
     inputs.nixos-hardware.nixosModules.common-pc
     inputs.nixos-hardware.nixosModules.common-pc-ssd
