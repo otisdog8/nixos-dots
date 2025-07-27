@@ -1,7 +1,35 @@
 { lib, pkgs, ... }:
 {
   environment.systemPackages = with pkgs; [
+    clang
     xxh
+    unzip
+    zip
+    claude-code
+    fd
+    lazygit
+    sd
+    bash-language-server
+    basedpyright
+    ruff
+    clang-analyzer
+    clang-tools
+    helm-ls
+    yaml-language-server
+    marksman
+    astro-language-server
+    verilator
+    stylua
+    lua
+    lua-language-server
+    nodejs
+    bun
+    dig
+    doggo
+    iperf
+    iotop
+    nvtopPackages.full
+    tcpdump
     ranger
     nix-index
     protonvpn-cli_2

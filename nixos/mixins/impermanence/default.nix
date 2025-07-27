@@ -21,6 +21,7 @@
     wantedBy = [
       "initrd.target"
     ];
+
     after = [
       # LUKS/TPM process
       "initrd-root-device.target"
@@ -112,11 +113,14 @@
         ".config/Proton"
         ".config/BraveSoftware"
         ".config/Marvin"
+        ".config/nvim"
         ".config/obs-studio"
         ".config/tetrio-desktop"
         ".config/obsidian"
         ".cache/cliphist"
         ".local/share/direnv"
+        ".local/state/nvim/"
+        ".local/share/nvim/"
         ".local/share/FasterThanLight"
         {
           directory = ".config/1Password";

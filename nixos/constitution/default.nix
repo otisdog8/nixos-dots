@@ -24,5 +24,5 @@
 
   hardware.cpu.intel.updateMicrocode = true;
   boot.kernelModules = [ "kvm-intel" ];
-
+networking.firewall.enable = lib.mkForce false;
 }
