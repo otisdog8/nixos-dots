@@ -56,6 +56,7 @@
       cp /btrfs_tmp/persist/secret.jwe /btrfs_tmp/root/etc/clevis/dev/nvme1n1.jwe || echo
       mkdir -p /btrfs_tmp/root/etc/clevis/dev/disk/by-uuid
       cp /btrfs_tmp/persist/secret.jwe /btrfs_tmp/root/etc/clevis/dev/disk/by-uuid/bd79c925-1d8b-4e56-b91b-c1c4c5c303fc.jwe || echo
+      cp /btrfs_tmp/persist/secret.jwe /btrfs_tmp/root/etc/clevis/dev/disk/by-id/ata-HUH721212ALE601_2AG2SR1Y.jwe || echo
       umount /btrfs_tmp
     '';
   };

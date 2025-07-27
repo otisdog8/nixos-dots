@@ -30,7 +30,7 @@
       inputs.home-manager.follows = "home-manager";
     };
     hyprland = {
-      url = "github:hyprwm/Hyprland?submodules=1";
+      url = "github:hyprwm/Hyprland/v0.50.1?submodules=1";
       inputs.nixpkgs.follows = "nixpkgs";
     };
     Hyprspace = {

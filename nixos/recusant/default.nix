@@ -50,7 +50,6 @@
     enable = true;
     extraPackages = with pkgs; [
       libvdpau-va-gl
-      intel-media-sdk
       intel-media-driver
       intel-compute-runtime
       vpl-gpu-rt # for newer GPUs on NixOS >24.05 or unstable

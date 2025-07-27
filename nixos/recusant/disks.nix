@@ -27,18 +27,6 @@
     fsType = "btrfs";
   };
 
-  fileSystems."/mnt/bcachefs" = {
-    device = "/dev/disk/by-uuid/bd79c925-1d8b-4e56-b91b-c1c4c5c303fc";
-    fsType = "bcachefs";
-    depends = [
-      # The mounts above have to be mounted in this given order
-      "/etc/clevis"
-      "/persist"
-      "/mnt/largedev_root"
-    ];
-    options = [ "nofail" ];
-  };
-
   fileSystems."/export/k8s" = {
     device = "/mnt/bcachefs/k8s";
     options = [
@@ -128,6 +116,15 @@
       "fmask=0022"
       "dmask=0022"
     ];
+  };
+
+  fileSystems."/mnt/bcachefs" = {
+    device = "/dev/disk/by-id/ata-HUH721212ALE601_2AG2SR1Y";
+    #device = "/dev/disk/by-uuid/bd79c925-1d8b-4e56-b91b-c1c4c5c303fc";
+    fsType = "bcachefs";
+    options = [ "nofail" 
+];
+
   };
 
   swapDevices = [
