@@ -62,35 +62,11 @@
     dates = "daily";
     options = "--delete-older-than 30d";
   };
-  boot.kernelPackages = pkgs.linuxPackagesFor (pkgs.linux_6_13.override {
-    argsOverride = rec {
-      src = pkgs.fetchurl {
-            url = "mirror://kernel/linux/kernel/v6.x/linux-${version}.tar.xz";
-            sha256 = "sha256-KD7LB4Tz+8Ft2CL7HZZC4jDsdRXtM/Eg5VG4OfNV5uI=";
-      };
-      version = "6.13.5";
-      modDirVersion = "6.13.5";
-      };
-  });
-  nixpkgs = {
-    overlays = [
-      outputs.overlays.older-packages
-      (final: prev: {
-        linux-firmware = prev.linux-firmware.overrideAttrs (old: {
-          postInstall = ''
-            cp ${../files/ibt-0190-0291-usb.sfi} $out/lib/firmware/intel/ibt-0190-0291-usb.sfi
-          '';
-        });
-      })
-
-    ];
-
-  };
   # boot.kernelPackages = pkgs.linuxPackagesFor (pkgs.linux_6_13.override { argsOverride = { version = "6.13.5"; }; });
   #boot.kernelPackages = pkgs.linuxKernel.packages.linux_6_13_5;
   # boot.kernelPackages = pkgs.older.linuxKernel.packages.linux_6_13;
   # boot.kernelPackages = pkgs.linuxPackages_testing;
-  #boot.kernelPackages = pkgs.linuxPackages_latest;
+  boot.kernelPackages = pkgs.linuxPackages_latest;
   boot.initrd.systemd.enable = true;
 
   hardware.enableAllFirmware = true;

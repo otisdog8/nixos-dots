@@ -70,7 +70,7 @@ in
     enableCompletion = true;
     #autosuggestion.enable = true;
     syntaxHighlighting.enable = true;
-    initExtra =
+    initContent =
       ''
         SOUND_PREFIX=${inputs.self}/sounds/
       ''

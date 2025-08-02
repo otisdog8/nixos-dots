@@ -118,6 +118,7 @@
         ".config/tetrio-desktop"
         ".config/obsidian"
         ".cache/cliphist"
+        ".claude"
         ".local/share/direnv"
         ".local/state/nvim/"
         ".local/share/nvim/"
