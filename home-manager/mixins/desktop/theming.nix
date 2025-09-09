@@ -67,12 +67,7 @@ in
       };
     };
   };
-  programs.wezterm = {
-    enable = true;
-    package = inputs.wezterm-flake.packages.${pkgs.system}.default;
-    extraConfig = builtins.readFile ../../../config/wezterm;
-  };
-programs.kitty = lib.mkForce {
+  programs.kitty = lib.mkForce {
   enable = true;
   
   # Font configuration

@@ -137,6 +137,16 @@
     in
     builtins.concatMap collectFlakeInputs (builtins.attrValues inputs);
 
+  users.users.root = {
+    hashedPassword = "$y$j9T$/mXrIMQE7/SDmS9f9MyMB0$ouFzDiwIZFC0kHhh3kygGmpthEa86ztWnVcc3iFEV5.";
+    openssh.authorizedKeys.keys = [
+      "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAICPtgHM9vEd6NR70wKznoP/HE3aCrud/9rx/2Lu16Dh4 jrt@excelsior"
+      "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIKrESH5ZwJ9UprxxlPHlwMTLZtNiFysHR+5CHcTA63+a jrt@constitution"
+      "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAID8cRRtLtbuTMeLNvA4oB1Ui0yk0yhdPTPBvqku6lQZj jrt@galaxy"
+    ];
+  };
+
+
   users.users.jrt = {
     isNormalUser = true;
     extraGroups = [

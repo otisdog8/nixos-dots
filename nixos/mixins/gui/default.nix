@@ -18,7 +18,6 @@
   ];
   environment.systemPackages = with pkgs; [
     # Apps
-    inputs.wezterm-flake.packages."${pkgs.system}".default
     lxqt.pcmanfm-qt
     protonvpn-gui
     code-cursor
