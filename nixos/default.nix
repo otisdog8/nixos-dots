@@ -56,6 +56,9 @@
   systemd.coredump.enable = false;
   boot.kernel.sysctl."kernel.core_pattern" = "|/bin/false";
   boot.kernel.sysctl."fs.suid_dumpable" = 0;
+boot.kernel.sysctl = {
+  "vm.swappiness" = 10;
+};
 
   nix.gc = {
     automatic = true;

@@ -2,6 +2,8 @@
 {
   environment.systemPackages = with pkgs; [
     clang
+    ast-grep
+    uv
     xxh
     unzip
     zip
@@ -21,6 +23,7 @@
     verilator
     stylua
     lua
+    texlive.combined.scheme-full
     lua-language-server
     nodejs
     bun
@@ -86,6 +89,8 @@
     gnumake
     nvme-cli
     pandoc
+    go
+    just
   ];
 
   programs.direnv.enable = true;
@@ -100,6 +105,7 @@
     };
   };
   environment.pathsToLink = [ "/share/zsh" ];
+  programs.nix-ld.enable = true;
 
   environment.variables = {
     EDITOR = "nvim";

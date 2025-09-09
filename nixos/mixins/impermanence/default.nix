@@ -110,6 +110,7 @@
         ".config/op"
         ".config/kdeconnect"
         ".config/vesktop"
+        ".config/github-copilot"
         ".config/Proton"
         ".config/BraveSoftware"
         ".config/Marvin"
@@ -153,6 +154,7 @@
         ".face.icon"
         ".face"
         ".kwalletrc"
+        ".claude.json"
       ];
     };
   };
