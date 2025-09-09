@@ -13,7 +13,6 @@
     qt6.qtwayland
     qt5.qtbase
     qt6.qtbase
-    qt5Full
     kdePackages.full
     candy-icons
     papirus-icon-theme

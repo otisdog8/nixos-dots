@@ -14,7 +14,7 @@
     qt6.qtwayland
     qt5.qtbase
     qt6.qtbase
-    qt5Full
+    libsForQt5.qt5.qtgraphicaleffects
     kdePackages.full
     candy-icons
     libsForQt5.qtstyleplugin-kvantum
