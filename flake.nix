@@ -113,6 +113,10 @@
         hostname = "carrack";
         stateVersion = "24.05";
       };
+      nixosConfigurations.galaxy = helper.mkNixos {
+        hostname = "galaxy";
+        stateVersion = "25.05";
+      };
 
     };
 }
