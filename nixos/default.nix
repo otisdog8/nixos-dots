@@ -49,16 +49,16 @@
   ];
 
   nix.settings = {
-    substituters = ["https://hyprland.cachix.org"];
-    trusted-public-keys = ["hyprland.cachix.org-1:a7pgxzMz7+chwVL3/pzj6jIBMioiJM7ypFP8PwtkuGc="];
+    substituters = [ "https://hyprland.cachix.org" ];
+    trusted-public-keys = [ "hyprland.cachix.org-1:a7pgxzMz7+chwVL3/pzj6jIBMioiJM7ypFP8PwtkuGc=" ];
   };
 
   systemd.coredump.enable = false;
   boot.kernel.sysctl."kernel.core_pattern" = "|/bin/false";
   boot.kernel.sysctl."fs.suid_dumpable" = 0;
-boot.kernel.sysctl = {
-  "vm.swappiness" = 10;
-};
+  boot.kernel.sysctl = {
+    "vm.swappiness" = 10;
+  };
 
   nix.gc = {
     automatic = true;
@@ -161,6 +161,7 @@ boot.kernel.sysctl = {
     openssh.authorizedKeys.keys = [
       "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAICPtgHM9vEd6NR70wKznoP/HE3aCrud/9rx/2Lu16Dh4 jrt@excelsior"
       "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIKrESH5ZwJ9UprxxlPHlwMTLZtNiFysHR+5CHcTA63+a jrt@constitution"
+      "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAID8cRRtLtbuTMeLNvA4oB1Ui0yk0yhdPTPBvqku6lQZj jrt@galaxy"
     ];
   };
 
