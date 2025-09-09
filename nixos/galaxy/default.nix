@@ -8,7 +8,7 @@
   ...
 }:
 {
-  networking.hostName = "excelsior";
+  networking.hostName = "galaxy";
   time.timeZone = "America/Los_Angeles";
 
   boot.supportedFilesystems = [ "btrfs" ];
