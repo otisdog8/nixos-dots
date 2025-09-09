@@ -1,6 +1,6 @@
 _: {
 
-  boot.initrd.luks.devices."luks".device = "/dev/disk/by-uuid/8b29f89b-8149-4af7-bd57-a6c8f6478c07";
+  boot.initrd.luks.devices."luks".device = "/dev/disk/by-uuid/e2a1e108-9026-40fe-a294-a2f849b5ad77";
 
   fileSystems."/" = {
     device = "/dev/mapper/luks";
