@@ -124,6 +124,7 @@
         ".local/state/nvim/"
         ".local/share/nvim/"
         ".local/share/FasterThanLight"
+        ".local/share/Paradox Interactive/Stellaris/"
         {
           directory = ".config/1Password";
           mode = "0700";
