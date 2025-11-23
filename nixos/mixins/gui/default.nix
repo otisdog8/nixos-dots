@@ -25,7 +25,7 @@
     vesktop
     kitty
     inputs.zen-browser.packages."${system}".default
-    _1password
+    _1password-cli
     _1password-gui
     steam
     kdePackages.ark

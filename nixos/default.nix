@@ -74,7 +74,6 @@
 
   hardware.enableAllFirmware = true;
   hardware.firmware = [
-    pkgs.firmwareLinuxNonfree
     pkgs.linux-firmware
     pkgs.sof-firmware
     pkgs.alsa-firmware

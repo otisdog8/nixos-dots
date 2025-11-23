@@ -35,7 +35,6 @@
     tcpdump
     ranger
     nix-index
-    protonvpn-cli_2
     nixd
     jq
     vim

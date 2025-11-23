@@ -8,7 +8,7 @@
   environment.systemPackages = with pkgs; [
     # Theming
     libsForQt5.qt5ct
-    qt6ct
+    qt6Packages.qt6ct
     qt5.qtwayland
     qt6.qtwayland
     qt5.qtbase

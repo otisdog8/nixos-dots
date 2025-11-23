@@ -147,7 +147,6 @@ in
     qt6.qtwayland
 
     # Qt6 theming
-    qt6ct
     kdePackages.qtstyleplugin-kvantum
 
     # Icon themes and cursors
