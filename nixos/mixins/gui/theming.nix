@@ -13,7 +13,10 @@
     qt6.qtwayland
     qt5.qtbase
     qt6.qtbase
-    kdePackages.full
+    qt6.qtdeclarative
+    qt6.qtsvg
+    qt6.qtimageformats
+    qt6.qt5compat
     candy-icons
     papirus-icon-theme
     libsForQt5.qtstyleplugin-kvantum

@@ -12,5 +12,6 @@
       config.allowUnfree = true;
     };
   };
-
+  sandboxed-packages = import ./sandboxed-packages.nix { inherit inputs; };
+  custom-packages = import ./custom-packages.nix { inherit inputs; };
 }

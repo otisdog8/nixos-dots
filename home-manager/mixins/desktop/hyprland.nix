@@ -190,12 +190,9 @@ in
           "wofi"
         ];
       };
-      gestures = {
-        workspace_swipe = true;
-        workspace_swipe_fingers = 3;
-        workspace_swipe_use_r = true;
-        workspace_swipe_invert = false;
-      };
+      gesture = [
+        "3, horizontal, workspace"
+      ];
       dwindle = {
         preserve_split = true;
         force_split = 0;

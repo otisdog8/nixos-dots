@@ -29,7 +29,7 @@
     _1password-gui
     steam
     kdePackages.ark
-    prismlauncher
+    prismlauncher-sandboxed
     zoom-us
     brave
     otisdog8.amazing-marvin
@@ -40,6 +40,13 @@
     slipstream
     obsidian
     linux-firmware
+    
+    # Graphics test utilities
+    mesa-demos  # Includes glxgears, glxinfo, eglinfo
+    vulkan-tools  # Includes vkcube, vulkaninfo
+    glmark2  # OpenGL benchmark
+    clinfo  # OpenCL info
+    wayland-utils  # Wayland debugging tools
   ];
   hardware.graphics = {
     enable = true;
@@ -54,6 +61,8 @@
   nixpkgs = {
     overlays = [
       outputs.overlays.otisdog8-packages
+      outputs.overlays.sandboxed-packages
+      outputs.overlays.custom-packages
     ];
   };
 }

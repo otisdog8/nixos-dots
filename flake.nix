@@ -9,6 +9,11 @@
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+    nix-bwrapper.url = "github:Naxdy/nix-bwrapper";
+    nixpak = {
+      url = "github:nixpak/nixpak";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
     nixpkgs-older.url = "github:NixOS/nixpkgs?rev=3e042434c17eff8ed5528faa4c4503facc2bdf6c";
     nixpkgs-otisdog8.url = "github:otisdog8/nixpkgs/marvin";
     nixos-hardware.url = "github:NixOS/nixos-hardware/master";
@@ -30,7 +35,7 @@
       inputs.home-manager.follows = "home-manager";
     };
     hyprland = {
-      url = "github:hyprwm/Hyprland/v0.50.1?submodules=1";
+      url = "github:hyprwm/Hyprland/v0.51.1?submodules=1";
       inputs.nixpkgs.follows = "nixpkgs";
     };
     Hyprspace = {
@@ -55,6 +60,7 @@
     {
       self,
       nixpkgs,
+      nixpak,
       nixos-hardware,
       chaotic,
       impermanence,
