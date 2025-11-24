@@ -846,17 +846,14 @@
         ]
       },
       "locked": {
-        "lastModified": 1763605982,
-        "narHash": "sha256-gFjePmr09rRoAUfih4eeHX7aU3GTBUeaZvglKV+1ztI=",
-        "owner": "nixpak",
-        "repo": "nixpak",
-        "rev": "fd7e8f5d315158089ffbc34cc20792e43be6e666",
-        "type": "github"
+        "lastModified": 1763966875,
+        "narHash": "sha256-MgcgjFDlTF6aCDt+7XrMZMr9Sx0lonAVHPjYbOTz810=",
+        "path": "/home/jrt/Documents/nixpak",
+        "type": "path"
       },
       "original": {
-        "owner": "nixpak",
-        "repo": "nixpak",
-        "type": "github"
+        "path": "/home/jrt/Documents/nixpak",
+        "type": "path"
       }
     },
     "nixpkgs": {
@@ -1054,6 +1051,7 @@
         "nixpkgs-otisdog8": "nixpkgs-otisdog8",
         "rose-pine-hyprcursor": "rose-pine-hyprcursor",
         "wezterm-flake": "wezterm-flake",
+        "xdg-desktop-portal-src": "xdg-desktop-portal-src",
         "zen-browser": "zen-browser"
       }
     },
@@ -1295,6 +1293,19 @@
         "repo": "wezterm",
         "rev": "4506a7648e2ebef266225c1acdcd79967a4fc73b",
         "type": "github"
+      }
+    },
+    "xdg-desktop-portal-src": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1763957586,
+        "narHash": "sha256-vw71DHavzqUlXPjQibOxYvKgQ7sPTalBIRWeIeeBn9c=",
+        "path": "/home/jrt/Documents/xdg-desktop-portal",
+        "type": "path"
+      },
+      "original": {
+        "path": "/home/jrt/Documents/xdg-desktop-portal",
+        "type": "path"
       }
     },
     "xdph": {

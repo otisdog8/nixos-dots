@@ -20,7 +20,7 @@ in
         "hyprland"
         "gtk"
       ];
-      "org.freedesktop.impl.portal.FileChooser" = [ "kde" ];
+      #"org.freedesktop.impl.portal.FileChooser" = [ "kde" ];
       "org.freedesktop.impl.portal.Secret" = [ "kwallet" ];
     };
     config.hyprland = {
@@ -28,7 +28,7 @@ in
         "hyprland"
         "gtk"
       ];
-      "org.freedesktop.impl.portal.FileChooser" = [ "kde" ];
+      #"org.freedesktop.impl.portal.FileChooser" = [ "kde" ];
       "org.freedesktop.impl.portal.Secret" = [ "kwallet" ];
     };
     extraPortals = [

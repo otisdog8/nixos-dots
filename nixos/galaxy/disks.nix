@@ -40,6 +40,29 @@ _: {
     neededForBoot = true;
   };
 
+  fileSystems."/volatile-cache" = {
+    device = "/dev/mapper/luks";
+    fsType = "btrfs";
+    options = [
+      "subvol=volatile-cache"
+      "compress=zstd"
+      "noatime"
+    ];
+    neededForBoot = true;
+  };
+
+  fileSystems."/baked" = {
+    device = "/dev/mapper/luks";
+    fsType = "btrfs";
+    options = [
+      "subvol=baked"
+      "compress=zstd"
+      "noatime"
+      "ro"  # Read-only mount
+    ];
+    neededForBoot = true;
+  };
+
   fileSystems."/dots" = {
     device = "/dev/mapper/luks";
     fsType = "btrfs";

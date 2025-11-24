@@ -79,6 +79,7 @@
     pkgs.alsa-firmware
   ];
   nixpkgs.config.allowUnfree = true;
+  nixpkgs.overlays = builtins.attrValues outputs.overlays;
 
   boot.initrd.verbose = false;
   boot.consoleLogLevel = 0;

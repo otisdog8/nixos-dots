@@ -86,6 +86,10 @@
     cloc
     zip
     gnumake
+    meson
+    ninja
+    gcc
+    pkg-config
     nvme-cli
     pandoc
     go

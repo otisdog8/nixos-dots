@@ -18,7 +18,16 @@
     inputs.nixos-hardware.nixosModules.common-cpu-amd
     inputs.nixos-hardware.nixosModules.common-pc
     inputs.nixos-hardware.nixosModules.common-pc-ssd
+    ../modules/apps/obsidian.nix
   ];
+
+  # Enable Obsidian via new modular system
+  modules.apps.obsidian = {
+    enable = true;
+    sandbox.enable = true;
+    # Bind vault directory for Obsidian access
+    sandbox.extraBinds = [ "Documents/obsidian" ];
+  };
 
   services.xserver.videoDrivers = [ "nvidia" ];
 

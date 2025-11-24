@@ -117,7 +117,7 @@
         ".config/nvim"
         ".config/obs-studio"
         ".config/tetrio-desktop"
-        ".config/obsidian"
+        # ".config/obsidian" # Now managed by modules/apps/obsidian.nix
         ".cache/cliphist"
         ".claude"
         ".local/share/direnv"
@@ -196,6 +196,32 @@
     users.jrt = {
       files = [
         ".spacemacs"
+      ];
+    };
+  };
+
+  # Volatile cache - ephemeral, cleared on boot (like root)
+  # Used for: browser caches, electron app caches, build artifacts
+  environment.persistence."/volatile-cache" = {
+    enable = true;
+    hideMounts = true;
+    directories = [ ];
+    users.jrt = {
+      directories = [
+        # App-specific volatile caches will be added here by app modules
+      ];
+    };
+  };
+
+  # Baked - immutable setup-time data (read-only mount)
+  # Used for: encryption keys, certificates, machine secrets
+  environment.persistence."/baked" = {
+    enable = true;
+    hideMounts = true;
+    directories = [ ];
+    users.jrt = {
+      directories = [
+        # Rarely used by user apps - mostly system-level secrets
       ];
     };
   };

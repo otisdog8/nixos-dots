@@ -11,8 +11,12 @@
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
     nix-bwrapper.url = "github:Naxdy/nix-bwrapper";
     nixpak = {
-      url = "github:nixpak/nixpak";
+      url = "path:/home/jrt/Documents/nixpak";
       inputs.nixpkgs.follows = "nixpkgs";
+    };
+    xdg-desktop-portal-src = {
+      url = "path:/home/jrt/Documents/xdg-desktop-portal";
+      flake = false;
     };
     nixpkgs-older.url = "github:NixOS/nixpkgs?rev=3e042434c17eff8ed5528faa4c4503facc2bdf6c";
     nixpkgs-otisdog8.url = "github:otisdog8/nixpkgs/marvin";
