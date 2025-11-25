@@ -151,7 +151,7 @@ in
 
     # Icon themes and cursors
     candy-icons
-    inputs.rose-pine-hyprcursor.packages.${pkgs.system}.default
+    inputs.rose-pine-hyprcursor.packages.${pkgs.stdenv.hostPlatform.system}.default
     rose-pine-cursor
 
     # Custom SDDM theme (must be in systemPackages to be found by SDDM)

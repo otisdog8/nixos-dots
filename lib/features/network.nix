@@ -4,7 +4,9 @@
 {
   imports = [ ../app-spec.nix ];
 
-  config.app = {
-    sandbox.network = lib.mkDefault true;
-  };
+  config.app.nixpakModules = [
+    ({ config, lib, ... }: {
+      bubblewrap.network = lib.mkDefault true;
+    })
+  ];
 }

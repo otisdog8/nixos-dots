@@ -9,16 +9,16 @@
 #   - persistConfig, persistData, enableCache: Persistence toggles
 #   - sandbox.enable: Whether to sandbox with nixpak
 #   - sandbox.extraBinds: Additional directories to expose
+#   - sandbox.nixpakModules: Override nixpak configuration
 
-# Import the app spec as a separate module file to preserve relative imports
-let
-  appSpec = { config, lib, pkgs, ... }: {
+(import ../../../lib/apps.nix).mkApp (
+  { config, lib, pkgs, ... }: {
     # Compose features using imports
-    # Use path literals to make them relative to THIS file
+    # electron.nix brings gui (Wayland, GPU, audio) + Electron cache patterns
     imports = [
-      (../../../lib/features/electron.nix)
-      (../../../lib/features/needs-gpu.nix)
-      (../../../lib/features/network.nix)
+      ../../../lib/features/electron.nix  # Brings gui.nix automatically
+      ../../../lib/features/needs-gpu.nix # Full GPU acceleration
+      ../../../lib/features/network.nix   # Network for sync
     ];
 
     # Configure the app
@@ -27,18 +27,20 @@ let
       package = pkgs.obsidian;
       packageName = "obsidian";
 
-      # The electron feature already sets up .config/obsidian and cache paths
-      # We can add additional persistence if needed:
+      # The electron + gui features already set up:
+      # - .config/obsidian (persist)
+      # - .cache/obsidian (volatile cache)
+      # - .config/obsidian/{Cache,GPUCache,Code Cache,DawnCache} (volatile cache)
+      # - Wayland, audio, GPU, fonts, etc. (nixpak)
+
+      # Example: Add plugins directory to persistence
       # persistence.user.persist = lib.mkAfter [ ".config/obsidian/plugins" ];
 
-      # Or override defaults from features:
-      # persistence.user.volatileCache = lib.mkForce [ ".config/obsidian/Cache" ];
+      # Example: Override cache location
+      # persistence.user.volatileCache = lib.mkForce [ ".config/obsidian/custom-cache" ];
 
       # Custom options specific to obsidian
-      # These get exposed as modules.apps.obsidian.<optionname>
       customOptions = config: {
-        # Example: Let users configure vault path
-        # They can reference system-wide settings in defaults!
         vaultPath = lib.mkOption {
           type = lib.types.str;
           default = "$HOME/Documents/Obsidian";
@@ -48,17 +50,34 @@ let
       };
 
       # Custom NixOS configuration for obsidian
-      # Can reference the app's own options via config.modules.apps.obsidian
       customConfig = { config, lib, pkgs }: {
-        # Example: Bind the vault path into sandbox automatically
+        # Automatically bind vault path when sandboxed
         modules.apps.obsidian.sandbox.extraBinds = lib.mkIf
           (config.modules.apps.obsidian.sandbox.enable)
           [ config.modules.apps.obsidian.vaultPath ];
 
         # Could also add systemd services, environment variables, etc.
       };
-    };
-  };
-in
 
-(import ../../../lib/apps.nix).mkApp appSpec
+      # Example: Add app-specific nixpak configuration
+      # This gets merged with feature modules by nixpak's module system
+      nixpakModules = [
+        # ({ config, lib, sloth, ... }: {
+        #   # Override GPU provider
+        #   gpu.provider = lib.mkForce "mesa";
+        #
+        #   # Add custom bind mounts
+        #   bubblewrap.bind.rw = [
+        #     (sloth.concat' sloth.homeDir "/extra-vault")
+        #   ];
+        #
+        #   # Override electron flags
+        #   launch.args = lib.mkForce [
+        #     "--enable-features=UseOzonePlatform,WaylandWindowDecorations"
+        #     "--ozone-platform=wayland"
+        #   ];
+        # })
+      ];
+    };
+  }
+)

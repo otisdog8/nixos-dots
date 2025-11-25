@@ -54,8 +54,8 @@ in
   };
   services.mako = {
     enable = true;
-    borderColor = "#282a36";
     settings = {
+      border-color = "#282a36";
       "urgency=low" = {
         "border-color" = "#282a36";
       };

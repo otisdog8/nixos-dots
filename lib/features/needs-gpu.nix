@@ -4,9 +4,16 @@
 {
   imports = [ ../app-spec.nix ];
 
-  config.app = {
-    sandbox = {
-      binds = lib.mkDefault [
+  config.app.nixpakModules = [
+    ({ config, lib, ... }: {
+      # Enable full GPU acceleration
+      gpu = {
+        enable = lib.mkDefault true;
+        provider = lib.mkDefault "bundle";  # Bundle GPU drivers
+      };
+
+      # Device binds for NVIDIA and other GPUs
+      bubblewrap.bind.dev = [
         "/dev/dri"
         "/dev/nvidia0"
         "/dev/nvidiactl"
@@ -15,12 +22,14 @@
         "/dev/nvidia-uvm-tools"
       ];
 
-      bind-rw = lib.mkDefault [
+      # Read-write sys access for GPU
+      bubblewrap.bind.rw = [
         "/sys/dev/char"
         "/sys/devices"
       ];
 
-      bind-ro = lib.mkDefault [
+      # Read-only GPU-related paths
+      bubblewrap.bind.ro = [
         "/sys/class/drm"
         "/run/opengl-driver"
         "/run/opengl-driver-32"
@@ -30,6 +39,6 @@
         "/run/current-system/sw/share/glvnd"
         "/run/current-system/sw/share/vulkan"
       ];
-    };
-  };
+    })
+  ];
 }

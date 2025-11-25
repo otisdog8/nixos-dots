@@ -6,8 +6,8 @@
 }:
 let
   isLaptopOuter = hostname: hostname == "constitution";
-  isDesktopOuter = hostname: false;
-  isServerOuter = hostname: false;
+  isDesktopOuter = hostname: builtins.elem hostname [ "galaxy" "excelsior" "fantail" ];
+  isServerOuter = hostname: builtins.elem hostname [ "arquitens" "recusant" "munificent" "carrack" ];
   defaultUsername = "jrt";
 in
 {
@@ -73,39 +73,4 @@ in
         ../nixos
       ];
     };
-
-  # TBD: left blank
-  mkDarwin =
-    {
-      desktop ? "aqua",
-      hostname,
-      username ? defaultUsername,
-      platform ? "aarch64-darwin",
-    }:
-    let
-      isLaptop = isLaptopOuter hostname;
-      isDesktop = isDesktopOuter hostname;
-      isServer = isServerOuter hostname;
-    in
-    inputs.nix-darwin.lib.darwinSystem {
-      specialArgs = {
-        inherit
-          inputs
-          outputs
-          desktop
-          hostname
-          platform
-          username
-          stateVersion
-          ;
-      };
-      modules = [ ../darwin ];
-    };
-
-  forAllSystems = inputs.nixpkgs.lib.genAttrs [
-    "aarch64-linux"
-    "x86_64-linux"
-    "aarch64-darwin"
-    "x86_64-darwin"
-  ];
 }

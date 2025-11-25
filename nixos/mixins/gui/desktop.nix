@@ -28,7 +28,7 @@
     mako
     kdePackages.kwalletmanager
     hypridle
-    inputs.hyprland.packages."${pkgs.system}".hyprland
+    inputs.hyprland.packages."${pkgs.stdenv.hostPlatform.system}".hyprland
     xdg-desktop-portal-hyprland
     xdg-desktop-portal
     xdg-desktop-portal-gtk
@@ -44,7 +44,7 @@
 
   services.libinput.enable = true;
   programs.hyprland.enable = true; # enable Hyprland
-  programs.hyprland.package = inputs.hyprland.packages."${pkgs.system}".hyprland;
+  programs.hyprland.package = inputs.hyprland.packages."${pkgs.stdenv.hostPlatform.system}".hyprland;
   programs.hyprland.portalPackage = inputs.hyprland.packages.${pkgs.stdenv.hostPlatform.system}.xdg-desktop-portal-hyprland;
 
   systemd.tmpfiles.rules = [
@@ -61,9 +61,9 @@
   programs.ydotool = {
     enable = true;
   };
-  services.logind = {
-    powerKey = "ignore";
-    lidSwitch = "ignore";
+  services.logind.settings.Login = {
+    HandlePowerKey = "ignore";
+    HandleLidSwitch = "ignore";
   };
   services.pipewire = {
     enable = true;

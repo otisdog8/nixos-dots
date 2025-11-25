@@ -1,9 +1,8 @@
 # Template for creating new app modules
 # Copy this file and customize for your app
 #
-# This template uses the NEW module-based architecture.
-# Apps compose features through imports, declare custom options,
-# and get full access to the module system's power.
+# This template uses module-based architecture with nixpak integration.
+# Apps compose features through imports and configure sandboxing via nixpak modules.
 
 (import ../../../lib/apps.nix).mkApp (
 
@@ -14,17 +13,17 @@
     # STEP 1: Import feature modules
     # ═══════════════════════════════════════════════════════════════════════
     #
-    # Feature modules set defaults for persistence, sandboxing, etc.
+    # Feature modules set defaults for persistence AND nixpak sandboxing.
     # They compose through imports (e.g., electron.nix imports gui.nix)
     #
     # Available features:
-    #   - gui.nix:         GUI apps (Wayland, audio, fonts, basic GPU)
-    #   - electron.nix:    Electron apps (imports gui, adds cache paths)
+    #   - gui.nix:         GUI apps (Wayland, audio, fonts, basic GPU, DBus)
+    #   - electron.nix:    Electron apps (imports gui, adds cache + Wayland flags)
     #   - network.nix:     Network access
-    #   - needs-gpu.nix:   Full GPU acceleration (NVIDIA, Vulkan, etc.)
-    #   - gaming.nix:      Gaming apps (imports gui + gpu + network)
-    #   - browser.nix:     Web browsers (imports gui + network)
-    #   - development.nix: Dev tools (imports gui + network)
+    #   - needs-gpu.nix:   Full GPU acceleration (NVIDIA, Vulkan, Mesa)
+    #   - gaming.nix:      Gaming apps (imports gui + gpu + network + input devices)
+    #   - browser.nix:     Web browsers (imports gui + network + downloads)
+    #   - development.nix: Dev tools (imports gui + network + project directories)
 
     imports = [
       ../../../lib/features/electron.nix  # Change to match your app
@@ -49,8 +48,8 @@
       # Persistence
       # ─────────────────────────────────────────────────────────────────────
       #
-      # Feature modules already set defaults (e.g., electron.nix sets cache paths)
-      # You can add more or override using lib.mkBefore/mkAfter/mkForce
+      # Feature modules already set defaults (e.g., electron.nix sets cache paths).
+      # List options merge ADDITIVELY - just add your paths and they'll combine!
       #
       # Available persistence types:
       #   - persist:        Mutable config/data (/persist)
@@ -59,13 +58,13 @@
       #   - volatileCache:  Cleared on boot (/volatile-cache)
       #   - baked:          Immutable setup data (/baked)
 
-      # Add additional persistence paths
-      # persistence.user.persist = lib.mkAfter [
+      # Add paths - they merge with feature defaults automatically
+      # persistence.user.persist = [
       #   ".config/APPNAME/plugins"
       #   ".local/share/APPNAME"
       # ];
 
-      # Override defaults from features
+      # To REPLACE feature defaults instead of merging, use lib.mkForce
       # persistence.user.volatileCache = lib.mkForce [
       #   ".cache/APPNAME"
       # ];
@@ -74,20 +73,68 @@
       # persistence.system.persist = [ "/var/lib/APPNAME" ];
 
       # ─────────────────────────────────────────────────────────────────────
-      # Sandboxing
+      # Nixpak Sandboxing
       # ─────────────────────────────────────────────────────────────────────
       #
-      # Feature modules set sandbox defaults.
-      # You can override specific settings if needed.
+      # Feature modules export nixpak configuration directly.
+      # You can add app-specific nixpak modules here.
+      #
+      # Nixpak modules have access to:
+      #   - app.*: Application package, binPath, extraEntrypoints
+      #   - bubblewrap.*: Sandbox configuration (network, bind mounts, sockets, etc.)
+      #   - dbus.*: DBus policies for desktop integration
+      #   - gpu.*: GPU acceleration settings (enable, provider)
+      #   - fonts.*, locale.*, etc.: System integration
+      #   - launch.*: Command-line arguments to pass to the app
+      #   - sloth.*: Path construction helpers
+      #
+      # Path construction with sloth:
+      #   - sloth.homeDir: User's home directory
+      #   - sloth.xdgConfigHome: $XDG_CONFIG_HOME (usually ~/.config)
+      #   - sloth.xdgDataHome: $XDG_DATA_HOME (usually ~/.local/share)
+      #   - sloth.xdgCacheHome: $XDG_CACHE_HOME (usually ~/.cache)
+      #   - sloth.runtimeDir: $XDG_RUNTIME_DIR (usually /run/user/<uid>)
+      #   - sloth.concat' base path: Concatenate paths (e.g., sloth.concat' sloth.homeDir "/vault")
+      #   - sloth.env "VAR": Pass through environment variable
 
-      # Override network access
-      # sandbox.network = lib.mkForce false;
+      nixpakModules = [
+        # Example: Add custom bind mounts (lists merge additively)
+        # ({ config, lib, sloth, ... }: {
+        #   bubblewrap.bind.rw = [
+        #     (sloth.concat' sloth.homeDir "/Documents/APPNAME")
+        #     "/mnt/external-drive"
+        #   ];  # These merge with feature defaults automatically
+        # })
 
-      # Add custom bind mounts
-      # sandbox.bind-rw = lib.mkAfter [ "/extra/path" ];
+        # Example: Override GPU settings (scalars need mkForce)
+        # ({ config, lib, ... }: {
+        #   gpu.provider = lib.mkForce "mesa";  # or "bundle", "system"
+        # })
 
-      # Override GUI setting
-      # sandbox.gui = lib.mkForce false;
+        # Example: Add DBus policies (attrsets merge by default)
+        # ({ config, lib, ... }: {
+        #   dbus.policies = {
+        #     "org.freedesktop.secrets" = "talk";
+        #   };  # Merges with feature DBus policies
+        # })
+
+        # Example: Disable network (override boolean from network.nix)
+        # ({ config, lib, ... }: {
+        #   bubblewrap.network = lib.mkForce false;
+        # })
+
+        # Example: Add more bind mounts (lists merge!)
+        # ({ config, lib, sloth, ... }: {
+        #   bubblewrap.bind.ro = [
+        #     (sloth.concat' sloth.xdgConfigHome "/mimeapps.list")
+        #   ];  # Adds to bind.ro from features
+        # })
+
+        # Example: Share IPC namespace (for some X11 apps)
+        # ({ config, lib, ... }: {
+        #   bubblewrap.shareIpc = true;
+        # })
+      ];
 
       # ─────────────────────────────────────────────────────────────────────
       # Custom Options
@@ -191,10 +238,23 @@
 #     enableCache = true;     # Enable caching
 #
 #     # Sandboxing
-#     sandbox.enable = false;  # Enable nixpak sandboxing
-#     sandbox.extraBinds = [   # Additional bind mounts
-#       "Documents"
-#       "/mnt/data"
+#     sandbox.enable = true;   # Enable nixpak sandboxing
+#     sandbox.extraBinds = [   # Additional bind mounts (relative to $HOME or absolute)
+#       "Documents/vault"      # Relative: expands to $HOME/Documents/vault
+#       "/mnt/data"            # Absolute: used as-is
+#     ];
+#
+#     # Per-host nixpak overrides
+#     sandbox.nixpakModules = [
+#       ({ config, lib, sloth, ... }: {
+#         # This machine needs special GPU settings
+#         gpu.provider = "bundle";
+#
+#         # Or add machine-specific bind mounts
+#         bubblewrap.bind.ro = [
+#           "/opt/company-certs"
+#         ];
+#       })
 #     ];
 #   };
 #
@@ -202,32 +262,48 @@
 
 
 # ═════════════════════════════════════════════════════════════════════════════
-# ADVANCED: FEATURE COMPOSITION EXAMPLES
+# ADVANCED: NIXPAK MODULE REFERENCE
 # ═════════════════════════════════════════════════════════════════════════════
 #
-# Features compose through imports. Here are some common patterns:
+# Common nixpak options you might need:
 #
-# Simple GUI app:
-#   imports = [ ../../../lib/features/gui.nix ];
+# ## Bubblewrap (sandbox)
+#   bubblewrap.network = true/false;                    # Network access
+#   bubblewrap.shareIpc = true/false;                   # Share IPC namespace
+#   bubblewrap.bind.rw = [ paths ];                     # Read-write bind mounts
+#   bubblewrap.bind.ro = [ paths ];                     # Read-only bind mounts
+#   bubblewrap.bind.dev = [ "/dev/dri" ];              # Device bind mounts
+#   bubblewrap.tmpfs = [ paths ];                       # Tmpfs locations
+#   bubblewrap.sockets.wayland = true/false;            # Wayland socket
+#   bubblewrap.sockets.x11 = true/false;                # X11 sockets
+#   bubblewrap.sockets.pulse = true/false;              # PulseAudio socket
+#   bubblewrap.sockets.pipewire = true/false;           # PipeWire socket
+#   bubblewrap.apivfs.proc = true/false;                # Mount /proc
+#   bubblewrap.apivfs.dev = true/false;                 # Mount /dev
+#   bubblewrap.env.VAR_NAME = value;                    # Environment variables
 #
-# Electron app with network:
-#   imports = [
-#     ../../../lib/features/electron.nix  # Imports gui automatically
-#     ../../../lib/features/network.nix
-#   ];
+# ## GPU
+#   gpu.enable = true/false;                            # GPU acceleration
+#   gpu.provider = "bundle"/"mesa"/"system";            # GPU provider
 #
-# Game:
-#   imports = [ ../../../lib/features/gaming.nix ];  # Imports gui + gpu + network
+# ## DBus
+#   dbus.enable = true/false;                           # DBus access
+#   dbus.policies."org.service.Name" = "talk"/"own";    # DBus policies
+#   dbus.mountDocumentPortal = true/false;              # Document portal
 #
-# Browser:
-#   imports = [ ../../../lib/features/browser.nix ];  # Imports gui + network
+# ## System Integration
+#   fonts.enable = true/false;                          # System fonts
+#   locale.enable = true/false;                         # System locale
+#   timezone.enable = true/false;                       # System timezone
+#   etc.sslCertificates.enable = true/false;            # SSL certificates
 #
-# CLI tool with no GUI:
-#   imports = [ ../../../lib/app-spec.nix ];  # Base only, no features
+# ## Application
+#   app.package = pkgs.myapp;                           # The application package
+#   app.binPath = "bin/myapp";                          # Binary path in package
+#   app.extraEntrypoints = [ "/libexec/helper" ];       # Additional binaries
+#   launch.args = [ "--flag" ];                         # Command-line arguments
 #
-# Custom feature combination:
-#   imports = [
-#     ../../../lib/features/gui.nix
-#     ../../../lib/features/needs-gpu.nix
-#     ../../../lib/features/network.nix
-#   ];
+# See nixpak documentation for the complete API:
+# https://github.com/nixpak/nixpak
+#
+# ═════════════════════════════════════════════════════════════════════════════

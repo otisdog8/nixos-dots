@@ -22,7 +22,7 @@
     libsForQt5.qtstyleplugin-kvantum
     libsForQt5.plasma-framework
     kdePackages.qtstyleplugin-kvantum
-    inputs.rose-pine-hyprcursor.packages.${pkgs.system}.default
+    inputs.rose-pine-hyprcursor.packages.${pkgs.stdenv.hostPlatform.system}.default
     rose-pine-cursor
     gnome-themes-extra
     sweet

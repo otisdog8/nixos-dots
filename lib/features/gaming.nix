@@ -11,14 +11,18 @@
 
   config.app = {
     # Games often have large data files
-    persistence.user.large = lib.mkDefault [
+    persistence.user.large = [
       ".local/share/${config.app.name}"
     ];
 
-    # Additional input device access
-    sandbox.binds = lib.mkDefault [
-      "/dev/input"   # Game controllers
-      "/dev/uinput"
+    # Additional input device access for games
+    nixpakModules = [
+      ({ config, lib, ... }: {
+        bubblewrap.bind.dev = [
+          "/dev/input"   # Game controllers
+          "/dev/uinput"  # Input emulation
+        ];
+      })
     ];
   };
 }

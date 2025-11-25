@@ -14,12 +14,12 @@ in
 {
   programs.git = {
     enable = true;
-    userEmail = "me@rooty.dev";
-    userName = "Jacob Root";
     signing.signByDefault = true;
     lfs.enable = true;
     signing.key = "~/.ssh/id_ed25519.pub";
-    extraConfig = {
+    settings = {
+      user.email = "me@rooty.dev";
+      user.name = "Jacob Root";
       # Sign all commits using ssh key
       gpg.format = "ssh";
       user.signingkey = "~/.ssh/id_ed25519.pub";
@@ -41,10 +41,11 @@ in
 
   programs.ssh = {
     enable = true;
-    addKeysToAgent = "yes";
+    enableDefaultConfig = false;
+    matchBlocks."*".addKeysToAgent = "yes";
   };
   services.gpg-agent.enable = true;
-  services.gpg-agent.pinentryPackage = pkgs.pinentry-qt;
+  services.gpg-agent.pinentry.package = pkgs.pinentry-qt;
   programs.gpg.enable = true;
   programs.zsh = {
     enable = true;

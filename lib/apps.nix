@@ -73,7 +73,16 @@
         sandbox.extraBinds = lib.mkOption {
           type = lib.types.listOf lib.types.str;
           default = [];
-          description = "Additional bind mounts for sandboxed ${appName}";
+          description = "Additional bind mounts for sandboxed ${appName} (relative to home or absolute paths)";
+        };
+
+        sandbox.nixpakModules = lib.mkOption {
+          type = lib.types.listOf lib.types.deferredModule;
+          default = [];
+          description = ''
+            Additional nixpak modules to merge with feature modules.
+            Allows per-host nixpak configuration overrides.
+          '';
         };
       }
       # Merge in custom options declared by the app
@@ -93,70 +102,41 @@
               };
             in
             (mkNixPak {
-              config = { sloth, ... }: {
-                # The application to isolate
+              config = { config, lib, pkgs, sloth, ... }: {
+                # Compose all nixpak modules from features and user
+                imports =
+                  # Modules from features (gui.nix, electron.nix, etc.)
+                  appCfg.nixpakModules
+                  # Per-host override modules
+                  ++ cfg.sandbox.nixpakModules;
+
+                # Base configuration - set package and binPath
                 app.package = cfg.package;
                 app.binPath = "bin/${appCfg.packageName}";
 
-                # Enable common features
-                etc.sslCertificates.enable = true;
-                fonts.enable = true;
-                locale.enable = true;
+                # Document portal for sandboxed apps
+                dbus.mountDocumentPortal = lib.mkDefault true;
 
-                # Enable GPU access if needed
-                gpu.enable = appCfg.sandbox.gui;
-
-                # Enable document portal for sandboxed apps
-                dbus.mountDocumentPortal = true;
-
-                # Network and dbus
-                dbus.enable = appCfg.sandbox.dbus.enable;
-                dbus.policies = appCfg.sandbox.dbus.policies;
-
-                # Bubblewrap configuration
-                bubblewrap = {
-                  # Network access
-                  network = appCfg.sandbox.network;
-
-                  # API VFS for /dev and /proc
-                  apivfs = appCfg.sandbox.apivfs;
-
-                  # Sockets (wayland, pulseaudio, etc.)
-                  sockets = lib.listToAttrs (
-                    map (s: lib.nameValuePair s true) appCfg.sandbox.sockets
-                  );
-
-                  # Bind mounts - read-write
-                  bind.rw =
-                    # Essential system paths from features (XDG_RUNTIME_DIR, /tmp, etc.)
-                    (map (p:
-                      if p == "XDG_RUNTIME_DIR" then (sloth.env "XDG_RUNTIME_DIR")
-                      else p
-                    ) appCfg.sandbox.bind-rw) ++
-                    # User's home directories from ALL persistence types
-                    (map (p: sloth.concat' sloth.homeDir "/${p}") (
-                      appCfg.persistence.user.persist ++
-                      appCfg.persistence.user.large ++
-                      appCfg.persistence.user.cache ++
-                      appCfg.persistence.user.volatileCache
-                    )) ++
-                    # User's extra binds (convert relative paths to absolute)
-                    (map (p:
-                      if lib.hasPrefix "/" p then p  # Absolute path
-                      else sloth.concat' sloth.homeDir "/${p}"  # Relative path
-                    ) cfg.sandbox.extraBinds);
-
-                  # Bind mounts - read-only
-                  bind.ro = appCfg.sandbox.bind-ro;
-
-                  # Device binds
-                  bind.dev = appCfg.sandbox.binds;
-
-                  # Environment variables
-                  env = lib.listToAttrs (
-                    map (var: lib.nameValuePair var (sloth.env var)) appCfg.sandbox.env
-                  );
-                };
+                # Bind persistence paths automatically
+                # These are the paths that impermanence will mount to $HOME
+                bubblewrap.bind.rw =
+                  # User's home directories from ALL persistence types
+                  (lib.optionals cfg.persistConfig (
+                    map (p: sloth.concat' sloth.homeDir "/${p}") appCfg.persistence.user.persist
+                  ))
+                  ++ (lib.optionals cfg.persistData (
+                    map (p: sloth.concat' sloth.homeDir "/${p}") appCfg.persistence.user.large
+                  ))
+                  ++ (lib.optionals cfg.enableCache (
+                    map (p: sloth.concat' sloth.homeDir "/${p}") (
+                      appCfg.persistence.user.cache ++ appCfg.persistence.user.volatileCache
+                    )
+                  ))
+                  # User's extra binds (convert relative paths to absolute)
+                  ++ (map (p:
+                    if lib.hasPrefix "/" p then p  # Absolute path
+                    else sloth.concat' sloth.homeDir "/${p}"  # Relative path
+                  ) cfg.sandbox.extraBinds);
               };
             }).config.env
           else

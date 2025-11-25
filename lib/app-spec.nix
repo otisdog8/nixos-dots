@@ -93,86 +93,50 @@
       };
     };
 
-    # Sandbox configuration
-    sandbox = {
-      gui = lib.mkOption {
-        type = lib.types.bool;
-        default = false;
-        description = "Whether app needs GUI access";
-      };
+    # Nixpak sandbox configuration
+    # Features and apps add modules to this list, which are composed by nixpak's module system
+    nixpakModules = lib.mkOption {
+      type = lib.types.listOf lib.types.deferredModule;
+      default = [];
+      description = ''
+        List of nixpak modules to compose for sandboxing.
 
-      network = lib.mkOption {
-        type = lib.types.bool;
-        default = false;
-        description = "Whether app needs network access";
-      };
+        Each module has access to nixpak's full API:
+        - app.*: Application package and binPath
+        - bubblewrap.*: Bubblewrap sandbox settings (network, bind mounts, sockets, etc.)
+        - dbus.*: DBus policies
+        - gpu.*: GPU acceleration settings
+        - fonts.*, locale.*, etc.: System integration
+        - sloth.*: Path construction helpers (homeDir, xdgConfigHome, etc.)
 
-      apivfs = {
-        dev = lib.mkOption {
-          type = lib.types.bool;
-          default = false;
-          description = "Whether to mount /dev in sandbox";
-        };
+        Modules are merged by nixpak's module system, so:
+        - Lists concatenate (bind.rw = [a] ++ [b])
+        - Attrs merge recursively
+        - Use lib.mkDefault/mkForce for priority control
+      '';
+      example = lib.literalExpression ''
+        [
+          # Basic GUI app
+          ({ config, lib, pkgs, sloth, ... }: {
+            gpu.enable = lib.mkDefault true;
+            fonts.enable = true;
+            bubblewrap = {
+              sockets.wayland = true;
+              sockets.pulse = true;
+              bind.ro = [
+                (sloth.concat' sloth.xdgConfigHome "/gtk-3.0")
+              ];
+            };
+          })
 
-        proc = lib.mkOption {
-          type = lib.types.bool;
-          default = false;
-          description = "Whether to mount /proc in sandbox";
-        };
-      };
-
-      dbus = {
-        enable = lib.mkOption {
-          type = lib.types.bool;
-          default = false;
-          description = "Whether to enable dbus in sandbox";
-        };
-
-        policies = lib.mkOption {
-          type = lib.types.attrsOf lib.types.str;
-          default = {};
-          description = "DBus policies for desktop integration";
-          example = {
-            "org.freedesktop.Notifications" = "talk";
-          };
-        };
-      };
-
-      binds = lib.mkOption {
-        type = lib.types.listOf lib.types.str;
-        default = [];
-        description = "Device bind mounts (e.g., /dev/dri)";
-      };
-
-      sockets = lib.mkOption {
-        type = lib.types.listOf lib.types.str;
-        default = [];
-        description = "Sockets to expose (e.g., wayland, pulse)";
-      };
-
-      bind-rw = lib.mkOption {
-        type = lib.types.listOf lib.types.str;
-        default = [];
-        description = "Read-write path binds";
-      };
-
-      bind-ro = lib.mkOption {
-        type = lib.types.listOf lib.types.str;
-        default = [];
-        description = "Read-only path binds";
-      };
-
-      env = lib.mkOption {
-        type = lib.types.listOf lib.types.str;
-        default = [];
-        description = "Environment variables to pass through";
-      };
-
-      extraArgs = lib.mkOption {
-        type = lib.types.listOf lib.types.str;
-        default = [];
-        description = "Extra arguments to pass to sandboxed app";
-      };
+          # App-specific overrides
+          ({ sloth, ... }: {
+            bubblewrap.bind.rw = [
+              (sloth.concat' sloth.homeDir "/Documents/vault")
+            ];
+          })
+        ]
+      '';
     };
 
     # Custom options that will be exposed in the final NixOS module

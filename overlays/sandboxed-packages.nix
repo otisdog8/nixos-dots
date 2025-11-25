@@ -104,10 +104,7 @@ let
           
           # System cursors
           "/usr/share/cursors"
-          
-          # Downloads folder (for importing modpacks)
-          #(sloth.concat' sloth.homeDir "/Downloads")
-          
+
           # System binaries (for Java detection)
           "/run/current-system/sw/bin"
           "/etc/profiles/per-user"
