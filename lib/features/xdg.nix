@@ -7,6 +7,7 @@
     ({ lib, ... }: {
       dbus = {
         enable = true;
+        mountDocumentPortal = true;
         policies = {
           "org.freedesktop.DBus" = "talk";
           "org.freedesktop.portal.Desktop" = "talk";

@@ -5,11 +5,10 @@
 
   config.app.nixpakModules = [
     ({ lib, ... }: {
-      dbus.policies = lib.mkMerge [
-        (lib.mkIf config.dbus.enable {
-          "org.freedesktop.portal.Camera" = "talk";
-        })
-      ];
+      dbus.enable = true;
+      dbus.policies = {
+        "org.freedesktop.portal.Camera" = "talk";
+      };
 
       bubblewrap.bind.dev = [
         "/dev/video0"

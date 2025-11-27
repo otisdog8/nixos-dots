@@ -97,27 +97,25 @@
         "Pictures"
         "Documents"
         "Videos"
-        ".cursor"
-        ".steam"
-        ".zen"
+        # ".steam" # Now managed by modules/apps/steam.nix
         ".cargo"
         ".emacs.d"
-        ".zoom"
-        ".lunarclient"
+        # ".lunarclient" # Now managed by modules/apps/lunar-client.nix
         ".minecraft"
-        ".config/lunarclient"
+        # ".config/lunarclient" # Now managed by modules/apps/lunar-client.nix
         ".config/minecraft"
         ".config/op"
         ".config/kdeconnect"
-        ".config/vesktop"
         ".config/github-copilot"
         ".config/Proton"
-        ".config/BraveSoftware"
-        ".config/Marvin"
+        # ".config/Marvin" # Now managed by modules/apps/amazing-marvin.nix
         ".config/nvim"
-        ".config/obs-studio"
-        ".config/tetrio-desktop"
+        # ".config/obs-studio" # Now managed by modules/apps/obs-studio.nix
+        # ".config/tetrio-desktop" # Now managed by modules/apps/tetrio-desktop.nix
         # ".config/obsidian" # Now managed by modules/apps/obsidian.nix
+        # ".config/vesktop" # Now managed by modules/apps/vesktop.nix
+        # ".config/BraveSoftware" # Now managed by modules/apps/brave.nix
+        # ".config/chromium" # Now managed by modules/apps/chromium.nix
         ".cache/cliphist"
         ".claude"
         ".local/share/direnv"
@@ -148,8 +146,8 @@
         }
       ];
       files = [
-        ".config/zoom.conf"
-        ".config/zoomus.conf"
+        # ".config/zoom.conf" # Now managed by modules/apps/zoom.nix
+        # ".config/zoomus.conf" # Now managed by modules/apps/zoom.nix
         ".bash_history"
         ".zsh_history"
         ".face.icon"
@@ -173,7 +171,7 @@
       directories = [
         "Downloads"
         ".local/share/PrismLauncher"
-        ".local/share/Steam"
+        # ".local/share/Steam" # Now managed by modules/apps/steam.nix
         ".local/share/slipstream"
       ];
     };
@@ -187,15 +185,6 @@
     users.jrt = {
       directories = [
         ".cache/uv"
-      ];
-    };
-  };
-  environment.persistence."/dots" = {
-    enable = true;
-    hideMounts = true;
-    users.jrt = {
-      files = [
-        ".spacemacs"
       ];
     };
   };

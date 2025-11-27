@@ -7,7 +7,6 @@
 {
   environment.systemPackages = with pkgs; [
     # Apps
-    inputs.zen-browser.packages."${system}".default
     _1password-cli
     _1password-gui
 

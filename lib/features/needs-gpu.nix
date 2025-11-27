@@ -5,13 +5,7 @@
   imports = [ ../app-spec.nix ];
 
   config.app.nixpakModules = [
-    ({ config, lib, ... }: {
-      # Enable full GPU acceleration
-      gpu = {
-        enable = lib.mkDefault true;
-        provider = lib.mkDefault "bundle";  # Bundle GPU drivers
-      };
-
+    ({ lib, ... }: {
       # Device binds for NVIDIA and other GPUs
       bubblewrap.bind.dev = [
         "/dev/dri"
@@ -28,11 +22,11 @@
         "/sys/devices"
       ];
 
-      # Read-only GPU-related paths
+      # Read-only GPU-related paths (matching prismlauncher-sandboxed)
       bubblewrap.bind.ro = [
-        "/sys/class/drm"
         "/run/opengl-driver"
         "/run/opengl-driver-32"
+        "/etc/static/egl"
         "/etc/egl"
         "/etc/vulkan"
         "/etc/OpenCL"

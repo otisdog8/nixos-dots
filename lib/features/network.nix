@@ -6,7 +6,7 @@
 
   config.app.nixpakModules = [
     ({ config, lib, ... }: {
-      bubblewrap.network = lib.mkDefault true;
+      bubblewrap.network = true;
     })
   ];
 }

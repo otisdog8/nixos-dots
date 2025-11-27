@@ -20,27 +20,15 @@
     # Apps
     lxqt.pcmanfm-qt
     protonvpn-gui
-    code-cursor
-    chromium
-    vesktop
     kitty
-    inputs.zen-browser.packages."${system}".default
     _1password-cli
     _1password-gui
-    steam
     kdePackages.ark
     prismlauncher-sandboxed
-    zoom-us
-    brave
-    otisdog8.amazing-marvin
-    tetrio-desktop
     quartus-prime-lite
-    discord
-    lunar-client
     slipstream
-    obsidian
     linux-firmware
-    
+
     # Graphics test utilities
     mesa-demos  # Includes glxgears, glxinfo, eglinfo
     vulkan-tools  # Includes vkcube, vulkaninfo

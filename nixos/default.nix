@@ -62,8 +62,8 @@ in
     trusted-public-keys = [ "hyprland.cachix.org-1:a7pgxzMz7+chwVL3/pzj6jIBMioiJM7ypFP8PwtkuGc=" ];
   };
 
-  systemd.coredump.enable = false;
-  boot.kernel.sysctl."kernel.core_pattern" = "|/bin/false";
+  #systemd.coredump.enable = false;
+  #boot.kernel.sysctl."kernel.core_pattern" = "|/bin/false";
   boot.kernel.sysctl."fs.suid_dumpable" = 0;
   boot.kernel.sysctl = {
     "vm.swappiness" = 10;
@@ -166,7 +166,6 @@ in
       "networkmanager"
     ]; # Enable ‘sudo’ for the user.
     packages = with pkgs; [
-      firefox
       tree
     ];
     hashedPassword = "$6$JvSJ6iVd3.DRDc8e$lv.YEJaRy73l9RsiE6hmZm61Q0hH.cHo.QsFSGUsEjaS3n0EDnpzEqbaj6cNrYaw/9qnQLNo9TZ7RmipgBebw/";

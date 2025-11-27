@@ -9,14 +9,6 @@
   ];
 
   config.app = {
-    # Browsers have extensive cache needs
-    persistence.user.cache = [
-      ".cache/${config.app.name}"
-      ".config/${config.app.name}/Default/Service Worker"
-      ".config/${config.app.name}/Service Worker"
-      ".config/${config.app.name}/ShaderCache"
-    ];
-
     # Browser-specific nixpak configuration
     nixpakModules = [
       ({ config, lib, pkgs, sloth, ... }: {

@@ -54,10 +54,6 @@
     "L+ /usr/libexec/xdg-desktop-portal - - - - ${pkgs.xdg-desktop-portal}/libexec/xdg-desktop-portal "
   ];
 
-  programs.obs-studio = {
-    enable = true;
-    enableVirtualCamera = true;
-  };
   programs.ydotool = {
     enable = true;
   };

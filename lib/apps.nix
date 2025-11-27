@@ -114,8 +114,8 @@
                 app.package = cfg.package;
                 app.binPath = "bin/${appCfg.packageName}";
 
-                # Document portal for sandboxed apps
-                dbus.mountDocumentPortal = lib.mkDefault true;
+                # Network disabled by default (slightly higher priority than mkDefault)
+                bubblewrap.network = lib.mkOverride 999 false;
 
                 # Bind persistence paths automatically
                 # These are the paths that impermanence will mount to $HOME

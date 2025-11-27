@@ -5,21 +5,12 @@
   imports = [ ../app-spec.nix ];
 
   config.app = {
-    # GUI apps typically have config and cache in standard locations
-    persistence.user.persist = [
-      ".config/${config.app.name}"
-    ];
-
-    persistence.user.cache = [
-      ".cache/${config.app.name}"
-    ];
+    # GUI apps should specify their own persistence paths
+    # (removed automatic .config/${name} and .cache/${name} defaults)
 
     # Nixpak configuration for GUI apps
     nixpakModules = [
       ({ config, lib, pkgs, sloth, ... }: {
-        # Enable GPU access
-        gpu.enable = true;
-
         # System integration
         fonts.enable = true;
         locale.enable = true;
