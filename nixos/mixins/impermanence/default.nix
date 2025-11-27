@@ -200,19 +200,6 @@
     };
   };
 
-  # Volatile cache - ephemeral, cleared on boot (like root)
-  # Used for: browser caches, electron app caches, build artifacts
-  environment.persistence."/volatile-cache" = {
-    enable = true;
-    hideMounts = true;
-    directories = [ ];
-    users.jrt = {
-      directories = [
-        # App-specific volatile caches will be added here by app modules
-      ];
-    };
-  };
-
   # Baked - immutable setup-time data (read-only mount)
   # Used for: encryption keys, certificates, machine secrets
   environment.persistence."/baked" = {

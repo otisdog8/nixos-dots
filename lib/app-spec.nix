@@ -44,13 +44,7 @@
       cache = lib.mkOption {
         type = lib.types.listOf lib.types.str;
         default = [];
-        description = "User paths for /cache (persistent cache)";
-      };
-
-      volatileCache = lib.mkOption {
-        type = lib.types.listOf lib.types.str;
-        default = [];
-        description = "User paths for /volatile-cache (cleared on boot)";
+        description = "User paths for cache (ephemeral, can be cleared)";
       };
 
       baked = lib.mkOption {
@@ -77,13 +71,7 @@
       cache = lib.mkOption {
         type = lib.types.listOf lib.types.str;
         default = [];
-        description = "System paths for /cache";
-      };
-
-      volatileCache = lib.mkOption {
-        type = lib.types.listOf lib.types.str;
-        default = [];
-        description = "System paths for /volatile-cache";
+        description = "System paths for cache (ephemeral, can be cleared)";
       };
 
       baked = lib.mkOption {

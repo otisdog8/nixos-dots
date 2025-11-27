@@ -10,7 +10,7 @@
       ".config/${config.app.name}"
     ];
 
-    persistence.user.volatileCache = [
+    persistence.user.cache = [
       ".cache/${config.app.name}"
     ];
 
@@ -18,37 +18,26 @@
     nixpakModules = [
       ({ config, lib, pkgs, sloth, ... }: {
         # Enable GPU access
-        gpu.enable = lib.mkDefault true;
+        gpu.enable = true;
 
         # System integration
-        fonts.enable = lib.mkDefault true;
-        locale.enable = lib.mkDefault true;
-        etc.sslCertificates.enable = lib.mkDefault true;
-
-        # DBus for desktop integration
-        dbus = {
-          enable = lib.mkDefault true;
-          policies = lib.mkDefault {
-            "org.freedesktop.DBus" = "talk";
-            "ca.desrt.dconf" = "talk";
-            "org.freedesktop.portal.*" = "talk";
-            "org.freedesktop.Notifications" = "talk";
-          };
-        };
+        fonts.enable = true;
+        locale.enable = true;
+        etc.sslCertificates.enable = true;
 
         # Bubblewrap sandbox configuration
         bubblewrap = {
           # API VFS for device/process access
           apivfs = {
-            dev = lib.mkDefault true;
-            proc = lib.mkDefault true;
+            dev = true;
+            proc = true;
           };
 
           # Sockets for Wayland, audio
           sockets = {
-            wayland = lib.mkDefault true;
-            pulse = lib.mkDefault true;
-            pipewire = lib.mkDefault true;
+            wayland = true;
+            pulse = true;
+            pipewire = true;
           };
 
           # Device access
@@ -58,11 +47,6 @@
 
           # Read-write bind mounts
           bind.rw = [
-            "/tmp"  # Temp directory
-            (sloth.concat' sloth.runtimeDir "/at-spi/bus")
-            (sloth.concat' sloth.runtimeDir "/gvfsd")
-            (sloth.concat' sloth.runtimeDir "/dconf")
-            (sloth.concat' sloth.runtimeDir "/doc")
           ];
 
           # Read-only bind mounts
@@ -78,19 +62,11 @@
           ];
 
           # Environment variables
-          env = lib.mkDefault {
+          env = {
             DISPLAY = sloth.env "DISPLAY";
             WAYLAND_DISPLAY = sloth.env "WAYLAND_DISPLAY";
             QT_QPA_PLATFORMTHEME = sloth.env "QT_QPA_PLATFORMTHEME";
             LANG = sloth.env "LANG";
-            XDG_DATA_DIRS = lib.makeSearchPath "share" [
-              pkgs.adwaita-icon-theme
-              pkgs.shared-mime-info
-            ];
-            XCURSOR_PATH = lib.concatStringsSep ":" [
-              "${pkgs.adwaita-icon-theme}/share/icons"
-              "${pkgs.adwaita-icon-theme}/share/pixmaps"
-            ];
           };
         };
       })

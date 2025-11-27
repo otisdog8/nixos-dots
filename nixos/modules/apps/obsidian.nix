@@ -37,15 +37,15 @@
       # persistence.user.persist = lib.mkAfter [ ".config/obsidian/plugins" ];
 
       # Example: Override cache location
-      # persistence.user.volatileCache = lib.mkForce [ ".config/obsidian/custom-cache" ];
+      # persistence.user.cache = lib.mkForce [ ".config/obsidian/custom-cache" ];
 
       # Custom options specific to obsidian
       customOptions = config: {
         vaultPath = lib.mkOption {
           type = lib.types.str;
-          default = "$HOME/Documents/Obsidian";
+          default = "Documents/obsidian";
           description = "Path to Obsidian vault directory";
-          example = "$HOME/notes";
+          example = "Documents/notes";
         };
       };
 

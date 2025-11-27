@@ -54,8 +54,7 @@
       # Available persistence types:
       #   - persist:        Mutable config/data (/persist)
       #   - large:          Large data files (/large)
-      #   - cache:          Persistent cache (/cache)
-      #   - volatileCache:  Cleared on boot (/volatile-cache)
+      #   - cache:          Ephemeral cache, can be cleared (/cache)
       #   - baked:          Immutable setup data (/baked)
 
       # Add paths - they merge with feature defaults automatically
@@ -65,7 +64,7 @@
       # ];
 
       # To REPLACE feature defaults instead of merging, use lib.mkForce
-      # persistence.user.volatileCache = lib.mkForce [
+      # persistence.user.cache = lib.mkForce [
       #   ".cache/APPNAME"
       # ];
 

@@ -3,7 +3,8 @@
     "allow": [
       "Bash(mkdir:*)",
       "Bash(git add:*)",
-      "Bash(nix eval:*)"
+      "Bash(nix eval:*)",
+      "WebSearch"
     ],
     "deny": [],
     "ask": []

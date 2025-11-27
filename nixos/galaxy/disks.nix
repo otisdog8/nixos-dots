@@ -40,17 +40,6 @@ _: {
     neededForBoot = true;
   };
 
-  fileSystems."/volatile-cache" = {
-    device = "/dev/mapper/luks";
-    fsType = "btrfs";
-    options = [
-      "subvol=volatile-cache"
-      "compress=zstd"
-      "noatime"
-    ];
-    neededForBoot = true;
-  };
-
   fileSystems."/baked" = {
     device = "/dev/mapper/luks";
     fsType = "btrfs";

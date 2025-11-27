@@ -128,14 +128,13 @@
                     map (p: sloth.concat' sloth.homeDir "/${p}") appCfg.persistence.user.large
                   ))
                   ++ (lib.optionals cfg.enableCache (
-                    map (p: sloth.concat' sloth.homeDir "/${p}") (
-                      appCfg.persistence.user.cache ++ appCfg.persistence.user.volatileCache
-                    )
+                    map (p: sloth.concat' sloth.homeDir "/${p}") appCfg.persistence.user.cache
                   ))
                   # User's extra binds (convert relative paths to absolute)
                   ++ (map (p:
                     if lib.hasPrefix "/" p then p  # Absolute path
-                    else sloth.concat' sloth.homeDir "/${p}"  # Relative path
+                    else if lib.hasPrefix "." p then sloth.concat' (sloth.env "PWD") "/${p}"
+		    else sloth.concat' sloth.homeDir "/${p}"  # Relative path
                   ) cfg.sandbox.extraBinds);
               };
             }).config.env
@@ -164,10 +163,6 @@
             environment.persistence."/cache".directories = appCfg.persistence.system.cache;
           })
 
-          (lib.mkIf (cfg.enable && appCfg.persistence.system.volatileCache != []) {
-            environment.persistence."/volatile-cache".directories = appCfg.persistence.system.volatileCache;
-          })
-
           (lib.mkIf (cfg.enable && appCfg.persistence.system.baked != []) {
             environment.persistence."/baked".directories = appCfg.persistence.system.baked;
           })
@@ -193,12 +188,6 @@
           (lib.mkIf (cfg.enable && cfg.enableCache && appCfg.persistence.user.cache != []) {
             environment.persistence."/cache".users.${username}.directories =
               appCfg.persistence.user.cache;
-          })
-
-          # User persistence - /volatile-cache
-          (lib.mkIf (cfg.enable && cfg.enableCache && appCfg.persistence.user.volatileCache != []) {
-            environment.persistence."/volatile-cache".users.${username}.directories =
-              appCfg.persistence.user.volatileCache;
           })
 
           # User persistence - /baked

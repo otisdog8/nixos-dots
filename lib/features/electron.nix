@@ -7,7 +7,7 @@
 
   config.app = {
     # Electron apps have predictable Chromium cache structure
-    persistence.user.volatileCache = [
+    persistence.user.cache = [
       ".config/${config.app.name}/Cache"
       ".config/${config.app.name}/GPUCache"
       ".config/${config.app.name}/Code Cache"

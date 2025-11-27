@@ -10,7 +10,7 @@
 
   config.app = {
     # Browsers have extensive cache needs
-    persistence.user.volatileCache = [
+    persistence.user.cache = [
       ".cache/${config.app.name}"
       ".config/${config.app.name}/Default/Service Worker"
       ".config/${config.app.name}/Service Worker"
