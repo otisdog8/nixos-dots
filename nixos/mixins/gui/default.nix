@@ -9,24 +9,19 @@
   imports = [
     ./auth.nix
     ./desktop.nix
-    ./desktop.nix
     ./fonts.nix
     ./plymouth.nix
-    ./printing.nix
     ./sddm.nix
     ./theming.nix
   ];
   environment.systemPackages = with pkgs; [
     # Apps
     lxqt.pcmanfm-qt
-    protonvpn-gui
     kitty
     _1password-cli
     _1password-gui
     kdePackages.ark
-    prismlauncher-sandboxed
     quartus-prime-lite
-    slipstream
     linux-firmware
 
     # Graphics test utilities
@@ -44,7 +39,6 @@
   hardware.flipperzero.enable = true;
 
   # chaotic.mesa-git.enable = true;
-  services.udisks2.enable = true;
 
   nixpkgs = {
     overlays = [

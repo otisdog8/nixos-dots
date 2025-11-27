@@ -1,39 +1,20 @@
 { lib, pkgs, ... }:
 {
   environment.systemPackages = with pkgs; [
-    clang
     ast-grep
     uv
-    xxh
     unzip
     zip
     claude-code
     fd
     lazygit
     sd
-    bash-language-server
-    basedpyright
-    ruff
-    clang-analyzer
-    clang-tools
-    helm-ls
-    yaml-language-server
-    marksman
-    astro-language-server
-    verilator
-    stylua
-    lua
-    texlive.combined.scheme-full
-    lua-language-server
-    nodejs
-    bun
     dig
     doggo
     iperf
     iotop
     nvtopPackages.full
     tcpdump
-    ranger
     nix-index
     nixd
     jq
@@ -49,12 +30,9 @@
     playerctl
     libsecret
     shellcheck
-    bashate
-    bash-language-server
     shfmt
     ncdu
     kdePackages.ksshaskpass
-    jdk
     screen
     neovim
     kubectl
@@ -74,12 +52,6 @@
     nixfmt-rfc-style
     direnv
     dive
-    podman-tui
-    docker-compose
-    podman-compose
-    enscript
-    ghostscript
-    a2ps
     smartmontools
     python3
     lsof
@@ -91,9 +63,6 @@
     gcc
     pkg-config
     nvme-cli
-    pandoc
-    go
-    just
   ];
 
   programs.direnv.enable = true;
@@ -115,12 +84,4 @@
     VISUAL = "nvim";
   };
   environment.enableAllTerminfo = true;
-  virtualisation.containers.enable = true;
-  virtualisation = {
-    podman = {
-      enable = true;
-      dockerCompat = true;
-      defaultNetwork.settings.dns_enabled = true;
-    };
-  };
 }

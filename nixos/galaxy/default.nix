@@ -31,6 +31,9 @@
     ../modules/apps/steam.nix
     ../modules/apps/amazing-marvin.nix
     ../modules/apps/obs-studio.nix
+    ../modules/apps/prismlauncher.nix
+    ../modules/apps/slipstream.nix
+    ../modules/apps/protonvpn-gui.nix
   ];
 
   # Enable apps via modular system
@@ -93,6 +96,21 @@
   modules.apps.obs-studio = {
     enable = true;
     sandbox.enable = true;
+  };
+
+  modules.apps.prismlauncher = {
+    enable = true;
+    sandbox.enable = true;
+  };
+
+  modules.apps.slipstream = {
+    enable = true;
+    sandbox.enable = true;
+  };
+
+  modules.apps.protonvpn-gui = {
+    enable = true;
+    sandbox.enable = false;
   };
 
   services.xserver.videoDrivers = [ "nvidia" ];

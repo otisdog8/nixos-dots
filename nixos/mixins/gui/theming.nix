@@ -7,11 +7,8 @@
 {
   environment.systemPackages = with pkgs; [
     # Theming
-    libsForQt5.qt5ct
     qt6Packages.qt6ct
-    qt5.qtwayland
     qt6.qtwayland
-    qt5.qtbase
     qt6.qtbase
     qt6.qtdeclarative
     qt6.qtsvg
@@ -19,8 +16,6 @@
     qt6.qt5compat
     candy-icons
     papirus-icon-theme
-    libsForQt5.qtstyleplugin-kvantum
-    libsForQt5.plasma-framework
     kdePackages.qtstyleplugin-kvantum
     inputs.rose-pine-hyprcursor.packages.${pkgs.stdenv.hostPlatform.system}.default
     rose-pine-cursor

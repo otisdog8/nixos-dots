@@ -36,8 +36,6 @@
     networkmanager-openvpn
     networkmanagerapplet
     kdePackages.networkmanager-qt
-    udisks
-    udiskie
     pavucontrol
     gparted
   ];
@@ -86,7 +84,6 @@
     };
   };
 
-  services.udisks2.enable = true;
   services.blueman.enable = true;
   hardware.bluetooth.enable = true;
 }

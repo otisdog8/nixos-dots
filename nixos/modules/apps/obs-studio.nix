@@ -14,7 +14,14 @@
 
     config.app = {
       name = "obs-studio";
-      package = pkgs.obs-studio;
+      # Wrap OBS with plugins before sandboxing
+      package = pkgs.wrapOBS.override { obs-studio = pkgs.obs-studio; } {
+        plugins = with pkgs.obs-studio-plugins; [
+          wlrobs
+          obs-backgroundremoval
+          obs-pipewire-audio-capture
+        ];
+      };
       packageName = "obs";
 
       # OBS config and scenes
@@ -22,22 +29,15 @@
         ".config/obs-studio"
       ];
 
-      # Additional NixOS and home-manager configuration
+      # Additional NixOS configuration
       customConfig = { config, lib, pkgs }: {
-        # NixOS level configuration
+        # System-level OBS configuration
+        # Pass null as package since our sandboxed package is already in systemPackages
+        # Plugins are configured outside this module
         programs.obs-studio = {
           enable = true;
           enableVirtualCamera = true;
-        };
-
-        # Home-manager level configuration
-        home-manager.users.jrt.programs.obs-studio = {
-          enable = true;
-          plugins = with pkgs.obs-studio-plugins; [
-            wlrobs
-            obs-backgroundremoval
-            obs-pipewire-audio-capture
-          ];
+          package = null;
         };
       };
     };

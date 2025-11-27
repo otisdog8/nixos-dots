@@ -31,8 +31,6 @@ in
   programs.eza.enable = true;
   programs.bat.enable = true;
   programs.btop.enable = true;
-  programs.emacs.enable = true;
-  services.emacs.enable = true;
   services.ssh-agent.enable = true;
 
   home.file.".profile".text = ''
@@ -44,9 +42,6 @@ in
     enableDefaultConfig = false;
     matchBlocks."*".addKeysToAgent = "yes";
   };
-  services.gpg-agent.enable = true;
-  services.gpg-agent.pinentry.package = pkgs.pinentry-qt;
-  programs.gpg.enable = true;
   programs.zsh = {
     enable = true;
     history = {
@@ -82,6 +77,5 @@ in
     command_timeout = 100;
   };
   programs.zoxide.enable = true;
-  programs.neomutt.enable = true;
   services.mpris-proxy.enable = true;
 }

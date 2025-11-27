@@ -99,15 +99,13 @@
         "Videos"
         # ".steam" # Now managed by modules/apps/steam.nix
         ".cargo"
-        ".emacs.d"
         # ".lunarclient" # Now managed by modules/apps/lunar-client.nix
         ".minecraft"
         # ".config/lunarclient" # Now managed by modules/apps/lunar-client.nix
         ".config/minecraft"
         ".config/op"
-        ".config/kdeconnect"
         ".config/github-copilot"
-        ".config/Proton"
+        # ".config/Proton" # Now managed by modules/apps/protonvpn-gui.nix
         # ".config/Marvin" # Now managed by modules/apps/amazing-marvin.nix
         ".config/nvim"
         # ".config/obs-studio" # Now managed by modules/apps/obs-studio.nix
@@ -132,10 +130,6 @@
           mode = "0700";
         }
         { directory = ".local/share/zoxide/"; }
-        {
-          directory = ".gnupg";
-          mode = "0700";
-        }
         {
           directory = ".ssh";
           mode = "0700";
@@ -170,9 +164,9 @@
     users.jrt = {
       directories = [
         "Downloads"
-        ".local/share/PrismLauncher"
+        # ".local/share/PrismLauncher" # Now managed by modules/apps/prismlauncher.nix
         # ".local/share/Steam" # Now managed by modules/apps/steam.nix
-        ".local/share/slipstream"
+        # ".local/share/slipstream" # Now managed by modules/apps/slipstream.nix
       ];
     };
   };

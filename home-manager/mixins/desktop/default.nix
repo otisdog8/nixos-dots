@@ -28,15 +28,8 @@ in
       uris = [ "qemu:///system" ];
     };
   };
-  services.kdeconnect = {
-    enable = true;
-    indicator = true;
-  };
   programs.foot.enable = true;
-  services.udiskie.enable = true;
   services.trayscale.enable = true;
-  programs.zathura.enable = true;
-  programs.texlive.enable = true;
   xdg.mimeApps = {
     enable = true;
     defaultApplications = {

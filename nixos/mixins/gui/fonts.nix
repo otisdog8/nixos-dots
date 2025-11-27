@@ -9,7 +9,6 @@
   fonts.packages =
     with pkgs;
     [
-      texlivePackages.fontawesome
       liberation_ttf
       roboto
       sarasa-gothic

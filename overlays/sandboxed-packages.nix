@@ -6,7 +6,9 @@ let
     pkgs = final;
   };
 
-  sandboxed-prismlauncher = mkNixPak {
+  # Legacy sandboxed prismlauncher - now managed by modules/apps/prismlauncher.nix
+  # Keeping for backwards compatibility but not used
+  sandboxed-prismlauncher-legacy = mkNixPak {
     config = { sloth, ... }: {
       # The application to isolate
       app.package = prev.prismlauncher;
@@ -167,5 +169,5 @@ let
   };
 in
 {
-  prismlauncher-sandboxed = sandboxed-prismlauncher.config.env;
+  # No longer exporting prismlauncher-sandboxed - use modules.apps.prismlauncher instead
 }
