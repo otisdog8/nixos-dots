@@ -11,6 +11,7 @@
       ../../../lib/features/camera.nix
       ../../../lib/features/xdg-desktop.nix
       ../../../lib/features/x11.nix
+      ../../../lib/features/system-tray.nix
     ];
 
     config.app = {

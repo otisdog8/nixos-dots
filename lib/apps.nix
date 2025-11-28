@@ -84,6 +84,15 @@
             Allows per-host nixpak configuration overrides.
           '';
         };
+
+        finalPackage = lib.mkOption {
+          type = lib.types.package;
+          readOnly = true;
+          description = ''
+            The final package to use (sandboxed if sandbox.enable is true, otherwise the base package).
+            This is what gets installed in environment.systemPackages and should be used in customConfig.
+          '';
+        };
       }
       # Merge in custom options declared by the app
       // customOpts;
@@ -145,6 +154,11 @@
           customCfg = appCfg.customConfig { inherit config lib pkgs; };
         in
         lib.mkMerge ([
+          # Expose the final package
+          {
+            modules.apps.${appName}.finalPackage = sandboxedPackage;
+          }
+
           # Base config - always applied when enabled
           (lib.mkIf cfg.enable {
             environment.systemPackages = [ sandboxedPackage ];

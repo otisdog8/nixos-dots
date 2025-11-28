@@ -6,6 +6,7 @@
       ../../../lib/features/gui.nix
       ../../../lib/features/network.nix
       ../../../lib/features/xdg-desktop.nix
+      ../../../lib/features/system-tray.nix
     ];
 
     config.app = {

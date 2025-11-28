@@ -15,24 +15,19 @@
   ...
 }:
 
-let
-  # SSH keys for all hosts
-  sshKeys = [
-    "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAICPtgHM9vEd6NR70wKznoP/HE3aCrud/9rx/2Lu16Dh4 jrt@excelsior"
-    "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIKrESH5ZwJ9UprxxlPHlwMTLZtNiFysHR+5CHcTA63+a jrt@constitution"
-    "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAID8cRRtLtbuTMeLNvA4oB1Ui0yk0yhdPTPBvqku6lQZj jrt@galaxy"
-  ];
-in
-
 {
   imports = [
-    # Include the results of the hardware scan.
+    # Flake inputs
     inputs.hyprland.nixosModules.default
     inputs.impermanence.nixosModules.impermanence
     inputs.lanzaboote.nixosModules.lanzaboote
-    inputs.chaotic.nixosModules.default # OUR DEFAULT MODULE
+    inputs.chaotic.nixosModules.default
     inputs.home-manager.nixosModules.home-manager
+
+    # Host configuration
     ./${hostname}
+
+    # Home-manager configuration
     {
       home-manager.extraSpecialArgs = {
         inherit inputs;
@@ -43,30 +38,46 @@ in
       home-manager.useUserPackages = true;
       home-manager.users.jrt = import ../home-manager;
     }
-    mixins/cli
-    mixins/gui
-    mixins/backups
-    mixins/impermanence
-    mixins/laptop
-    mixins/secureboot
-    mixins/server
-    mixins/virt
-  ];
-  nix.settings.experimental-features = [
-    "nix-command"
-    "flakes"
+
+    # System modules (unconditionally enabled)
+    modules/system/impermanence
+    modules/system/kernel
+    modules/system/locale
+    modules/system/networking
+    modules/system/secureboot
+    modules/system/ydotool
+
+    # System modules (conditionally enabled)
+    modules/system/cli
+    modules/system/developer-tools
+    modules/system/laptop
+    modules/system/remote-access
+    modules/system/virt
+
+    # Optional apps
+    modules/apps/jellyfin.nix
+    modules/apps/sabnzbd.nix
   ];
 
+  # Enable conditional system modules
+  modules.system.cli.enable = lib.mkDefault true;
+  modules.system.developer-tools.enable = lib.mkDefault true;
+  modules.system.laptop.enable = lib.mkDefault false; # Only enable on laptops
+  modules.system.remote-access.enable = lib.mkDefault true;
+  modules.system.virt.enable = lib.mkDefault true;
+
+  # Optional apps (disabled by default)
+  modules.apps.jellyfin.enable = lib.mkDefault false;
+  modules.apps.sabnzbd.enable = lib.mkDefault false;
+
+  # Nix settings
   nix.settings = {
+    experimental-features = [
+      "nix-command"
+      "flakes"
+    ];
     substituters = [ "https://hyprland.cachix.org" ];
     trusted-public-keys = [ "hyprland.cachix.org-1:a7pgxzMz7+chwVL3/pzj6jIBMioiJM7ypFP8PwtkuGc=" ];
-  };
-
-  #systemd.coredump.enable = false;
-  #boot.kernel.sysctl."kernel.core_pattern" = "|/bin/false";
-  boot.kernel.sysctl."fs.suid_dumpable" = 0;
-  boot.kernel.sysctl = {
-    "vm.swappiness" = 10;
   };
 
   nix.gc = {
@@ -74,70 +85,8 @@ in
     dates = "daily";
     options = "--delete-older-than 30d";
   };
-  # boot.kernelPackages = pkgs.linuxPackagesFor (pkgs.linux_6_13.override { argsOverride = { version = "6.13.5"; }; });
-  #boot.kernelPackages = pkgs.linuxKernel.packages.linux_6_13_5;
-  # boot.kernelPackages = pkgs.older.linuxKernel.packages.linux_6_13;
-  # boot.kernelPackages = pkgs.linuxPackages_testing;
-  boot.kernelPackages = pkgs.linuxPackages_latest;
-  boot.initrd.systemd.enable = true;
 
-  hardware.enableAllFirmware = true;
-  hardware.firmware = [
-    pkgs.linux-firmware
-    pkgs.sof-firmware
-    pkgs.alsa-firmware
-  ];
-  nixpkgs.config.allowUnfree = true;
-  nixpkgs.overlays = builtins.attrValues outputs.overlays;
-
-  boot.initrd.verbose = false;
-  boot.consoleLogLevel = 0;
-  boot.kernelParams = [
-    "quiet"
-    "splash"
-    "loglevel=3"
-    "rd.systemd.show_status=false"
-    "rd.udev.log_level=3"
-    "udev.log_priority=3"
-  ];
-
-  boot.initrd.availableKernelModules = [
-    "xhci_pci"
-    "thunderbolt"
-    "nvme"
-    "usb_storage"
-    "sd_mod"
-  ];
-  boot.initrd.kernelModules = [ ];
-  networking.useDHCP = lib.mkDefault true;
-  networking.networkmanager = {
-    enable = true;
-    wifi.scanRandMacAddress = false;
-  };
-
-  nixpkgs.hostPlatform = lib.mkDefault platform;
-  # Set your time zone.
-  powerManagement = {
-    enable = true;
-  };
-
-  i18n.defaultLocale = "en_US.UTF-8";
-  console = {
-    font = "Lat2-Terminus16";
-    keyMap = "us";
-  };
-
-  security.rtkit.enable = true;
-
-  # Create the 'hidraw' group if it doesn't exist.
-  users.groups.hidraw = { };
-
-  # Provide custom udev rules.
-  services.udev.extraRules = ''
-    KERNEL=="hidraw*", SUBSYSTEM=="hidraw", GROUP="hidraw", MODE="0660"
-  '';
-
-  # Don't garbage collect flakes sources
+  # Don't garbage collect flake inputs
   system.extraDependencies =
     let
       collectFlakeInputs =
@@ -146,41 +95,49 @@ in
     in
     builtins.concatMap collectFlakeInputs (builtins.attrValues inputs);
 
-  users.users.root = {
-    hashedPassword = "$y$j9T$/mXrIMQE7/SDmS9f9MyMB0$ouFzDiwIZFC0kHhh3kygGmpthEa86ztWnVcc3iFEV5.";
-    openssh.authorizedKeys.keys = sshKeys;
-  };
+  # Nixpkgs configuration
+  nixpkgs.config.allowUnfree = true;
+  nixpkgs.overlays = builtins.attrValues outputs.overlays;
+  nixpkgs.hostPlatform = lib.mkDefault platform;
 
+  # Power management
+  powerManagement.enable = true;
+
+  # Security
+  security.rtkit.enable = true;
+  security.sudo.extraConfig = ''
+    Defaults        timestamp_timeout=-1
+  '';
+
+  #systemd.coredump.enable = false;
+  #boot.kernel.sysctl."kernel.core_pattern" = "|/bin/false";
+
+  # Users
+  users.users.root.hashedPassword = "$y$j9T$/mXrIMQE7/SDmS9f9MyMB0$ouFzDiwIZFC0kHhh3kygGmpthEa86ztWnVcc3iFEV5.";
 
   users.users.jrt = {
     isNormalUser = true;
+    description = "Jacob Root";
+    uid = 1001;
+    shell = pkgs.zsh;
+    hashedPassword = "$6$JvSJ6iVd3.DRDc8e$lv.YEJaRy73l9RsiE6hmZm61Q0hH.cHo.QsFSGUsEjaS3n0EDnpzEqbaj6cNrYaw/9qnQLNo9TZ7RmipgBebw/";
     extraGroups = [
       "wheel"
       "tss"
       "input"
       "audio"
       "video"
-      "ydotool"
       "libvirtd"
-      "hidraw"
       "networkmanager"
-    ]; # Enable ‘sudo’ for the user.
+    ];
     packages = with pkgs; [
       tree
     ];
-    hashedPassword = "$6$JvSJ6iVd3.DRDc8e$lv.YEJaRy73l9RsiE6hmZm61Q0hH.cHo.QsFSGUsEjaS3n0EDnpzEqbaj6cNrYaw/9qnQLNo9TZ7RmipgBebw/";
-    description = "Jacob Root";
-    uid = 1001;
-    shell = pkgs.zsh;
-    openssh.authorizedKeys.keys = sshKeys;
   };
 
-  security.sudo.extraConfig = ''
-    Defaults        timestamp_timeout=-1
-  '';
-
+  # Services
   services.fwupd.enable = true;
-
   services.dbus.implementation = "broker";
-  system.stateVersion = stateVersion; # Did you read the comment?
+
+  system.stateVersion = stateVersion;
 }

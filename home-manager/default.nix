@@ -14,7 +14,7 @@ in
 {
   imports = [
     ./mixins/cli
-    ./mixins/desktop
+    # Desktop config now managed by NixOS modules (modules/desktop/*)
   ];
   home.username = username;
   home.homeDirectory = "/home/${username}";

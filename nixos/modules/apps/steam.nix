@@ -21,6 +21,12 @@
         ".local/share/Steam"
       ];
 
+      # Game saves (Steam library games)
+      persistence.user.persist = [
+        ".local/share/FasterThanLight"
+        ".local/share/Paradox Interactive/Stellaris/"
+      ];
+
       # Enable input devices for game controllers
       nixpakModules = [
         ({ lib, ... }: {

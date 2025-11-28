@@ -10,6 +10,7 @@
       ../../../lib/features/camera.nix
       ../../../lib/features/screen-capture.nix
       ../../../lib/features/xdg-desktop.nix
+      ../../../lib/features/system-tray.nix
     ];
 
     config.app = {
