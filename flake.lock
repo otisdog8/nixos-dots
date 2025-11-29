@@ -846,14 +846,18 @@
         ]
       },
       "locked": {
-        "lastModified": 1764369532,
-        "narHash": "sha256-B8+3CH6S07OqdW3iR/lJ9Jq4bpOpch5gyopLPHvchWo=",
-        "path": "/home/jrt/Documents/nixpak",
-        "type": "path"
+        "lastModified": 1763968909,
+        "narHash": "sha256-57kdJpYgDveUFDqKX8pI+i3DDcsqgaKB0oOOzb0LHEk=",
+        "owner": "otisdog8",
+        "repo": "nixpak",
+        "rev": "f6848fad002f014f5929f11cb226c14d6b5031db",
+        "type": "github"
       },
       "original": {
-        "path": "/home/jrt/Documents/nixpak",
-        "type": "path"
+        "owner": "otisdog8",
+        "ref": "sandbox-xdg-runtime-dir",
+        "repo": "nixpak",
+        "type": "github"
       }
     },
     "nixpkgs": {
@@ -1298,14 +1302,18 @@
     "xdg-desktop-portal-src": {
       "flake": false,
       "locked": {
-        "lastModified": 1763973802,
-        "narHash": "sha256-SiXlb7l31rcuhvj3dV5ZVIA+5y8F3ZLnHKFjiiMuyuk=",
-        "path": "/home/jrt/Documents/xdg-desktop-portal",
-        "type": "path"
+        "lastModified": 1764382244,
+        "narHash": "sha256-sH/m9B8fFhwrhLO0z+xybNr4jUOgN6RSFv4U8AMTiq8=",
+        "owner": "otisdog8",
+        "repo": "xdg-desktop-portal",
+        "rev": "18f02f5ad6ccf6f41a094f4b54185ead90706358",
+        "type": "github"
       },
       "original": {
-        "path": "/home/jrt/Documents/xdg-desktop-portal",
-        "type": "path"
+        "owner": "otisdog8",
+        "ref": "fallback-improvements-120",
+        "repo": "xdg-desktop-portal",
+        "type": "github"
       }
     },
     "xdph": {
