@@ -38,26 +38,24 @@
     ./minecraft.nix
     ./media.nix
     ./secrets.nix
+    ./backups.nix
+
+    # Hardware
     inputs.nixos-hardware.nixosModules.common-cpu-amd
     inputs.nixos-hardware.nixosModules.common-pc
     inputs.nixos-hardware.nixosModules.common-pc-ssd
+
+    # System modules
+    ../modules/system/hardware/intel.nix
   ];
 
-  services.xserver.videoDrivers = [ "modesetting" ];
-  hardware.graphics.extraPackages32 = with pkgs.pkgsi686Linux; [ intel-media-driver ];
-  hardware.graphics = {
-    # hardware.graphics since NixOS 24.11
+  # Enable Intel iGPU (for media transcoding)
+  modules.system.hardware.intel = {
     enable = true;
-    extraPackages = with pkgs; [
-      libvdpau-va-gl
-      intel-media-driver
-      intel-compute-runtime
-      vpl-gpu-rt # for newer GPUs on NixOS >24.05 or unstable
-      intel-vaapi-driver # previously vaapiIntel
-      vaapiVdpau
-    ];
+    enableCompute = true;
   };
 
+  # NFS server for k8s storage
   services.nfs.server.enable = true;
   services.nfs.server.exports = ''
     /export/k8s  100.0.0.0/8(rw,nohide,insecure,no_subtree_check,all_squash)

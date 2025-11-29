@@ -7,12 +7,16 @@ in
   options.modules.apps.${appName} = {
     enable = lib.mkEnableOption "Jellyfin media server";
     sandbox.enable = lib.mkEnableOption "sandboxing" // { default = false; };
+    openFirewall = lib.mkEnableOption "opening firewall ports for Jellyfin";
   };
 
   config = lib.mkIf cfg.enable {
     # Install Jellyfin
-    services.jellyfin.enable = true;
-    services.jellyfin.package = pkgs.jellyfin;
+    services.jellyfin = {
+      enable = true;
+      package = pkgs.jellyfin;
+      openFirewall = cfg.openFirewall;
+    };
 
     # Persistence for Jellyfin
     environment.persistence."/persist" = {
