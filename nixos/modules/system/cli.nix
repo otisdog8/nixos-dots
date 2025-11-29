@@ -80,7 +80,7 @@ in
     };
 
     environment.pathsToLink = [ "/share/zsh" ];
-    environment.enableAllTerminfo = true;
+    environment.enableAllTerminfo = false;
 
     # Persistence for CLI tools
     environment.persistence."/persist" = {
