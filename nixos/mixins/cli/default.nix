@@ -5,7 +5,6 @@
     uv
     unzip
     zip
-    claude-code
     fd
     lazygit
     sd

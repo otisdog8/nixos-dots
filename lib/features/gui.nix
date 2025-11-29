@@ -45,6 +45,8 @@
             "/tmp/.X11-unix"
             "/run/current-system/sw/share/icons"
             "/run/current-system/sw/share/fonts"
+            "/etc/localtime"
+            "/etc/zoneinfo"
             (sloth.concat' sloth.xdgConfigHome "/gtk-2.0")
             (sloth.concat' sloth.xdgConfigHome "/gtk-3.0")
             (sloth.concat' sloth.xdgConfigHome "/gtk-4.0")

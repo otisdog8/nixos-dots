@@ -40,21 +40,22 @@
     }
 
     # System modules (unconditionally enabled)
-    modules/system/impermanence
-    modules/system/kernel
-    modules/system/locale
-    modules/system/networking
-    modules/system/secureboot
-    modules/system/ydotool
+    modules/system/impermanence.nix
+    modules/system/kernel.nix
+    modules/system/locale.nix
+    modules/system/networking.nix
+    modules/system/secureboot.nix
+    modules/system/ydotool.nix
 
     # System modules (conditionally enabled)
-    modules/system/cli
-    modules/system/developer-tools
-    modules/system/laptop
-    modules/system/remote-access
-    modules/system/virt
+    modules/system/cli.nix
+    modules/system/developer-tools.nix
+    modules/system/laptop.nix
+    modules/system/remote-access.nix
+    modules/system/virt.nix
 
     # Optional apps
+    modules/apps/claude-code.nix
     modules/apps/jellyfin.nix
     modules/apps/sabnzbd.nix
   ];
@@ -66,7 +67,7 @@
   modules.system.remote-access.enable = lib.mkDefault true;
   modules.system.virt.enable = lib.mkDefault true;
 
-  # Optional apps (disabled by default)
+  # Optional service apps (disabled by default)
   modules.apps.jellyfin.enable = lib.mkDefault false;
   modules.apps.sabnzbd.enable = lib.mkDefault false;
 

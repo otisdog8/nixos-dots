@@ -10,40 +10,50 @@ in
 
   config = lib.mkIf cfg.enable {
     environment.systemPackages = with pkgs; [
-      ast-grep
-      uv
+      # Archive tools
       unzip
       zip
-      claude-code
-      fd
-      lazygit
-      sd
+
+      # Network tools
       dig
       doggo
       iperf
+      tcpdump
+
+      # System monitoring
       iotop
       nvtopPackages.full
-      tcpdump
-      nix-index
-      nixd
-      jq
-      vim
-      wget
-      git-crypt
       btop
+      smartmontools
+      lsof
+      nvme-cli
+
+      # File tools
+      nix-index
+      jq
+      ncdu
+
+      # Editors and text tools
+      vim
+
+      # Version control
+      git
+      git-crypt
+
+      # General utilities
+      wget
       imagemagick
-      polkit
       bat
       ripgrep
-      git
       playerctl
       libsecret
-      shellcheck
-      shfmt
-      ncdu
-      kdePackages.ksshaskpass
       screen
-      neovim
+
+      # System tools
+      polkit
+      kdePackages.ksshaskpass
+
+      # Kubernetes tools
       kubectl
       cilium-cli
       k9s
@@ -52,25 +62,12 @@ in
       hubble
       authelia
       cloudflared
+
+      # Filesystem tools
       nfs-utils
       bcachefs-tools
       clevis
-      nixfmt-rfc-style
-      direnv
-      dive
-      smartmontools
-      python3
-      lsof
-      cloc
-      gnumake
-      meson
-      ninja
-      gcc
-      pkg-config
-      nvme-cli
     ];
-
-    programs.direnv.enable = true;
 
     programs.zsh = {
       syntaxHighlighting = {
@@ -83,13 +80,6 @@ in
     };
 
     environment.pathsToLink = [ "/share/zsh" ];
-    programs.nix-ld.enable = true;
-
-    environment.variables = {
-      EDITOR = "nvim";
-      VISUAL = "nvim";
-    };
-
     environment.enableAllTerminfo = true;
 
     # Persistence for CLI tools

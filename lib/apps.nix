@@ -186,28 +186,52 @@
         ] ++
         # User-level persistence - applied for each user in defaultUsernames
         (lib.flatten (map (username: [
-          # User persistence - /persist
+          # User persistence - /persist directories
           (lib.mkIf (cfg.enable && cfg.persistConfig && appCfg.persistence.user.persist != []) {
             environment.persistence."/persist".users.${username}.directories =
               appCfg.persistence.user.persist;
           })
 
-          # User persistence - /large
+          # User persistence - /persist files
+          (lib.mkIf (cfg.enable && cfg.persistConfig && appCfg.persistence.user.persistFiles != []) {
+            environment.persistence."/persist".users.${username}.files =
+              appCfg.persistence.user.persistFiles;
+          })
+
+          # User persistence - /large directories
           (lib.mkIf (cfg.enable && cfg.persistData && appCfg.persistence.user.large != []) {
             environment.persistence."/large".users.${username}.directories =
               appCfg.persistence.user.large;
           })
 
-          # User persistence - /cache
+          # User persistence - /large files
+          (lib.mkIf (cfg.enable && cfg.persistData && appCfg.persistence.user.largeFiles != []) {
+            environment.persistence."/large".users.${username}.files =
+              appCfg.persistence.user.largeFiles;
+          })
+
+          # User persistence - /cache directories
           (lib.mkIf (cfg.enable && cfg.enableCache && appCfg.persistence.user.cache != []) {
             environment.persistence."/cache".users.${username}.directories =
               appCfg.persistence.user.cache;
           })
 
-          # User persistence - /baked
+          # User persistence - /cache files
+          (lib.mkIf (cfg.enable && cfg.enableCache && appCfg.persistence.user.cacheFiles != []) {
+            environment.persistence."/cache".users.${username}.files =
+              appCfg.persistence.user.cacheFiles;
+          })
+
+          # User persistence - /baked directories
           (lib.mkIf (cfg.enable && appCfg.persistence.user.baked != []) {
             environment.persistence."/baked".users.${username}.directories =
               appCfg.persistence.user.baked;
+          })
+
+          # User persistence - /baked files
+          (lib.mkIf (cfg.enable && appCfg.persistence.user.bakedFiles != []) {
+            environment.persistence."/baked".users.${username}.files =
+              appCfg.persistence.user.bakedFiles;
           })
         ]) appCfg.defaultUsernames)));
     };

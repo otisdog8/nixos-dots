@@ -19,10 +19,10 @@ in
 
     # Shared desktop modules
     ../shared/base
-    ../shared/fonts
-    ../shared/xdg
-    ../shared/theming
-    ../shared/printing
+    ../shared/fonts.nix
+    ../shared/xdg.nix
+    ../shared/theming.nix
+    ../shared/printing.nix
   ];
 
   options.modules.desktop.full = {

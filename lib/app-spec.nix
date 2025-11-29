@@ -35,10 +35,22 @@
         description = "User paths for /persist (mutable config/data)";
       };
 
+      persistFiles = lib.mkOption {
+        type = lib.types.listOf lib.types.str;
+        default = [];
+        description = "User file paths for /persist (mutable config/data files)";
+      };
+
       large = lib.mkOption {
         type = lib.types.listOf lib.types.str;
         default = [];
         description = "User paths for /large (large persistent data)";
+      };
+
+      largeFiles = lib.mkOption {
+        type = lib.types.listOf lib.types.str;
+        default = [];
+        description = "User file paths for /large (large persistent data files)";
       };
 
       cache = lib.mkOption {
@@ -47,10 +59,22 @@
         description = "User paths for cache (ephemeral, can be cleared)";
       };
 
+      cacheFiles = lib.mkOption {
+        type = lib.types.listOf lib.types.str;
+        default = [];
+        description = "User file paths for cache (ephemeral, can be cleared)";
+      };
+
       baked = lib.mkOption {
         type = lib.types.listOf lib.types.str;
         default = [];
         description = "User paths for /baked (immutable setup-time data)";
+      };
+
+      bakedFiles = lib.mkOption {
+        type = lib.types.listOf lib.types.str;
+        default = [];
+        description = "User file paths for /baked (immutable setup-time data)";
       };
     };
 

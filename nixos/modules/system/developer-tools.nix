@@ -9,6 +9,60 @@ in
   };
 
   config = lib.mkIf cfg.enable {
+    # Development packages
+    environment.systemPackages = with pkgs; [
+      # Code editors and tools
+      neovim
+
+      # Language tools
+      python3
+
+      # Build tools
+      gnumake
+      meson
+      ninja
+      gcc
+      pkg-config
+
+      # Code search and manipulation
+      ast-grep
+      fd
+      sd
+      cloc
+
+      # Version control
+      lazygit
+
+      # Shell tools
+      shellcheck
+      shfmt
+
+      # Nix development
+      nixd
+      nixfmt-rfc-style
+
+      # Python tools
+      uv
+
+      # Container tools
+      dive
+
+      # Environment management
+      direnv
+    ];
+
+    # Development tool configurations
+    programs.direnv.enable = true;
+    programs.nix-ld.enable = true;
+
+    environment.variables = {
+      EDITOR = "nvim";
+      VISUAL = "nvim";
+    };
+
+    # Enable Claude Code by default
+    modules.apps.claude-code.enable = lib.mkDefault true;
+
     # Persistence for developer tools
     environment.persistence."/persist" = {
       users.${username} = {
@@ -19,11 +73,9 @@ in
           ".local/share/nvim/"          # Neovim data
           ".local/share/direnv"         # direnv cache
           ".config/github-copilot"      # GitHub Copilot
-          ".claude"                     # Claude Code CLI
+          # .claude and .claude.json moved to modules/apps/claude-code.nix
         ];
-        files = [
-          ".claude.json"                # Claude Code configuration
-        ];
+        files = [ ];
       };
     };
 
