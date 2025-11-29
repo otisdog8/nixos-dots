@@ -47,7 +47,13 @@
 
     # System modules
     ../modules/system/hardware/intel.nix
+
+    # Desktop environment
+    ../modules/desktop/full
   ];
+
+  # Enable full desktop environment
+  modules.desktop.full.enable = true;
 
   # Enable Intel iGPU (for media transcoding)
   modules.system.hardware.intel = {
