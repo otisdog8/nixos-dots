@@ -16,6 +16,13 @@
       persistence.user.persist = [
         ".zen"
       ];
+
+      # Sandbox both zen and zen-beta executables
+      nixpakModules = [
+        ({ lib, ... }: {
+          app.extraEntrypoints = [ "/bin/zen-beta" ];
+        })
+      ];
     };
   }
 )
