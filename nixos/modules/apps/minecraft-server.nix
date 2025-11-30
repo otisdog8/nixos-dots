@@ -118,7 +118,7 @@ in
           ProtectKernelTunables = true;
           ProtectKernelModules = true;
           ProtectControlGroups = true;
-          ReadWritePaths = [ serverCfg.directory ];
+          ReadWritePaths = [ serverCfg.directory "/mc/.screen" ];
           NoNewPrivileges = true;
           RestrictAddressFamilies = [ "AF_INET" "AF_INET6" "AF_UNIX" ];
           RestrictNamespaces = true;
