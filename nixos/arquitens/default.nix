@@ -55,4 +55,6 @@
   services.nfs.server.exports = ''
     /tmp 100.0.0.0/8(rw,nohide,insecure,no_subtree_check,all_squash)
   '';
+
+  networking.firewall.enable = lib.mkForce false;
 }

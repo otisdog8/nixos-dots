@@ -49,4 +49,6 @@
       "--advertise-address=100.103.225.29"
     ];
   };
+
+  networking.firewall.enable = lib.mkForce false;
 }
