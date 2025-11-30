@@ -22,6 +22,9 @@
     inputs.nixos-hardware.nixosModules.common-pc
     inputs.nixos-hardware.nixosModules.common-pc-ssd
 
+    # Desktop environment
+    ../modules/desktop/full
+
     # System modules
     ../modules/system/hardware/amd.nix
     ../modules/system/k3s
@@ -29,6 +32,9 @@
 
   boot.initrd.supportedFilesystems = [ "nfs" ];
   boot.initrd.kernelModules = [ "nfs" ];
+
+  # Enable full desktop environment
+  modules.desktop.full.enable = true;
 
   # Enable AMD GPU
   modules.system.hardware.amd.enable = true;
