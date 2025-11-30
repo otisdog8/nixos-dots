@@ -34,6 +34,7 @@ in
     description = "For Minecraft Servers";
     group = "mc";
     shell = pkgs.bash;
+    home = "/mc";
   };
   users.groups.mc = { };
 
