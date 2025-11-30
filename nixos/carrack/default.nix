@@ -15,24 +15,32 @@
 
   imports = [
     ./disks.nix
-    ../mixins/k3s
+
+    # Hardware
     inputs.nixos-hardware.nixosModules.common-cpu-amd
     inputs.nixos-hardware.nixosModules.common-gpu-amd
     inputs.nixos-hardware.nixosModules.common-pc
     inputs.nixos-hardware.nixosModules.common-pc-ssd
+
+    # System modules
+    ../modules/system/hardware/amd.nix
+    ../modules/system/k3s
   ];
-  boot.initrd = {
-    supportedFilesystems = [ "nfs" ];
-    kernelModules = [
-      "nfs"
-      "amdgpu"
+
+  boot.initrd.supportedFilesystems = [ "nfs" ];
+  boot.initrd.kernelModules = [ "nfs" ];
+
+  # Enable AMD GPU
+  modules.system.hardware.amd.enable = true;
+
+  # K3s cluster node
+  modules.system.k3s = {
+    enable = true;
+    serverAddr = "https://100.126.30.73:6443";
+    extraFlags = [
+      "--bind-address=100.103.225.29"
+      "--node-ip=100.103.225.29"
+      "--advertise-address=100.103.225.29"
     ];
   };
-  services.xserver.videoDrivers = [ "amdgpu" ];
-  services.k3s.serverAddr = "https://100.126.30.73:6443";
-  services.k3s.extraFlags = [
-    "--bind-address=100.103.225.29"
-    "--node-ip=100.103.225.29"
-    "--advertise-address=100.103.225.29"
-  ];
 }

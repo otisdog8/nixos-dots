@@ -10,6 +10,24 @@ in
 
   options.modules.system.k3s = {
     enable = lib.mkEnableOption "K3s Kubernetes cluster";
+
+    clusterInit = lib.mkOption {
+      type = lib.types.bool;
+      default = false;
+      description = "Initialize a new cluster (first server node)";
+    };
+
+    serverAddr = lib.mkOption {
+      type = lib.types.nullOr lib.types.str;
+      default = null;
+      description = "Address of the k3s server to join (for agent/secondary nodes)";
+    };
+
+    extraFlags = lib.mkOption {
+      type = lib.types.listOf lib.types.str;
+      default = [];
+      description = "Extra flags to pass to k3s (e.g. bind-address, node-ip)";
+    };
   };
 
   config = lib.mkIf cfg.enable {
@@ -47,6 +65,8 @@ in
     services.k3s = {
       enable = true;
       role = "server";
+      clusterInit = cfg.clusterInit;
+      serverAddr = lib.mkIf (cfg.serverAddr != null) cfg.serverAddr;
       extraFlags = [
         "--flannel-backend=none"
         "--disable-network-policy"
@@ -56,7 +76,7 @@ in
         "--kube-apiserver-arg default-not-ready-toleration-seconds=60"
         "--kube-apiserver-arg default-unreachable-toleration-seconds=60"
         "--kubelet-arg node-status-update-frequency=2s"
-      ];
+      ] ++ cfg.extraFlags;
     };
 
     boot.kernelModules = [
