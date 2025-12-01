@@ -19,5 +19,12 @@ in
       jar = null;
       openFirewall = true;
     };
+
+    servers.sdfs = {
+      enable = true;
+      directory = "/mc/sdfs";
+      jar = "paper.jar";
+      openFirewall = true;
+    };
   };
 }
