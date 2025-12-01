@@ -60,15 +60,10 @@ in
         ];
       };
 
+      # Browser default applications are now configured via modules.apps.*.isDefaultBrowser
       xdg.mimeApps = {
         enable = true;
         defaultApplications = {
-          "default-web-browser" = [ "zen-beta.desktop" ];
-          "text/html" = [ "zen-beta.desktop" ];
-          "x-scheme-handler/http" = [ "zen-beta.desktop" ];
-          "x-scheme-handler/https" = [ "zen-beta.desktop" ];
-          "x-scheme-handler/about" = [ "zen-beta.desktop" ];
-          "x-scheme-handler/unknown" = [ "zen-beta.desktop" ];
           "inode/directory" = [ "pcmanfm-qt.desktop" ];
         };
         associations.added = {

@@ -27,6 +27,7 @@
 
     # System modules
     ../modules/system/hardware/nvidia.nix
+    ../modules/bundles/gaming.nix
   ];
 
   # Enable full desktop environment
@@ -40,6 +41,8 @@
 
   # WiFi workarounds
   networking.networkmanager.wifi.backend = "iwd";
+
+  modules.bundles.gaming.enable = true;
 
   systemd.services.connect-wifi = {
     script = ''

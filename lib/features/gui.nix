@@ -2,7 +2,11 @@
 { config, lib, ... }:
 
 {
-  imports = [ ../app-spec.nix ];
+  imports = [
+    ../app-spec.nix
+    ./fido.nix
+    ./open-links.nix
+  ];
 
   config.app = {
     # GUI apps should specify their own persistence paths

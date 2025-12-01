@@ -21,6 +21,13 @@ in
       "1password/custom_allowed_browsers" = {
         text = ''
           zen
+          firefox
+          brave
+          chromium
+          .zen-wrapped
+          .firefox-wrapped
+          .brave-wrapped
+          .chromium-wrapped
         '';
         mode = "0755";
       };

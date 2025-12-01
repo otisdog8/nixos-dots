@@ -49,6 +49,7 @@ in
     modules.apps.zen-browser = {
       enable = cfg.zen-browser.enable;
       sandbox.enable = lib.mkDefault cfg.enableSandboxing;
+      isDefaultBrowser = lib.mkDefault true;
     };
 
     modules.apps.firefox = {

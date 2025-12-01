@@ -11,7 +11,7 @@ in
     enable = true;
 
     servers.atm9 = {
-      enable = true;
+      enable = false;
       directory = "/mc/atm9-${ATM9_VERSION}";
       javaPackage = pkgs.jdk;
       jvmArgsFile = "@user_jvm_args.txt";
@@ -23,6 +23,7 @@ in
     servers.sdfs = {
       enable = true;
       directory = "/mc/sdfs";
+      jvmArgsFile = "@user_jvm_args.txt";
       jar = "paper.jar";
       openFirewall = true;
     };

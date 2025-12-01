@@ -20,6 +20,9 @@
 
       persistence.user.persist = [
         ".zoom"
+      ];
+
+      persistence.user.persistFiles = [
         ".config/zoom.conf"
         ".config/zoomus.conf"
       ];

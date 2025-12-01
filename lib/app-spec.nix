@@ -20,6 +20,12 @@
       description = "Binary name within the package (for sandboxing)";
     };
 
+    desktopFileName = lib.mkOption {
+      type = lib.types.nullOr lib.types.str;
+      default = null;
+      description = "Desktop file name for XDG associations (e.g., 'zen.desktop')";
+    };
+
     # Default usernames for user-level persistence
     defaultUsernames = lib.mkOption {
       type = lib.types.listOf lib.types.str;

@@ -93,6 +93,12 @@
             This is what gets installed in environment.systemPackages and should be used in customConfig.
           '';
         };
+
+        isDefaultBrowser = lib.mkOption {
+          type = lib.types.bool;
+          default = false;
+          description = "Whether to set this app as the default browser (requires desktopFileName to be set)";
+        };
       }
       # Merge in custom options declared by the app
       // customOpts;
@@ -183,6 +189,21 @@
 
           # Custom config from app spec
           (lib.mkIf cfg.enable customCfg)
+
+          # Default browser XDG configuration
+          (lib.mkIf (cfg.enable && cfg.isDefaultBrowser && appCfg.desktopFileName != null) {
+            home-manager.users.jrt.xdg.mimeApps = {
+              enable = true;
+              defaultApplications = {
+                "default-web-browser" = [ appCfg.desktopFileName ];
+                "text/html" = [ appCfg.desktopFileName ];
+                "x-scheme-handler/http" = [ appCfg.desktopFileName ];
+                "x-scheme-handler/https" = [ appCfg.desktopFileName ];
+                "x-scheme-handler/about" = [ appCfg.desktopFileName ];
+                "x-scheme-handler/unknown" = [ appCfg.desktopFileName ];
+              };
+            };
+          })
         ] ++
         # User-level persistence - applied for each user in defaultUsernames
         (lib.flatten (map (username: [

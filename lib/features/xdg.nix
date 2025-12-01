@@ -15,6 +15,11 @@
           "org.freedesktop.portal.OpenURI" = "talk";
         };
       };
+
+      # Bind system binaries so apps can call xdg-open and other tools
+      bubblewrap.bind.ro = [
+        "/run/current-system/sw/bin"
+      ];
     })
   ];
 }

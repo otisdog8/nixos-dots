@@ -7,12 +7,14 @@
       ../../../lib/features/needs-gpu.nix
       ../../../lib/features/xdg-desktop.nix
       ../../../lib/features/tmpfs-homedir.nix
+      ../../../lib/features/onepassword.nix
     ];
 
     config.app = {
       name = "firefox";
       package = pkgs.firefox;
       packageName = "firefox";
+      desktopFileName = "firefox.desktop";
     };
   }
 )

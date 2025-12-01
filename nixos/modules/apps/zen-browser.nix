@@ -6,12 +6,14 @@
       ../../../lib/features/browser.nix
       ../../../lib/features/needs-gpu.nix
       ../../../lib/features/xdg-desktop.nix
+      ../../../lib/features/onepassword.nix
     ];
 
     config.app = {
       name = "zen-browser";
       package = pkgs.zen-browser;
       packageName = "zen";
+      desktopFileName = "zen-beta.desktop";
 
       persistence.user.persist = [
         ".zen"
