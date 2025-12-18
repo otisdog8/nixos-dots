@@ -40,6 +40,7 @@ helper.mkApp (
       nixpakModules = [
         ({ lib, sloth, ... }: {
           bubblewrap = {
+      			bind.lastArg = true;
             bind.rw = [
               (sloth.env "PWD")
             ];
