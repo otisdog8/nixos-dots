@@ -55,6 +55,7 @@
     modules/system/virt.nix
 
     # Optional apps
+    modules/apps/opencode.nix
     modules/apps/claude-code.nix
     modules/apps/jellyfin.nix
     modules/apps/sabnzbd.nix

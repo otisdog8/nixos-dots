@@ -41,5 +41,9 @@
   modules.bundles.gaming.enable = true;
 
   # Enable NVIDIA drivers
-  modules.system.hardware.nvidia.enable = true;
+    # Enable NVIDIA drivers (beta)
+  modules.system.hardware.nvidia = {
+    enable = true;
+    useBeta = true;
+  };
 }

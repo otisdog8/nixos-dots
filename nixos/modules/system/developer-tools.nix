@@ -62,6 +62,7 @@ in
 
     # Enable Claude Code by default
     modules.apps.claude-code.enable = lib.mkDefault true;
+    modules.apps.opencode.enable = lib.mkDefault true;
 
     # Persistence for developer tools
     environment.persistence."/persist" = {
