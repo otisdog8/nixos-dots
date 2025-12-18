@@ -42,6 +42,10 @@
       url = "github:hyprwm/Hyprland";
       inputs.nixpkgs.follows = "nixpkgs";
     };
+    nixvim = {
+      url = "github:nix-community/nixvim";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
     Hyprspace = {
       url = "github:KZDKM/Hyprspace";
 
@@ -64,19 +68,20 @@
     {
       self,
       nixpkgs,
-      nixpak,
-      nixos-hardware,
-      chaotic,
-      impermanence,
-      lanzaboote,
-      home-manager,
-      zen-browser,
-      hyprland,
-      hyprsplit,
-      Hyprspace,
-      wezterm-flake,
-      ...
-    }@inputs:
+        nixpak,
+        nixos-hardware,
+        chaotic,
+        impermanence,
+        lanzaboote,
+        home-manager,
+        zen-browser,
+        hyprland,
+        hyprsplit,
+        Hyprspace,
+        wezterm-flake,
+        ...
+      }@inputs:
+
     let
       inherit (self) outputs;
       stateVersion = "24.05";
@@ -85,6 +90,7 @@
     {
       overlays = import ./overlays { inherit inputs; };
       defaultPackage.x86_64-linux = home-manager.defaultPackage.x86_64-linux;
+
       homeConfigurations = {
         "jrt@constitution" = helper.mkHome {
           hostname = "constitution";

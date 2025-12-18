@@ -23,6 +23,7 @@
     inputs.lanzaboote.nixosModules.lanzaboote
     inputs.chaotic.nixosModules.default
     inputs.home-manager.nixosModules.home-manager
+    inputs.nixvim.nixosModules.default
 
     # Host configuration
     ./${hostname}
@@ -57,6 +58,7 @@
     # Optional apps
     modules/apps/opencode.nix
     modules/apps/claude-code.nix
+    modules/apps/nixvim.nix
     modules/apps/jellyfin.nix
     modules/apps/sabnzbd.nix
   ];

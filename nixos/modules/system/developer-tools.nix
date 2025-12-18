@@ -11,9 +11,6 @@ in
   config = lib.mkIf cfg.enable {
     # Development packages
     environment.systemPackages = with pkgs; [
-      # Code editors and tools
-      neovim
-
       # Language tools
       python3
 
@@ -60,18 +57,16 @@ in
       VISUAL = "nvim";
     };
 
-    # Enable Claude Code by default
+    # Enable developer-facing apps by default
     modules.apps.claude-code.enable = lib.mkDefault true;
     modules.apps.opencode.enable = lib.mkDefault true;
+    modules.apps.nixvim.enable = lib.mkDefault true;
 
     # Persistence for developer tools
     environment.persistence."/persist" = {
       users.${username} = {
         directories = [
           ".cargo"                      # Rust toolchain
-          ".config/nvim"                # Neovim configuration
-          ".local/state/nvim/"          # Neovim state
-          ".local/share/nvim/"          # Neovim data
           ".local/share/direnv"         # direnv cache
           ".config/github-copilot"      # GitHub Copilot
           # .claude and .claude.json moved to modules/apps/claude-code.nix

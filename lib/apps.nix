@@ -21,7 +21,7 @@
       # Evaluate the app spec module to get config.app.*
       appSpec = lib.evalModules {
         modules = [ appSpecModule ];
-        specialArgs = { inherit pkgs; };
+        specialArgs = { inherit pkgs; inherit inputs; };
       };
 
       # Extract the evaluated app configuration
