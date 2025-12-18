@@ -66,11 +66,7 @@ in
     enableCompletion = true;
     #autosuggestion.enable = true;
     syntaxHighlighting.enable = true;
-    initContent =
-      ''
-        SOUND_PREFIX=${inputs.self}/sounds/
-      ''
-      + builtins.readFile ../../../config/zsh;
+    initContent = builtins.readFile ../../../config/zsh;
   };
   programs.starship.enable = true;
   programs.starship.settings = {
