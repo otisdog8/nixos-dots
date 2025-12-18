@@ -17,7 +17,7 @@
           bind.rw = [
             (sloth.concat' sloth.homeDir "/.mozilla/native-messaging-hosts")
             # 1Password socket for browser extension communication
-            (sloth.concat' (sloth.env "XDG_RUNTIME_DIR") "/1Password-BrowserSupport.sock")
+            (sloth.concat' sloth.runtimeDir "/1Password-BrowserSupport.sock")
           ];
         };
       })

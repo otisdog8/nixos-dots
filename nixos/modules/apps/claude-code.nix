@@ -7,6 +7,7 @@
     ../../../lib/features/xdg.nix
     ../../../lib/features/network.nix
     ../../../lib/features/system-bin.nix
+    ../../../lib/features/cwd.nix
   ];
 
   config.app = {

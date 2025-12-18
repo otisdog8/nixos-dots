@@ -30,20 +30,32 @@ helper.mkApp (
     };
   in
   {
-    imports = [ ../../../lib/app-spec.nix ];
+    imports = [ ../../../lib/app-spec.nix ../../../lib/features/system-bin.nix ../../../lib/features/cwd.nix ];
 
     config.app = {
       name = "nixvim";
       packageName = "nvim";
       package = nixvimPackage;
 
+      persistence.user.persist = [
+        ".config/nvim"
+        ".local/share/nvim"
+      ];
+
+      persistence.user.cache = [
+        ".local/state/nvim"
+      ];
+
       nixpakModules = [
         ({ lib, sloth, ... }: {
+          dbus.enable = false;
           bubblewrap = {
-      			bind.lastArg = true;
+            sockets.wayland = false;
+            tmpfs = [ "/tmp" ];
             bind.rw = [
-              (sloth.env "PWD")
+              (sloth.concat' (sloth.envOr "XDG_RUNTIME_DIR" "/") "wayland-1")
             ];
+            bind.lastArg = true;
           };
         })
       ];
@@ -54,5 +66,5 @@ helper.mkApp (
         environment.systemPackages = [ config.modules.apps.nixvim.finalPackage ];
       };
     };
-  }
+	}
 )
