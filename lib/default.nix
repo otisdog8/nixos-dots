@@ -6,7 +6,7 @@
 }:
 let
   isLaptopOuter = hostname: hostname == "constitution";
-  isDesktopOuter = hostname: builtins.elem hostname [ "galaxy" "excelsior" "fantail" ];
+  isDesktopOuter = hostname: builtins.elem hostname [ "galaxy" "excelsior" ];
   isServerOuter = hostname: builtins.elem hostname [ "arquitens" "recusant" "munificent" "carrack" ];
   defaultUsername = "jrt";
 in

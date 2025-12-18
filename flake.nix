@@ -107,10 +107,6 @@
         hostname = "recusant";
         stateVersion = "24.05";
       };
-      nixosConfigurations.fantail = helper.mkNixos {
-        hostname = "fantail";
-        stateVersion = "24.05";
-      };
       nixosConfigurations.munificent = helper.mkNixos {
         hostname = "munificent";
         stateVersion = "24.05";
