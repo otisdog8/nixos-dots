@@ -6,26 +6,34 @@
   lsp = {
     inlayHints.enable = true;
     servers.nixd.enable = true;
-
-    # LSP keymaps (set on LspAttach)
-    keymaps = [
-      {
-        key = "grn";
-        lspBufAction = "rename";
-      }
-      {
-        key = "gra";
-        lspBufAction = "code_action";
-      }
-      {
-        key = "grD";
-        lspBufAction = "declaration";
-      }
-    ];
   };
 
-  # Additional LSP keybindings using nixvim keymaps
+  # LSP keybindings
   keymaps = [
+    # Rename
+    {
+      mode = "n";
+      key = "grn";
+      action.__raw = "vim.lsp.buf.rename";
+      options.desc = "LSP: [R]e[n]ame";
+    }
+    
+    # Code action (normal and visual mode)
+    {
+      mode = [ "n" "x" ];
+      key = "gra";
+      action.__raw = "vim.lsp.buf.code_action";
+      options.desc = "LSP: [G]oto Code [A]ction";
+    }
+    
+    # Declaration
+    {
+      mode = "n";
+      key = "grD";
+      action.__raw = "vim.lsp.buf.declaration";
+      options.desc = "LSP: [G]oto [D]eclaration";
+    }
+    
     # Snacks picker integrations for LSP
     {
       mode = "n";
