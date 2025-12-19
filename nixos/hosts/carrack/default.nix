@@ -8,7 +8,7 @@
   ...
 }:
 {
-  networking.hostName = "munificent";
+  networking.hostName = "carrack";
   time.timeZone = "America/Los_Angeles";
 
   boot.supportedFilesystems = [ "btrfs" ];
@@ -23,11 +23,11 @@
     inputs.nixos-hardware.nixosModules.common-pc-ssd
 
     # Desktop environment
-    ../modules/desktop/full
+    ../../modules/desktop/full
 
     # System modules
-    ../modules/system/hardware/amd.nix
-    ../modules/system/k3s
+    ../../modules/system/hardware/amd.nix
+    ../../modules/system/k3s
   ];
 
   boot.initrd.supportedFilesystems = [ "nfs" ];
@@ -44,9 +44,9 @@
     enable = true;
     serverAddr = "https://100.126.30.73:6443";
     extraFlags = [
-      "--bind-address=100.65.16.13"
-      "--node-ip=100.65.16.13"
-      "--advertise-address=100.65.16.13"
+      "--bind-address=100.103.225.29"
+      "--node-ip=100.103.225.29"
+      "--advertise-address=100.103.225.29"
     ];
   };
 

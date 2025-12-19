@@ -5,7 +5,7 @@ let
   ATM9_VERSION = "0.3.5";
 in
 {
-  imports = [ ../modules/apps/minecraft-server.nix ];
+  imports = [ ../../modules/apps/minecraft-server.nix ];
 
   modules.apps.minecraft-server = {
     enable = true;

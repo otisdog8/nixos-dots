@@ -2,7 +2,7 @@
 { lib, pkgs, ... }:
 {
   imports = [
-    ../modules/system/snapshots.nix
+    ../../modules/system/snapshots.nix
   ];
 
   # Enable BTRFS snapshots with btrbk

@@ -23,13 +23,13 @@
     inputs.nixos-hardware.nixosModules.common-pc-ssd
 
     # Desktop environment
-    ../modules/desktop/full
+    ../../modules/desktop/full
 
     # Gaming bundle
-    ../modules/bundles/gaming.nix
+    ../../modules/bundles/gaming.nix
 
     # System modules
-    ../modules/system/hardware/nvidia.nix
+    ../../modules/system/hardware/nvidia.nix
   ];
 
   # Enable full desktop environment

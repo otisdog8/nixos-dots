@@ -8,7 +8,7 @@
   ...
 }:
 {
-  networking.hostName = "arquitens";
+  networking.hostName = "munificent";
   time.timeZone = "America/Los_Angeles";
 
   boot.supportedFilesystems = [ "btrfs" ];
@@ -23,11 +23,11 @@
     inputs.nixos-hardware.nixosModules.common-pc-ssd
 
     # Desktop environment
-    ../modules/desktop/full
+    ../../modules/desktop/full
 
     # System modules
-    ../modules/system/hardware/amd.nix
-    ../modules/system/k3s
+    ../../modules/system/hardware/amd.nix
+    ../../modules/system/k3s
   ];
 
   boot.initrd.supportedFilesystems = [ "nfs" ];
@@ -39,22 +39,16 @@
   # Enable AMD GPU
   modules.system.hardware.amd.enable = true;
 
-  # K3s cluster init node (primary)
+  # K3s cluster node
   modules.system.k3s = {
     enable = true;
-    clusterInit = true;
+    serverAddr = "https://100.126.30.73:6443";
     extraFlags = [
-      "--bind-address=100.126.30.73"
-      "--node-ip=100.126.30.73"
-      "--advertise-address=100.126.30.73"
+      "--bind-address=100.65.16.13"
+      "--node-ip=100.65.16.13"
+      "--advertise-address=100.65.16.13"
     ];
   };
-
-  # NFS server
-  services.nfs.server.enable = true;
-  services.nfs.server.exports = ''
-    /tmp 100.0.0.0/8(rw,nohide,insecure,no_subtree_check,all_squash)
-  '';
 
   networking.firewall.enable = lib.mkForce false;
 }

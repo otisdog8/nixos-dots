@@ -26,7 +26,7 @@
     inputs.nixvim.nixosModules.default
 
     # Host configuration
-    ./${hostname}
+    ./hosts/${hostname}
 
     # Home-manager configuration
     {

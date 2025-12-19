@@ -46,10 +46,10 @@
     inputs.nixos-hardware.nixosModules.common-pc-ssd
 
     # System modules
-    ../modules/system/hardware/intel.nix
+    ../../modules/system/hardware/intel.nix
 
     # Desktop environment
-    ../modules/desktop/full
+    ../../modules/desktop/full
   ];
 
   # Enable full desktop environment

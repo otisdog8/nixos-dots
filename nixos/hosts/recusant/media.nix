@@ -2,8 +2,8 @@
 { config, pkgs, ... }:
 {
   imports = [
-    ../modules/apps/jellyfin.nix
-    ../modules/apps/sabnzbd.nix
+    ../../modules/apps/jellyfin.nix
+    ../../modules/apps/sabnzbd.nix
   ];
 
   modules.apps.jellyfin = {

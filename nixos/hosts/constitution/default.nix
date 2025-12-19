@@ -24,7 +24,7 @@
     inputs.nixos-hardware.nixosModules.common-pc-laptop-ssd
 
     # Desktop environment
-    ../modules/desktop/full
+    ../../modules/desktop/full
   ];
 
   # Enable full desktop environment
