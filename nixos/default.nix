@@ -51,16 +51,20 @@
     modules/apps/sabnzbd.nix
   ];
 
-  # Enable conditional system modules
-  modules.system.cli.enable = lib.mkDefault true;
-  modules.system.developer-tools.enable = lib.mkDefault true;
-  modules.system.laptop.enable = lib.mkDefault false; # Only enable on laptops
-  modules.system.remote-access.enable = lib.mkDefault true;
-  modules.system.virt.enable = lib.mkDefault true;
-
-  # Optional service apps (disabled by default)
-  modules.apps.jellyfin.enable = lib.mkDefault false;
-  modules.apps.sabnzbd.enable = lib.mkDefault false;
+  # Enable conditional system modules and optional service apps
+  modules = {
+    system = {
+      cli.enable = lib.mkDefault true;
+      developer-tools.enable = lib.mkDefault true;
+      laptop.enable = lib.mkDefault false; # Only enable on laptops
+      remote-access.enable = lib.mkDefault true;
+      virt.enable = lib.mkDefault true;
+    };
+    apps = {
+      jellyfin.enable = lib.mkDefault false;
+      sabnzbd.enable = lib.mkDefault false;
+    };
+  };
 
   # Nix settings
   nix.settings = {

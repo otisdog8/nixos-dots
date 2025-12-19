@@ -18,8 +18,7 @@ in
   ];
   
   home = {
-    username = username;
+    inherit username stateVersion;
     homeDirectory = "/home/${username}";
-    stateVersion = stateVersion;
   };
 }

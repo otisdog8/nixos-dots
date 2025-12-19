@@ -8,6 +8,70 @@
       notifier.enabled = true;
       quickfile.enabled = true;
       input.enabled = true;
+      bigfile.enabled = true;
+      dashboard.enabled = true;
+      
+      # Bigfile optimization settings
+      bigfile = {
+        notify = true; # Show notification when big file is detected
+        size = 1024 * 1024; # 1MB threshold
+        
+        # Disable heavy features for big files
+        setup = lib.nixvim.mkRaw ''
+          function(ctx)
+            -- Disable indent-blankline for big files
+            vim.schedule(function()
+              local ok, ibl = pcall(require, "ibl")
+              if ok then
+                ibl.setup_buffer(0, { enabled = false })
+              end
+            end)
+            
+            -- Disable syntax highlighting
+            vim.cmd("syntax off")
+            vim.opt_local.syntax = "off"
+            
+            -- Disable swap file
+            vim.opt_local.swapfile = false
+            
+            -- Disable undo file
+            vim.opt_local.undofile = false
+            
+            -- Set buffer as readonly for safety
+            vim.opt_local.readonly = true
+            
+            -- Disable foldmethod
+            vim.opt_local.foldmethod = "manual"
+          end
+        '';
+      };
+      
+      # Dashboard configuration - "files" example
+      dashboard = {
+        preset = {
+          keys = [
+            { icon = " "; key = "f"; desc = "Find File"; action = lib.nixvim.mkRaw ''function() Snacks.dashboard.pick('files') end''; }
+            { icon = " "; key = "n"; desc = "New File"; action = ":ene | startinsert"; }
+            { icon = " "; key = "g"; desc = "Find Text"; action = lib.nixvim.mkRaw ''function() Snacks.dashboard.pick('live_grep') end''; }
+            { icon = " "; key = "r"; desc = "Recent Files"; action = lib.nixvim.mkRaw ''function() Snacks.dashboard.pick('oldfiles') end''; }
+            { icon = " "; key = "c"; desc = "Config"; action = lib.nixvim.mkRaw ''function() Snacks.dashboard.pick('files', {cwd = vim.fn.stdpath('config')}) end''; }
+            { icon = " "; key = "q"; desc = "Quit"; action = ":qa"; }
+          ];
+          header = ''
+            ███╗   ██╗███████╗ ██████╗ ██╗   ██╗██╗███╗   ███╗
+            ████╗  ██║██╔════╝██╔═══██╗██║   ██║██║████╗ ████║
+            ██╔██╗ ██║█████╗  ██║   ██║██║   ██║██║██╔████╔██║
+            ██║╚██╗██║██╔══╝  ██║   ██║╚██╗ ██╔╝██║██║╚██╔╝██║
+            ██║ ╚████║███████╗╚██████╔╝ ╚████╔╝ ██║██║ ╚═╝ ██║
+            ╚═╝  ╚═══╝╚══════╝ ╚═════╝   ╚═══╝  ╚═╝╚═╝     ╚═╝'';
+        };
+        sections = [
+          { section = "header"; }
+          { section = "keys"; gap = 1; }
+          { icon = " "; title = "Recent Files"; section = "recent_files"; indent = 2; padding = { __unkeyed-1 = 2; __unkeyed-2 = 2; }; }
+          { icon = " "; title = "Projects"; section = "projects"; indent = 2; padding = 2; }
+        ];
+      };
     };
   };
 
