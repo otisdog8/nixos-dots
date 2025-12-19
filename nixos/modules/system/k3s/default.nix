@@ -36,32 +36,36 @@ in
   };
 
   config = lib.mkIf cfg.enable {
-    networking.firewall.allowedTCPPorts = [
-      4240 # cluster health checks (cilium-health)
-      4244 # Hubble server
-      4245 # Hubble Relay
-      4250 # Mutual Authentication port
-      4251 # Spire Agent health check port (listening on 127.0.0.1 or ::1)
-      6060 # cilium-agent pprof server (listening on 127.0.0.1)
-      6061 # cilium-operator pprof server (listening on 127.0.0.1)
-      6062 # Hubble Relay pprof server (listening on 127.0.0.1)
-      9878 # cilium-envoy health listener (listening on 127.0.0.1)
-      9879 # cilium-agent health status API (listening on 127.0.0.1 and/or ::1)
-      9890 # cilium-agent gops server (listening on 127.0.0.1)
-      9891 # operator gops server (listening on 127.0.0.1)
-      9893 # Hubble Relay gops server (listening on 127.0.0.1)
-      9901 # cilium-envoy Admin API (listening on 127.0.0.1)
-      9962 # cilium-agent Prometheus metrics
-      9963 # cilium-operator Prometheus metrics
-      9964 # cilium-envoy Prometheus metrics
-      6443 # k3s: required so that pods can reach the API server (running on port 6443 by default)
-      2379 # k3s, etcd clients: required if using a "High Availability Embedded etcd" configuration
-      2380 # k3s, etcd peers: required if using a "High Availability Embedded etcd" configuration
-    ];
+    networking.firewall = {
+      allowedTCPPorts = [
+        4240 # cluster health checks (cilium-health)
+        4244 # Hubble server
+        4245 # Hubble Relay
+        4250 # Mutual Authentication port
+        4251 # Spire Agent health check port (listening on 127.0.0.1 or ::1)
+        6060 # cilium-agent pprof server (listening on 127.0.0.1)
+        6061 # cilium-operator pprof server (listening on 127.0.0.1)
+        6062 # Hubble Relay pprof server (listening on 127.0.0.1)
+        9878 # cilium-envoy health listener (listening on 127.0.0.1)
+        9879 # cilium-agent health status API (listening on 127.0.0.1 and/or ::1)
+        9890 # cilium-agent gops server (listening on 127.0.0.1)
+        9891 # operator gops server (listening on 127.0.0.1)
+        9893 # Hubble Relay gops server (listening on 127.0.0.1)
+        9901 # cilium-envoy Admin API (listening on 127.0.0.1)
+        9962 # cilium-agent Prometheus metrics
+        9963 # cilium-operator Prometheus metrics
+        9964 # cilium-envoy Prometheus metrics
+        6443 # k3s: required so that pods can reach the API server (running on port 6443 by default)
+        2379 # k3s, etcd clients: required if using a "High Availability Embedded etcd" configuration
+        2380 # k3s, etcd peers: required if using a "High Availability Embedded etcd" configuration
+      ];
 
-    networking.firewall.allowedUDPPorts = [
-      51871 # WireGuard encryption tunnel endpoint
-    ];
+      allowedUDPPorts = [
+        51871 # WireGuard encryption tunnel endpoint
+      ];
+
+      enable = lib.mkForce false;
+    };
 
     environment.systemPackages = with pkgs; [
       k3s
@@ -70,7 +74,7 @@ in
     services.k3s = {
       enable = true;
       role = "server";
-      clusterInit = cfg.clusterInit;
+      inherit (cfg) clusterInit;
       serverAddr = lib.mkIf (cfg.serverAddr != null) cfg.serverAddr;
       extraFlags = [
         "--flannel-backend=none"
@@ -90,8 +94,6 @@ in
       "nbd"
       "ceph"
     ];
-
-    networking.firewall.enable = lib.mkForce false;
 
     systemd.services.k3sloop = {
       wantedBy = [ "local-fs.target" ];

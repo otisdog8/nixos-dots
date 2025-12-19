@@ -35,15 +35,16 @@
   # Enable full desktop environment
   # This automatically enables: browsers, communication, productivity, media bundles
   # along with shared desktop modules (base, fonts, xdg, theming, printing)
-  modules.desktop.full.enable = true;
+  modules = {
+    desktop.full.enable = true;
 
-  # Enable gaming bundle
-  modules.bundles.gaming.enable = true;
+    # Enable gaming bundle
+    bundles.gaming.enable = true;
 
-  # Enable NVIDIA drivers
-  # Enable NVIDIA drivers (beta)
-  modules.system.hardware.nvidia = {
-    enable = true;
-    useBeta = true;
+    # Enable NVIDIA drivers (beta)
+    system.hardware.nvidia = {
+      enable = true;
+      useBeta = true;
+    };
   };
 }

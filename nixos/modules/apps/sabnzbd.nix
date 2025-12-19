@@ -22,7 +22,7 @@ in
     # Install SABnzbd
     services.sabnzbd = {
       enable = true;
-      openFirewall = cfg.openFirewall;
+      inherit (cfg) openFirewall;
     };
 
     # Persistence for SABnzbd

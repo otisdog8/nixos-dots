@@ -16,7 +16,10 @@ in
     ./mixins/cli
     # Desktop config now managed by NixOS modules (modules/desktop/*)
   ];
-  home.username = username;
-  home.homeDirectory = "/home/${username}";
-  home.stateVersion = stateVersion;
+  
+  home = {
+    username = username;
+    homeDirectory = "/home/${username}";
+    stateVersion = stateVersion;
+  };
 }

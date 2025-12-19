@@ -21,7 +21,7 @@
     config.app = {
       name = "obs-studio";
       # Wrap OBS with plugins before sandboxing
-      package = pkgs.wrapOBS.override { obs-studio = pkgs.obs-studio; } {
+      package = pkgs.wrapOBS.override { inherit (pkgs) obs-studio; } {
         plugins = with pkgs.obs-studio-plugins; [
           wlrobs
           obs-backgroundremoval

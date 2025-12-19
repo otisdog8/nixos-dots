@@ -11,7 +11,13 @@
   networking.hostName = "munificent";
   time.timeZone = "America/Los_Angeles";
 
-  boot.supportedFilesystems = [ "btrfs" ];
+  boot = {
+    supportedFilesystems = [ "btrfs" ];
+    initrd = {
+      supportedFilesystems = [ "nfs" ];
+      kernelModules = [ "nfs" ];
+    };
+  };
 
   imports = [
     ./disks.nix
@@ -30,24 +36,23 @@
     ../../modules/system/k3s
   ];
 
-  boot.initrd.supportedFilesystems = [ "nfs" ];
-  boot.initrd.kernelModules = [ "nfs" ];
+  # Enable full desktop environment, AMD GPU, and K3s
+  modules = {
+    desktop.full.enable = true;
 
-  # Enable full desktop environment
-  modules.desktop.full.enable = true;
+    # Enable AMD GPU
+    system.hardware.amd.enable = true;
 
-  # Enable AMD GPU
-  modules.system.hardware.amd.enable = true;
-
-  # K3s cluster node
-  modules.system.k3s = {
-    enable = true;
-    serverAddr = "https://100.126.30.73:6443";
-    extraFlags = [
-      "--bind-address=100.65.16.13"
-      "--node-ip=100.65.16.13"
-      "--advertise-address=100.65.16.13"
-    ];
+    # K3s cluster node
+    system.k3s = {
+      enable = true;
+      serverAddr = "https://100.126.30.73:6443";
+      extraFlags = [
+        "--bind-address=100.65.16.13"
+        "--node-ip=100.65.16.13"
+        "--advertise-address=100.65.16.13"
+      ];
+    };
   };
 
   networking.firewall.enable = lib.mkForce false;

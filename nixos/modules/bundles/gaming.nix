@@ -53,29 +53,31 @@ in
   };
 
   config = lib.mkIf cfg.enable {
-    modules.apps.steam = {
-      enable = cfg.steam.enable;
-      sandbox.enable = lib.mkDefault cfg.enableSandboxing;
-    };
+    modules.apps = {
+      steam = {
+        inherit (cfg.steam) enable;
+        sandbox.enable = lib.mkDefault cfg.enableSandboxing;
+      };
 
-    modules.apps.prismlauncher = {
-      enable = cfg.prismlauncher.enable;
-      sandbox.enable = lib.mkDefault cfg.enableSandboxing;
-    };
+      prismlauncher = {
+        inherit (cfg.prismlauncher) enable;
+        sandbox.enable = lib.mkDefault cfg.enableSandboxing;
+      };
 
-    modules.apps.lunar-client = {
-      enable = cfg.lunar-client.enable;
-      sandbox.enable = lib.mkDefault cfg.enableSandboxing;
-    };
+      lunar-client = {
+        inherit (cfg.lunar-client) enable;
+        sandbox.enable = lib.mkDefault cfg.enableSandboxing;
+      };
 
-    modules.apps.tetrio-desktop = {
-      enable = cfg.tetrio-desktop.enable;
-      sandbox.enable = lib.mkDefault cfg.enableSandboxing;
-    };
+      tetrio-desktop = {
+        inherit (cfg.tetrio-desktop) enable;
+        sandbox.enable = lib.mkDefault cfg.enableSandboxing;
+      };
 
-    modules.apps.slipstream = {
-      enable = cfg.slipstream.enable;
-      sandbox.enable = lib.mkDefault cfg.enableSandboxing;
+      slipstream = {
+        inherit (cfg.slipstream) enable;
+        sandbox.enable = lib.mkDefault cfg.enableSandboxing;
+      };
     };
   };
 }

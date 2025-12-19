@@ -31,17 +31,20 @@ in
       enable32Bit = true;
     };
 
-    # Libinput for input devices
-    services.libinput.enable = true;
+    # Services
+    services = {
+      # Libinput for input devices
+      libinput.enable = true;
 
-    # Logind settings
-    services.logind.settings.Login = {
-      HandlePowerKey = "ignore";
-      HandleLidSwitch = "ignore";
+      # Logind settings
+      logind.settings.Login = {
+        HandlePowerKey = "ignore";
+        HandleLidSwitch = "ignore";
+      };
+
+      # Player control daemon
+      playerctld.enable = true;
     };
-
-    # Player control daemon
-    services.playerctld.enable = true;
 
     # Core desktop packages
     environment.systemPackages = with pkgs; [

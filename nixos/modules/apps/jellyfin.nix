@@ -23,7 +23,7 @@ in
     services.jellyfin = {
       enable = true;
       package = pkgs.jellyfin;
-      openFirewall = cfg.openFirewall;
+      inherit (cfg) openFirewall;
     };
 
     # Persistence for Jellyfin

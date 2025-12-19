@@ -10,8 +10,8 @@ helper.mkApp (
     ...
   }:
   let
-    nixvimInput = if inputs ? nixvim then inputs.nixvim else config._module.args.inputs.nixvim;
-    system = pkgs.stdenv.hostPlatform.system;
+    nixvimInput = inputs.nixvim or config._module.args.inputs.nixvim;
+    inherit (pkgs.stdenv.hostPlatform) system;
     nixvimPackage = nixvimInput.legacyPackages.${system}.makeNixvimWithModule {
       module = import ./nixvim;
     };
@@ -29,14 +29,16 @@ helper.mkApp (
       packageName = "nvim";
       package = nixvimPackage;
 
-      persistence.user.persist = [
-        ".config/nvim"
-        ".local/share/nvim"
-      ];
+      persistence.user = {
+        persist = [
+          ".config/nvim"
+          ".local/share/nvim"
+        ];
 
-      persistence.user.cache = [
-        ".local/state/nvim"
-      ];
+        cache = [
+          ".local/state/nvim"
+        ];
+      };
 
       nixpakModules = [
         (
@@ -46,15 +48,17 @@ helper.mkApp (
             bubblewrap = {
               sockets.wayland = false;
               tmpfs = [ "/tmp" ];
-              bind.rw = [
-                (sloth.concat' (sloth.envOr "XDG_RUNTIME_DIR" "/") "/wayland-1")
-              ];
-              bind.ro = [
-                "/nix" # Required for nixd LSP to access nix store and evaluate nix expressions
-                "/etc/nix" # Required for nixd LSP to access nix configuration
-                "/etc/static/nix" # Required for nixd LSP to access nix configuration
-              ];
-              bind.lastArg = true;
+              bind = {
+                rw = [
+                  (sloth.concat' (sloth.envOr "XDG_RUNTIME_DIR" "/") "/wayland-1")
+                ];
+                ro = [
+                  "/nix" # Required for nixd LSP to access nix store and evaluate nix expressions
+                  "/etc/nix" # Required for nixd LSP to access nix configuration
+                  "/etc/static/nix" # Required for nixd LSP to access nix configuration
+                ];
+                lastArg = true;
+              };
             };
           }
         )

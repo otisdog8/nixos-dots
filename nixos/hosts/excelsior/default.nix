@@ -31,18 +31,20 @@
   ];
 
   # Enable full desktop environment
-  modules.desktop.full.enable = true;
+  modules = {
+    desktop.full.enable = true;
 
-  # Enable NVIDIA drivers (beta)
-  modules.system.hardware.nvidia = {
-    enable = true;
-    useBeta = true;
+    # Enable NVIDIA drivers (beta)
+    system.hardware.nvidia = {
+      enable = true;
+      useBeta = true;
+    };
+
+    bundles.gaming.enable = true;
   };
 
   # WiFi workarounds
   networking.networkmanager.wifi.backend = "iwd";
-
-  modules.bundles.gaming.enable = true;
 
   systemd.services.connect-wifi = {
     script = ''

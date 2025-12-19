@@ -11,26 +11,29 @@
   networking.hostName = "recusant";
   time.timeZone = "America/Los_Angeles";
 
-  boot.supportedFilesystems = [
-    "btrfs"
-    "bcachefs"
-  ];
-  boot.initrd.availableKernelModules = [
-    "tpm_crb"
-    "tpm_tis"
-  ];
+  boot = {
+    supportedFilesystems = [
+      "btrfs"
+      "bcachefs"
+    ];
+    initrd = {
+      availableKernelModules = [
+        "tpm_crb"
+        "tpm_tis"
+      ];
+      clevis = {
+        enable = true;
+        devices."${config.fileSystems."/mnt/bcachefs".device}".secretFile = /persist/secret.jwe;
+      };
+    };
 
-  boot.kernelParams = [
-    "nvme_core.default_ps_max_latency_us=0"
-    "pcie_aspm=off"
-    "pcie_port_pm=off"
-  ];
+    kernelParams = [
+      "nvme_core.default_ps_max_latency_us=0"
+      "pcie_aspm=off"
+      "pcie_port_pm=off"
+    ];
 
-  boot.plymouth.enable = lib.mkForce false;
-
-  boot.initrd.clevis = {
-    enable = true;
-    devices."${config.fileSystems."/mnt/bcachefs".device}".secretFile = /persist/secret.jwe;
+    plymouth.enable = lib.mkForce false;
   };
 
   imports = [

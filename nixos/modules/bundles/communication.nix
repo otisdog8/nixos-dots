@@ -33,12 +33,12 @@ in
 
   config = lib.mkIf cfg.enable {
     modules.apps.vesktop = {
-      enable = cfg.vesktop.enable;
+      inherit (cfg.vesktop) enable;
       sandbox.enable = lib.mkDefault cfg.enableSandboxing;
     };
 
     modules.apps.zoom = {
-      enable = cfg.zoom.enable;
+      inherit (cfg.zoom) enable;
       sandbox.enable = lib.mkDefault cfg.enableSandboxing;
     };
   };

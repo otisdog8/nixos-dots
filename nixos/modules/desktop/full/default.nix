@@ -30,29 +30,33 @@ in
   };
 
   config = lib.mkIf cfg.enable {
-    # Enable Hyprland by default
-    modules.desktop.full.hyprland.enable = lib.mkDefault true;
+    modules = {
+      # Enable desktop components by default
+      desktop = {
+        full = {
+          hyprland.enable = lib.mkDefault true;
+          sddm.enable = lib.mkDefault true;
+          auth.enable = lib.mkDefault true;
+          plymouth.enable = lib.mkDefault true;
+        };
+        
+        # Enable desktop shared modules
+        shared = {
+          base.enable = lib.mkDefault true;
+          fonts.enable = lib.mkDefault true;
+          xdg.enable = lib.mkDefault true;
+          theming.enable = lib.mkDefault true;
+          printing.enable = lib.mkDefault true;
+        };
+      };
 
-    # Enable SDDM by default
-    modules.desktop.full.sddm.enable = lib.mkDefault true;
-
-    # Enable auth (1Password, kwallet) by default
-    modules.desktop.full.auth.enable = lib.mkDefault true;
-
-    # Enable plymouth by default
-    modules.desktop.full.plymouth.enable = lib.mkDefault true;
-
-    # Enable desktop shared modules
-    modules.desktop.shared.base.enable = lib.mkDefault true;
-    modules.desktop.shared.fonts.enable = lib.mkDefault true;
-    modules.desktop.shared.xdg.enable = lib.mkDefault true;
-    modules.desktop.shared.theming.enable = lib.mkDefault true;
-    modules.desktop.shared.printing.enable = lib.mkDefault true;
-
-    # Enable app bundles by default
-    modules.bundles.browsers.enable = lib.mkDefault true;
-    modules.bundles.communication.enable = lib.mkDefault true;
-    modules.bundles.productivity.enable = lib.mkDefault true;
-    modules.bundles.media.enable = lib.mkDefault true;
+      # Enable app bundles by default
+      bundles = {
+        browsers.enable = lib.mkDefault true;
+        communication.enable = lib.mkDefault true;
+        productivity.enable = lib.mkDefault true;
+        media.enable = lib.mkDefault true;
+      };
+    };
   };
 }

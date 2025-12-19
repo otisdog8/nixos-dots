@@ -46,25 +46,27 @@ in
   };
 
   config = lib.mkIf cfg.enable {
-    modules.apps.zen-browser = {
-      enable = cfg.zen-browser.enable;
-      sandbox.enable = lib.mkDefault cfg.enableSandboxing;
-      isDefaultBrowser = lib.mkDefault true;
-    };
+    modules.apps = {
+      zen-browser = {
+        inherit (cfg.zen-browser) enable;
+        sandbox.enable = lib.mkDefault cfg.enableSandboxing;
+        isDefaultBrowser = lib.mkDefault true;
+      };
 
-    modules.apps.firefox = {
-      enable = cfg.firefox.enable;
-      sandbox.enable = lib.mkDefault cfg.enableSandboxing;
-    };
+      firefox = {
+        inherit (cfg.firefox) enable;
+        sandbox.enable = lib.mkDefault cfg.enableSandboxing;
+      };
 
-    modules.apps.brave = {
-      enable = cfg.brave.enable;
-      sandbox.enable = lib.mkDefault cfg.enableSandboxing;
-    };
+      brave = {
+        inherit (cfg.brave) enable;
+        sandbox.enable = lib.mkDefault cfg.enableSandboxing;
+      };
 
-    modules.apps.chromium = {
-      enable = cfg.chromium.enable;
-      sandbox.enable = lib.mkDefault cfg.enableSandboxing;
+      chromium = {
+        inherit (cfg.chromium) enable;
+        sandbox.enable = lib.mkDefault cfg.enableSandboxing;
+      };
     };
   };
 }

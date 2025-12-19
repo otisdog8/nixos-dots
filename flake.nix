@@ -100,33 +100,36 @@
           username = "jrt";
         };
       };
-      nixosConfigurations.constitution = helper.mkNixos {
-        hostname = "constitution";
-        stateVersion = "24.05";
-      };
-      nixosConfigurations.excelsior = helper.mkNixos {
-        hostname = "excelsior";
-        stateVersion = "24.05";
-      };
-      nixosConfigurations.recusant = helper.mkNixos {
-        hostname = "recusant";
-        stateVersion = "24.05";
-      };
-      nixosConfigurations.munificent = helper.mkNixos {
-        hostname = "munificent";
-        stateVersion = "24.05";
-      };
-      nixosConfigurations.arquitens = helper.mkNixos {
-        hostname = "arquitens";
-        stateVersion = "24.05";
-      };
-      nixosConfigurations.carrack = helper.mkNixos {
-        hostname = "carrack";
-        stateVersion = "24.05";
-      };
-      nixosConfigurations.galaxy = helper.mkNixos {
-        hostname = "galaxy";
-        stateVersion = "25.05";
+      
+      nixosConfigurations = {
+        constitution = helper.mkNixos {
+          hostname = "constitution";
+          stateVersion = "24.05";
+        };
+        excelsior = helper.mkNixos {
+          hostname = "excelsior";
+          stateVersion = "24.05";
+        };
+        recusant = helper.mkNixos {
+          hostname = "recusant";
+          stateVersion = "24.05";
+        };
+        munificent = helper.mkNixos {
+          hostname = "munificent";
+          stateVersion = "24.05";
+        };
+        arquitens = helper.mkNixos {
+          hostname = "arquitens";
+          stateVersion = "24.05";
+        };
+        carrack = helper.mkNixos {
+          hostname = "carrack";
+          stateVersion = "24.05";
+        };
+        galaxy = helper.mkNixos {
+          hostname = "galaxy";
+          stateVersion = "25.05";
+        };
       };
 
       devShells.x86_64-linux.default =

@@ -23,9 +23,11 @@ in
 
   config = lib.mkIf cfg.enable {
     # Tailscale VPN
-    services.tailscale.enable = true;
-    services.tailscale.openFirewall = true;
-    services.tailscale.useRoutingFeatures = "both";
+    services.tailscale = {
+      enable = true;
+      openFirewall = true;
+      useRoutingFeatures = "both";
+    };
 
     # Enable debug info
     environment.enableDebugInfo = true;

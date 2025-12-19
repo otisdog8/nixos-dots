@@ -63,72 +63,76 @@
     '';
   };
 
-  environment.persistence."/persist" = {
-    enable = true; # NB: Defaults to true, not needed
-    hideMounts = true;
-    directories = [
-      "/root/.ssh/"
-      "/var/lib/nixos"
-      "/var/lib/systemd"
-      "/var/lib/acme"
-      "/etc/nixos"
-      "/etc/clevis"
-    ];
-    files = [
-      "/etc/machine-id"
-      "/root/.bash_history"
-    ];
-    users.jrt = {
+  environment.persistence = {
+    "/persist" = {
+      enable = true; # NB: Defaults to true, not needed
+      hideMounts = true;
       directories = [
-        "Music"
-        "Pictures"
-        "Documents"
-        "Videos"
-        ".minecraft"
-        ".config/minecraft"
-        ".config/op"
-        {
-          directory = ".ssh";
-          mode = "0700";
-        }
+        "/root/.ssh/"
+        "/var/lib/nixos"
+        "/var/lib/systemd"
+        "/var/lib/acme"
+        "/etc/nixos"
+        "/etc/clevis"
       ];
       files = [
-        ".bash_history"
-        ".zsh_history"
+        "/etc/machine-id"
+        "/root/.bash_history"
       ];
+      users.jrt = {
+        directories = [
+          "Music"
+          "Pictures"
+          "Documents"
+          "Videos"
+          ".minecraft"
+          ".config/minecraft"
+          ".config/op"
+          {
+            directory = ".ssh";
+            mode = "0700";
+          }
+        ];
+        files = [
+          ".bash_history"
+          ".zsh_history"
+        ];
+      };
     };
-  };
-  environment.persistence."/large" = {
-    enable = true;
-    hideMounts = true;
-    directories = [
-      "/var/log"
-    ];
-    users.jrt = {
+    
+    "/large" = {
+      enable = true;
+      hideMounts = true;
       directories = [
-        "Downloads"
+        "/var/log"
       ];
+      users.jrt = {
+        directories = [
+          "Downloads"
+        ];
+      };
     };
-  };
-  environment.persistence."/cache" = {
-    enable = true;
-    hideMounts = true;
-    directories = [ ];
-    users.jrt = {
+    
+    "/cache" = {
+      enable = true;
+      hideMounts = true;
       directories = [ ];
+      users.jrt = {
+        directories = [ ];
+      };
     };
-  };
 
-  # Baked - immutable setup-time data (read-only mount)
-  # Used for: encryption keys, certificates, machine secrets
-  environment.persistence."/baked" = {
-    enable = true;
-    hideMounts = true;
-    directories = [ ];
-    users.jrt = {
-      directories = [
-        # Rarely used by user apps - mostly system-level secrets
-      ];
+    # Baked - immutable setup-time data (read-only mount)
+    # Used for: encryption keys, certificates, machine secrets
+    "/baked" = {
+      enable = true;
+      hideMounts = true;
+      directories = [ ];
+      users.jrt = {
+        directories = [
+          # Rarely used by user apps - mostly system-level secrets
+        ];
+      };
     };
   };
 }

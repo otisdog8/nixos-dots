@@ -15,65 +15,79 @@ in
   };
 
   config = lib.mkIf cfg.enable {
-    environment.systemPackages = with pkgs; [
-      # Archive tools
-      unzip
-      zip
+    environment = {
+      systemPackages = with pkgs; [
+        # Archive tools
+        unzip
+        zip
 
-      # Network tools
-      dig
-      doggo
-      iperf
-      tcpdump
+        # Network tools
+        dig
+        doggo
+        iperf
+        tcpdump
 
-      # System monitoring
-      iotop
-      nvtopPackages.full
-      btop
-      smartmontools
-      lsof
-      nvme-cli
+        # System monitoring
+        iotop
+        nvtopPackages.full
+        btop
+        smartmontools
+        lsof
+        nvme-cli
 
-      # File tools
-      nix-index
-      jq
-      ncdu
+        # File tools
+        nix-index
+        jq
+        ncdu
 
-      # Editors and text tools
-      vim
+        # Editors and text tools
+        vim
 
-      # Version control
-      git
-      git-crypt
+        # Version control
+        git
+        git-crypt
 
-      # General utilities
-      wget
-      imagemagick
-      bat
-      ripgrep
-      playerctl
-      libsecret
-      screen
+        # General utilities
+        wget
+        imagemagick
+        bat
+        ripgrep
+        playerctl
+        libsecret
+        screen
 
-      # System tools
-      polkit
-      kdePackages.ksshaskpass
+        # System tools
+        polkit
+        kdePackages.ksshaskpass
 
-      # Kubernetes tools
-      kubectl
-      cilium-cli
-      k9s
-      fluxcd
-      helm
-      hubble
-      authelia
-      cloudflared
+        # Kubernetes tools
+        kubectl
+        cilium-cli
+        k9s
+        fluxcd
+        helm
+        hubble
+        authelia
+        cloudflared
 
-      # Filesystem tools
-      nfs-utils
-      bcachefs-tools
-      clevis
-    ];
+        # Filesystem tools
+        nfs-utils
+        bcachefs-tools
+        clevis
+      ];
+
+      pathsToLink = [ "/share/zsh" ];
+      enableAllTerminfo = false;
+
+      # Persistence for CLI tools
+      persistence."/persist" = {
+        users.${username} = {
+          directories = [
+            ".local/share/zoxide/"
+          ];
+        };
+      };
+    };
 
     programs.zsh = {
       syntaxHighlighting = {
@@ -82,18 +96,6 @@ in
       enable = true;
       ohMyZsh = {
         enable = true;
-      };
-    };
-
-    environment.pathsToLink = [ "/share/zsh" ];
-    environment.enableAllTerminfo = false;
-
-    # Persistence for CLI tools
-    environment.persistence."/persist" = {
-      users.${username} = {
-        directories = [
-          ".local/share/zoxide/"
-        ];
       };
     };
   };

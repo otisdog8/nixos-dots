@@ -26,7 +26,7 @@ in
 
   config = lib.mkIf cfg.enable {
     modules.apps.obs-studio = {
-      enable = cfg.obs-studio.enable;
+      inherit (cfg.obs-studio) enable;
       sandbox.enable = lib.mkDefault cfg.enableSandboxing;
     };
   };

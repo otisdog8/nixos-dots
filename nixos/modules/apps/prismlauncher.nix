@@ -21,20 +21,23 @@
       package = pkgs.prismlauncher;
       packageName = "prismlauncher";
 
-      # PrismLauncher config
-      persistence.user.persist = [
-        ".config/PrismLauncher"
-      ];
+      # Persistence configuration
+      persistence.user = {
+        # PrismLauncher config
+        persist = [
+          ".config/PrismLauncher"
+        ];
 
-      # Game installations
-      persistence.user.large = [
-        ".local/share/PrismLauncher"
-      ];
+        # Game installations
+        large = [
+          ".local/share/PrismLauncher"
+        ];
 
-      # Cache
-      persistence.user.cache = [
-        ".cache/PrismLauncher"
-      ];
+        # Cache
+        cache = [
+          ".cache/PrismLauncher"
+        ];
+      };
 
       # Additional sandbox configuration
       nixpakModules = [
@@ -44,21 +47,21 @@
             # Flatpak app ID
             flatpak.appId = "org.prismlauncher.PrismLauncher";
 
-            bubblewrap = {
-              bind.rw = [
+            bubblewrap.bind = {
+              rw = [
                 # Sysfs for GPU detection
                 "/sys/dev/char"
                 "/sys/devices"
               ];
 
-              bind.ro = [
+              ro = [
                 # System binaries (for Java detection)
                 "/run/current-system/sw/bin"
                 "/etc/profiles/per-user"
                 "/nix/var/nix/profiles"
               ];
 
-              bind.dev = [
+              dev = [
                 # Input devices (for controllers)
                 "/dev/input"
               ];

@@ -6,10 +6,12 @@
 
   config.app = {
     # Clear all persistence - nothing should be saved
-    persistence.user.persist = lib.mkForce [ ];
-    persistence.user.large = lib.mkForce [ ];
-    persistence.user.cache = lib.mkForce [ ];
-    persistence.user.baked = lib.mkForce [ ];
+    persistence.user = {
+      persist = lib.mkForce [ ];
+      large = lib.mkForce [ ];
+      cache = lib.mkForce [ ];
+      baked = lib.mkForce [ ];
+    };
 
     nixpakModules = [
       (

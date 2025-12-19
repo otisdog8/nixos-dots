@@ -21,22 +21,25 @@
       package = pkgs.lunar-client;
       packageName = "lunarclient";
 
-      # Main config and data (settings, mods, resourcepacks)
-      persistence.user.persist = [
-        ".lunarclient"
-        ".local/share/lunarclient"
-      ];
+      # Persistence configuration
+      persistence.user = {
+        # Main config and data (settings, mods, resourcepacks)
+        persist = [
+          ".lunarclient"
+          ".local/share/lunarclient"
+        ];
 
-      # Large files (offline files, JRE runtime)
-      persistence.user.large = [
-        ".lunarclient/offline"
-        ".lunarclient/jre"
-      ];
+        # Large files (offline files, JRE runtime)
+        large = [
+          ".lunarclient/offline"
+          ".lunarclient/jre"
+        ];
 
-      # Cache directory
-      persistence.user.cache = [
-        ".config/lunarclient"
-      ];
+        # Cache directory
+        cache = [
+          ".config/lunarclient"
+        ];
+      };
     };
   }
 )

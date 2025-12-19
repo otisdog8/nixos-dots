@@ -25,10 +25,12 @@ in
 
   config = lib.mkIf cfg.enable {
     # System-level Hyprland configuration
-    programs.hyprland.enable = true;
-    programs.hyprland.package = inputs.hyprland.packages."${pkgs.stdenv.hostPlatform.system}".hyprland;
-    programs.hyprland.portalPackage =
-      inputs.hyprland.packages.${pkgs.stdenv.hostPlatform.system}.xdg-desktop-portal-hyprland;
+    programs.hyprland = {
+      enable = true;
+      package = inputs.hyprland.packages."${pkgs.stdenv.hostPlatform.system}".hyprland;
+      portalPackage =
+        inputs.hyprland.packages.${pkgs.stdenv.hostPlatform.system}.xdg-desktop-portal-hyprland;
+    };
 
     # Desktop packages
     environment.systemPackages = with pkgs; [
@@ -62,11 +64,13 @@ in
     ];
 
     # Enable child modules
-    modules.desktop.full.hyprland.waybar.enable = lib.mkDefault true;
-    modules.desktop.full.hyprland.hyprlock.enable = lib.mkDefault true;
-    modules.desktop.full.hyprland.hypridle.enable = lib.mkDefault true;
-    modules.desktop.full.hyprland.hyprpaper.enable = lib.mkDefault true;
-    modules.desktop.full.hyprland.wlogout.enable = lib.mkDefault true;
+    modules.desktop.full.hyprland = {
+      waybar.enable = lib.mkDefault true;
+      hyprlock.enable = lib.mkDefault true;
+      hypridle.enable = lib.mkDefault true;
+      hyprpaper.enable = lib.mkDefault true;
+      wlogout.enable = lib.mkDefault true;
+    };
 
     # Home-manager Hyprland configuration
     home-manager.users.${username} = {

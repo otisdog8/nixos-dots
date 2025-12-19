@@ -74,25 +74,27 @@
           description = "Whether to enable cache for ${appName}";
         };
 
-        sandbox.enable = lib.mkOption {
-          type = lib.types.bool;
-          default = false;
-          description = "Whether to sandbox ${appName} using nixpak";
-        };
+        sandbox = {
+          enable = lib.mkOption {
+            type = lib.types.bool;
+            default = false;
+            description = "Whether to sandbox ${appName} using nixpak";
+          };
 
-        sandbox.extraBinds = lib.mkOption {
-          type = lib.types.listOf lib.types.str;
-          default = [ ];
-          description = "Additional bind mounts for sandboxed ${appName} (relative to home or absolute paths)";
-        };
+          extraBinds = lib.mkOption {
+            type = lib.types.listOf lib.types.str;
+            default = [ ];
+            description = "Additional bind mounts for sandboxed ${appName} (relative to home or absolute paths)";
+          };
 
-        sandbox.nixpakModules = lib.mkOption {
-          type = lib.types.listOf lib.types.deferredModule;
-          default = [ ];
-          description = ''
-            Additional nixpak modules to merge with feature modules.
-            Allows per-host nixpak configuration overrides.
-          '';
+          nixpakModules = lib.mkOption {
+            type = lib.types.listOf lib.types.deferredModule;
+            default = [ ];
+            description = ''
+              Additional nixpak modules to merge with feature modules.
+              Allows per-host nixpak configuration overrides.
+            '';
+          };
         };
 
         finalPackage = lib.mkOption {
@@ -121,10 +123,7 @@
             if cfg.sandbox.enable then
               let
                 nixpakLib =
-                  if inputs ? nixpak then
-                    inputs.nixpak
-                  else
-                    builtins.throw "nixpak not available - add nixpak to flake inputs";
+                  inputs.nixpak or (builtins.throw "nixpak not available - add nixpak to flake inputs");
                 mkNixPak = nixpakLib.lib.nixpak {
                   inherit lib pkgs;
                 };

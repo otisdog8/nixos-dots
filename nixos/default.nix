@@ -28,18 +28,6 @@
     # Host configuration
     ./hosts/${hostname}
 
-    # Home-manager configuration
-    {
-      home-manager.extraSpecialArgs = {
-        inherit inputs;
-        username = "jrt";
-        inherit stateVersion;
-      };
-      home-manager.useGlobalPkgs = true;
-      home-manager.useUserPackages = true;
-      home-manager.users.jrt = import ../home-manager;
-    }
-
     # System modules (unconditionally enabled)
     modules/system/impermanence.nix
     modules/system/kernel.nix
@@ -99,10 +87,24 @@
     in
     builtins.concatMap collectFlakeInputs (builtins.attrValues inputs);
 
+  # Home-manager configuration
+  home-manager = {
+    extraSpecialArgs = {
+      inherit inputs;
+      username = "jrt";
+      inherit stateVersion;
+    };
+    useGlobalPkgs = true;
+    useUserPackages = true;
+    users.jrt = import ../home-manager;
+  };
+
   # Nixpkgs configuration
-  nixpkgs.config.allowUnfree = true;
-  nixpkgs.overlays = builtins.attrValues outputs.overlays;
-  nixpkgs.hostPlatform = lib.mkDefault platform;
+  nixpkgs = {
+    config.allowUnfree = true;
+    overlays = builtins.attrValues outputs.overlays;
+    hostPlatform = lib.mkDefault platform;
+  };
 
   # Power management
   powerManagement.enable = true;

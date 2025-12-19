@@ -11,7 +11,13 @@
   networking.hostName = "carrack";
   time.timeZone = "America/Los_Angeles";
 
-  boot.supportedFilesystems = [ "btrfs" ];
+  boot = {
+    supportedFilesystems = [ "btrfs" ];
+    initrd = {
+      supportedFilesystems = [ "nfs" ];
+      kernelModules = [ "nfs" ];
+    };
+  };
 
   imports = [
     ./disks.nix
@@ -29,9 +35,6 @@
     ../../modules/system/hardware/amd.nix
     ../../modules/system/k3s
   ];
-
-  boot.initrd.supportedFilesystems = [ "nfs" ];
-  boot.initrd.kernelModules = [ "nfs" ];
 
   # Enable full desktop environment
   modules.desktop.full.enable = true;

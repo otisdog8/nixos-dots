@@ -16,77 +16,80 @@ in
 
   config = lib.mkIf cfg.enable {
     # Development packages
-    environment.systemPackages = with pkgs; [
-      # Language tools
-      python3
+    environment = {
+      systemPackages = with pkgs; [
+        # Language tools
+        python3
 
-      # Build tools
-      gnumake
-      meson
-      ninja
-      gcc
-      pkg-config
+        # Build tools
+        gnumake
+        meson
+        ninja
+        gcc
+        pkg-config
 
-      # Code search and manipulation
-      ast-grep
-      fd
-      sd
-      cloc
+        # Code search and manipulation
+        ast-grep
+        fd
+        sd
+        cloc
 
-      # Version control
-      lazygit
+        # Version control
+        lazygit
 
-      # Shell tools
-      shellcheck
-      shfmt
+        # Shell tools
+        shellcheck
+        shfmt
 
-      # Nix development
-      nixd
-      nixfmt-rfc-style
+        # Nix development
+        nixd
+        nixfmt-rfc-style
 
-      # Python tools
-      uv
+        # Python tools
+        uv
 
-      # Container tools
-      dive
+        # Container tools
+        dive
 
-      # Environment management
-      direnv
-    ];
+        # Environment management
+        direnv
+      ];
+
+      variables = {
+        EDITOR = "nvim";
+        VISUAL = "nvim";
+      };
+
+      persistence."/persist" = {
+        users.${username} = {
+          directories = [
+            ".cargo" # Rust toolchain
+            ".local/share/direnv" # direnv cache
+            ".config/github-copilot" # GitHub Copilot
+            # .claude and .claude.json moved to modules/apps/claude-code.nix
+          ];
+          files = [ ];
+        };
+      };
+
+      persistence."/cache" = {
+        users.${username} = {
+          directories = [
+            ".cache/uv" # Python uv cache
+          ];
+        };
+      };
+    };
 
     # Development tool configurations
     programs.direnv.enable = true;
     programs.nix-ld.enable = true;
 
-    environment.variables = {
-      EDITOR = "nvim";
-      VISUAL = "nvim";
-    };
-
     # Enable developer-facing apps by default
-    modules.apps.claude-code.enable = lib.mkDefault true;
-    modules.apps.opencode.enable = lib.mkDefault true;
-    modules.apps.nixvim.enable = lib.mkDefault true;
-
-    # Persistence for developer tools
-    environment.persistence."/persist" = {
-      users.${username} = {
-        directories = [
-          ".cargo" # Rust toolchain
-          ".local/share/direnv" # direnv cache
-          ".config/github-copilot" # GitHub Copilot
-          # .claude and .claude.json moved to modules/apps/claude-code.nix
-        ];
-        files = [ ];
-      };
-    };
-
-    environment.persistence."/cache" = {
-      users.${username} = {
-        directories = [
-          ".cache/uv" # Python uv cache
-        ];
-      };
+    modules.apps = {
+      claude-code.enable = lib.mkDefault true;
+      opencode.enable = lib.mkDefault true;
+      nixvim.enable = lib.mkDefault true;
     };
   };
 }

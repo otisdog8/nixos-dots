@@ -11,7 +11,13 @@
   networking.hostName = "arquitens";
   time.timeZone = "America/Los_Angeles";
 
-  boot.supportedFilesystems = [ "btrfs" ];
+  boot = {
+    supportedFilesystems = [ "btrfs" ];
+    initrd = {
+      supportedFilesystems = [ "nfs" ];
+      kernelModules = [ "nfs" ];
+    };
+  };
 
   imports = [
     ./disks.nix
@@ -30,24 +36,23 @@
     ../../modules/system/k3s
   ];
 
-  boot.initrd.supportedFilesystems = [ "nfs" ];
-  boot.initrd.kernelModules = [ "nfs" ];
+  # Enable full desktop environment, AMD GPU, and K3s
+  modules = {
+    desktop.full.enable = true;
 
-  # Enable full desktop environment
-  modules.desktop.full.enable = true;
+    # Enable AMD GPU
+    system.hardware.amd.enable = true;
 
-  # Enable AMD GPU
-  modules.system.hardware.amd.enable = true;
-
-  # K3s cluster init node (primary)
-  modules.system.k3s = {
-    enable = true;
-    clusterInit = true;
-    extraFlags = [
-      "--bind-address=100.126.30.73"
-      "--node-ip=100.126.30.73"
-      "--advertise-address=100.126.30.73"
-    ];
+    # K3s cluster init node (primary)
+    system.k3s = {
+      enable = true;
+      clusterInit = true;
+      extraFlags = [
+        "--bind-address=100.126.30.73"
+        "--node-ip=100.126.30.73"
+        "--advertise-address=100.126.30.73"
+      ];
+    };
   };
 
   # NFS server

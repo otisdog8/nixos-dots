@@ -28,12 +28,14 @@ in
   config = lib.mkIf cfg.enable {
     services.xserver.videoDrivers = [ "nvidia" ];
 
-    hardware.nvidia.open = cfg.openDrivers;
-    hardware.nvidia.package =
-      if cfg.useBeta then
-        config.boot.kernelPackages.nvidiaPackages.beta
-      else
-        config.boot.kernelPackages.nvidiaPackages.stable;
-    hardware.nvidia.modesetting.enable = true;
+    hardware.nvidia = {
+      open = cfg.openDrivers;
+      package =
+        if cfg.useBeta then
+          config.boot.kernelPackages.nvidiaPackages.beta
+        else
+          config.boot.kernelPackages.nvidiaPackages.stable;
+      modesetting.enable = true;
+    };
   };
 }

@@ -16,37 +16,49 @@ in
   };
 
   config = lib.mkIf cfg.enable {
-    # Theme packages
-    environment.systemPackages = with pkgs; [
-      # Qt theming
-      qt6Packages.qt6ct
-      qt6.qtwayland
-      qt6.qtbase
-      qt6.qtdeclarative
-      qt6.qtsvg
-      qt6.qtimageformats
-      qt6.qt5compat
-      kdePackages.qtstyleplugin-kvantum
+    environment = {
+      # Theme packages
+      systemPackages = with pkgs; [
+        # Qt theming
+        qt6Packages.qt6ct
+        qt6.qtwayland
+        qt6.qtbase
+        qt6.qtdeclarative
+        qt6.qtsvg
+        qt6.qtimageformats
+        qt6.qt5compat
+        kdePackages.qtstyleplugin-kvantum
 
-      # Icons and cursors
-      candy-icons
-      papirus-icon-theme
-      inputs.rose-pine-hyprcursor.packages.${pkgs.stdenv.hostPlatform.system}.default
-      rose-pine-cursor
+        # Icons and cursors
+        candy-icons
+        papirus-icon-theme
+        inputs.rose-pine-hyprcursor.packages.${pkgs.stdenv.hostPlatform.system}.default
+        rose-pine-cursor
 
-      # GTK themes
-      gnome-themes-extra
-      sweet
+        # GTK themes
+        gnome-themes-extra
+        sweet
 
-      # Theme configuration tool
-      nwg-look
-    ];
+        # Theme configuration tool
+        nwg-look
+      ];
 
-    environment.pathsToLink = [
-      "/share/Kvantum"
-      "/share/icons"
-      "/share/pixmaps"
-    ];
+      pathsToLink = [
+        "/share/Kvantum"
+        "/share/icons"
+        "/share/pixmaps"
+      ];
+
+      # Persistence for theming
+      persistence."/persist" = {
+        users.${username} = {
+          files = [
+            ".face.icon"
+            ".face"
+          ];
+        };
+      };
+    };
 
     # Home-manager theming config for default user
     home-manager.users.${username} = {
@@ -172,16 +184,6 @@ in
           color15 = "#DCDFE4";
         };
         shellIntegration.enableZshIntegration = true;
-      };
-    };
-
-    # Persistence for theming
-    environment.persistence."/persist" = {
-      users.${username} = {
-        files = [
-          ".face.icon"
-          ".face"
-        ];
       };
     };
   };

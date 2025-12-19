@@ -9,15 +9,19 @@ in
   };
 
   config = lib.mkIf cfg.enable {
-    # CUPS printing
-    services.printing.enable = true;
-    services.printing.browsed.enable = false;
+    services = {
+      # CUPS printing
+      printing = {
+        enable = true;
+        browsed.enable = false;
+      };
 
-    # Avahi for network printer discovery
-    services.avahi = {
-      enable = true;
-      nssmdns4 = true;
-      openFirewall = true;
+      # Avahi for network printer discovery
+      avahi = {
+        enable = true;
+        nssmdns4 = true;
+        openFirewall = true;
+      };
     };
   };
 }

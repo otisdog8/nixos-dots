@@ -39,7 +39,7 @@
           pkgs,
         }:
         {
-          modules.apps.obsidian.sandbox.extraBinds = lib.mkIf (config.modules.apps.obsidian.sandbox.enable) [
+          modules.apps.obsidian.sandbox.extraBinds = lib.mkIf config.modules.apps.obsidian.sandbox.enable [
             config.modules.apps.obsidian.vaultPath
           ];
         };

@@ -39,13 +39,13 @@ in
 
   config = lib.mkIf cfg.enable {
     modules.apps.obsidian = {
-      enable = cfg.obsidian.enable;
+      inherit (cfg.obsidian) enable;
       sandbox.enable = lib.mkDefault cfg.enableSandboxing;
-      vaultPath = cfg.obsidian.vaultPath;
+      inherit (cfg.obsidian) vaultPath;
     };
 
     modules.apps.amazing-marvin = {
-      enable = cfg.amazing-marvin.enable;
+      inherit (cfg.amazing-marvin) enable;
       sandbox.enable = lib.mkDefault cfg.enableSandboxing;
     };
   };

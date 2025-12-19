@@ -8,33 +8,36 @@
     (
       { lib, ... }:
       {
-        # Device binds for NVIDIA and other GPUs
-        bubblewrap.bind.dev = [
-          "/dev/dri"
-          "/dev/nvidia0"
-          "/dev/nvidiactl"
-          "/dev/nvidia-modeset"
-          "/dev/nvidia-uvm"
-          "/dev/nvidia-uvm-tools"
-        ];
+        # GPU binds
+        bubblewrap.bind = {
+          # Device binds for NVIDIA and other GPUs
+          dev = [
+            "/dev/dri"
+            "/dev/nvidia0"
+            "/dev/nvidiactl"
+            "/dev/nvidia-modeset"
+            "/dev/nvidia-uvm"
+            "/dev/nvidia-uvm-tools"
+          ];
 
-        # Read-write sys access for GPU
-        bubblewrap.bind.rw = [
-          "/sys/dev/char"
-          "/sys/devices"
-        ];
+          # Read-write sys access for GPU
+          rw = [
+            "/sys/dev/char"
+            "/sys/devices"
+          ];
 
-        # Read-only GPU-related paths (matching prismlauncher-sandboxed)
-        bubblewrap.bind.ro = [
-          "/run/opengl-driver"
-          "/run/opengl-driver-32"
-          "/etc/static/egl"
-          "/etc/egl"
-          "/etc/vulkan"
-          "/etc/OpenCL"
-          "/run/current-system/sw/share/glvnd"
-          "/run/current-system/sw/share/vulkan"
-        ];
+          # Read-only GPU-related paths (matching prismlauncher-sandboxed)
+          ro = [
+            "/run/opengl-driver"
+            "/run/opengl-driver-32"
+            "/etc/static/egl"
+            "/etc/egl"
+            "/etc/vulkan"
+            "/etc/OpenCL"
+            "/run/current-system/sw/share/glvnd"
+            "/run/current-system/sw/share/vulkan"
+          ];
+        };
       }
     )
   ];

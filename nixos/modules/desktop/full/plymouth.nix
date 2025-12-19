@@ -22,7 +22,7 @@ in
   config = lib.mkIf cfg.enable {
     boot.plymouth = {
       enable = true;
-      theme = cfg.theme;
+      inherit (cfg) theme;
       themePackages = with pkgs; [
         (adi1090x-plymouth-themes.override {
           selected_themes = [ cfg.theme ];
