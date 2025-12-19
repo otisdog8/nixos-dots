@@ -1,5 +1,11 @@
 # Developer tools configuration - Neovim, Cargo, direnv, GitHub Copilot, Claude Code, etc.
-{ config, lib, pkgs, username, ... }:
+{
+  config,
+  lib,
+  pkgs,
+  username,
+  ...
+}:
 let
   cfg = config.modules.system.developer-tools;
 in
@@ -66,9 +72,9 @@ in
     environment.persistence."/persist" = {
       users.${username} = {
         directories = [
-          ".cargo"                      # Rust toolchain
-          ".local/share/direnv"         # direnv cache
-          ".config/github-copilot"      # GitHub Copilot
+          ".cargo" # Rust toolchain
+          ".local/share/direnv" # direnv cache
+          ".config/github-copilot" # GitHub Copilot
           # .claude and .claude.json moved to modules/apps/claude-code.nix
         ];
         files = [ ];
@@ -78,7 +84,7 @@ in
     environment.persistence."/cache" = {
       users.${username} = {
         directories = [
-          ".cache/uv"                   # Python uv cache
+          ".cache/uv" # Python uv cache
         ];
       };
     };

@@ -33,11 +33,6 @@
     # Search neovim config
     { mode = "n"; key = "<leader>sn"; action.__raw = "function() Snacks.picker.files({ cwd = vim.fn.stdpath('config') }) end"; options.desc = "[S]earch [N]eovim files"; }
 
-    # LSP pickers
-    { mode = "n"; key = "gd"; action.__raw = "function() Snacks.picker.lsp_definitions() end"; options.desc = "Goto Definition"; }
-    { mode = "n"; key = "gr"; action.__raw = "function() Snacks.picker.lsp_references() end"; options.desc = "References"; }
-    { mode = "n"; key = "gI"; action.__raw = "function() Snacks.picker.lsp_implementations() end"; options.desc = "Goto Implementation"; }
-    { mode = "n"; key = "gy"; action.__raw = "function() Snacks.picker.lsp_type_definitions() end"; options.desc = "Goto T[y]pe Definition"; }
-    { mode = "n"; key = "<leader>sS"; action.__raw = "function() Snacks.picker.lsp_symbols() end"; options.desc = "LSP Symbols"; }
+    # Note: LSP keybinds (gd, gr, gI, etc.) are now in lsp.nix via LspAttach autocmd
   ];
 }

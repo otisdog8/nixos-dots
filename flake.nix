@@ -68,19 +68,19 @@
     {
       self,
       nixpkgs,
-        nixpak,
-        nixos-hardware,
-        chaotic,
-        impermanence,
-        lanzaboote,
-        home-manager,
-        zen-browser,
-        hyprland,
-        hyprsplit,
-        Hyprspace,
-        wezterm-flake,
-        ...
-      }@inputs:
+      nixpak,
+      nixos-hardware,
+      chaotic,
+      impermanence,
+      lanzaboote,
+      home-manager,
+      zen-browser,
+      hyprland,
+      hyprsplit,
+      Hyprspace,
+      wezterm-flake,
+      ...
+    }@inputs:
 
     let
       inherit (self) outputs;
@@ -89,7 +89,6 @@
     in
     {
       overlays = import ./overlays { inherit inputs; };
-      defaultPackage.x86_64-linux = home-manager.defaultPackage.x86_64-linux;
 
       homeConfigurations = {
         "jrt@constitution" = helper.mkHome {
@@ -129,6 +128,19 @@
         hostname = "galaxy";
         stateVersion = "25.05";
       };
+
+      devShells.x86_64-linux.default =
+        let
+          pkgs = import nixpkgs { system = "x86_64-linux"; };
+        in
+        pkgs.mkShell {
+          packages = with pkgs; [
+            statix
+            nixd
+            markdownlint-cli
+            nixfmt-rfc-style
+          ];
+        };
 
     };
 }
