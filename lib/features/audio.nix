@@ -4,11 +4,14 @@
   imports = [ ../app-spec.nix ];
 
   config.app.nixpakModules = [
-    ({ lib, ... }: {
-      bubblewrap.sockets = {
-        pulse = true;
-        pipewire = true;
-      };
-    })
+    (
+      { lib, ... }:
+      {
+        bubblewrap.sockets = {
+          pulse = true;
+          pipewire = true;
+        };
+      }
+    )
   ];
 }

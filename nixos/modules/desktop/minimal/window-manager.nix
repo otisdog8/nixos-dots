@@ -1,5 +1,10 @@
 # Minimal window manager configuration
-{ config, lib, pkgs, ... }:
+{
+  config,
+  lib,
+  pkgs,
+  ...
+}:
 let
   cfg = config.modules.desktop.minimal.window-manager;
 in
@@ -15,7 +20,7 @@ in
     environment.systemPackages = with pkgs; [
       i3status
       dmenu
-      feh  # For wallpapers
+      feh # For wallpapers
     ];
   };
 }

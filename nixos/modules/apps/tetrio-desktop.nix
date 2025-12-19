@@ -1,7 +1,13 @@
 # TETR.IO Desktop - Online stacker game
 
 (import ../../../lib/apps.nix).mkApp (
-  { config, lib, pkgs, ... }: {
+  {
+    config,
+    lib,
+    pkgs,
+    ...
+  }:
+  {
     imports = [
       ../../../lib/features/chromium.nix
       ../../../lib/features/gui.nix

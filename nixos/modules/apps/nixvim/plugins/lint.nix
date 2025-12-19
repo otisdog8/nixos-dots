@@ -3,8 +3,11 @@
 {
   plugins.lint = {
     enable = true;
-    lazyLoad.settings.event = [ "BufReadPre" "BufNewFile" ];
-    
+    lazyLoad.settings.event = [
+      "BufReadPre"
+      "BufNewFile"
+    ];
+
     lintersByFt = {
       markdown = [ "markdownlint" ];
       nix = [ "statix" ];
@@ -13,7 +16,7 @@
       # javascript = [ "eslint" ];
       # typescript = [ "eslint" ];
     };
-    
+
     # Disable the default autoCmd (we'll set it up in luaConfig.post)
     autoCmd = null;
 

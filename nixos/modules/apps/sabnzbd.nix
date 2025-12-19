@@ -1,4 +1,10 @@
-{ config, lib, pkgs, username, ... }:
+{
+  config,
+  lib,
+  pkgs,
+  username,
+  ...
+}:
 let
   appName = "sabnzbd";
   cfg = config.modules.apps.${appName};
@@ -6,7 +12,9 @@ in
 {
   options.modules.apps.${appName} = {
     enable = lib.mkEnableOption "SABnzbd usenet downloader";
-    sandbox.enable = lib.mkEnableOption "sandboxing" // { default = false; };
+    sandbox.enable = lib.mkEnableOption "sandboxing" // {
+      default = false;
+    };
     openFirewall = lib.mkEnableOption "opening firewall ports for SABnzbd";
   };
 

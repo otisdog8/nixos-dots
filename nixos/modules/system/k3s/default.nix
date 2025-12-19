@@ -1,5 +1,10 @@
 # K3s Kubernetes cluster configuration
-{ config, lib, pkgs, ... }:
+{
+  config,
+  lib,
+  pkgs,
+  ...
+}:
 let
   cfg = config.modules.system.k3s;
 in
@@ -25,7 +30,7 @@ in
 
     extraFlags = lib.mkOption {
       type = lib.types.listOf lib.types.str;
-      default = [];
+      default = [ ];
       description = "Extra flags to pass to k3s (e.g. bind-address, node-ip)";
     };
   };
@@ -76,7 +81,8 @@ in
         "--kube-apiserver-arg default-not-ready-toleration-seconds=60"
         "--kube-apiserver-arg default-unreachable-toleration-seconds=60"
         "--kubelet-arg node-status-update-frequency=2s"
-      ] ++ cfg.extraFlags;
+      ]
+      ++ cfg.extraFlags;
     };
 
     boot.kernelModules = [

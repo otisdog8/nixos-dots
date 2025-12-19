@@ -1,5 +1,10 @@
 # NVIDIA graphics configuration
-{ config, lib, pkgs, ... }:
+{
+  config,
+  lib,
+  pkgs,
+  ...
+}:
 let
   cfg = config.modules.system.hardware.nvidia;
 in
@@ -24,9 +29,11 @@ in
     services.xserver.videoDrivers = [ "nvidia" ];
 
     hardware.nvidia.open = cfg.openDrivers;
-    hardware.nvidia.package = if cfg.useBeta
-      then config.boot.kernelPackages.nvidiaPackages.beta
-      else config.boot.kernelPackages.nvidiaPackages.stable;
+    hardware.nvidia.package =
+      if cfg.useBeta then
+        config.boot.kernelPackages.nvidiaPackages.beta
+      else
+        config.boot.kernelPackages.nvidiaPackages.stable;
     hardware.nvidia.modesetting.enable = true;
   };
 }

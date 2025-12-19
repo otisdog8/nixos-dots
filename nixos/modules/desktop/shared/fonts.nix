@@ -1,5 +1,10 @@
 # Font configuration
-{ config, lib, pkgs, ... }:
+{
+  config,
+  lib,
+  pkgs,
+  ...
+}:
 let
   cfg = config.modules.desktop.shared.fonts;
 in

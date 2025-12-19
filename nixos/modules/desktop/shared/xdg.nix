@@ -1,5 +1,12 @@
 # XDG configuration - portals, MIME types, icons
-{ config, lib, pkgs, username, inputs, ... }:
+{
+  config,
+  lib,
+  pkgs,
+  username,
+  inputs,
+  ...
+}:
 let
   cfg = config.modules.desktop.shared.xdg;
 in

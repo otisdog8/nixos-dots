@@ -1,7 +1,13 @@
 # Steam - Gaming platform
 
 (import ../../../lib/apps.nix).mkApp (
-  { config, lib, pkgs, ... }: {
+  {
+    config,
+    lib,
+    pkgs,
+    ...
+  }:
+  {
     imports = [
       ../../../lib/features/gui.nix
       ../../../lib/features/needs-gpu.nix
@@ -29,12 +35,15 @@
 
       # Enable input devices for game controllers
       nixpakModules = [
-        ({ lib, ... }: {
-          bubblewrap.bind.dev = [
-            "/dev/input"
-            "/dev/uinput"
-          ];
-        })
+        (
+          { lib, ... }:
+          {
+            bubblewrap.bind.dev = [
+              "/dev/input"
+              "/dev/uinput"
+            ];
+          }
+        )
       ];
     };
   }

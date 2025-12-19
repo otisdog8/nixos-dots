@@ -1,5 +1,10 @@
 # Virtualization configuration - libvirt, virt-manager, QEMU/KVM
-{ config, lib, pkgs, ... }:
+{
+  config,
+  lib,
+  pkgs,
+  ...
+}:
 let
   cfg = config.modules.system.virt;
 in

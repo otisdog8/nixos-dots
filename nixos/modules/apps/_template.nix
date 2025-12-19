@@ -7,7 +7,13 @@
 (import ../../../lib/apps.nix).mkApp (
 
   # This is an app spec module - evaluated with lib.evalModules
-  { config, lib, pkgs, ... }: {
+  {
+    config,
+    lib,
+    pkgs,
+    ...
+  }:
+  {
 
     # ═══════════════════════════════════════════════════════════════════════
     # STEP 1: Import feature modules
@@ -26,10 +32,9 @@
     #   - development.nix: Dev tools (imports gui + network + project directories)
 
     imports = [
-      ../../../lib/features/electron.nix  # Change to match your app
+      ../../../lib/features/electron.nix # Change to match your app
       ../../../lib/features/network.nix
     ];
-
 
     # ═══════════════════════════════════════════════════════════════════════
     # STEP 2: Configure the app
@@ -37,9 +42,9 @@
 
     config.app = {
       # Required: App identity
-      name = "APPNAME";                    # Used for modules.apps.APPNAME
-      package = pkgs.APPNAME;              # Package to install
-      packageName = "APPNAME";             # Binary name in package
+      name = "APPNAME"; # Used for modules.apps.APPNAME
+      package = pkgs.APPNAME; # Package to install
+      packageName = "APPNAME"; # Binary name in package
 
       # Optional: Override default usernames for persistence
       # defaultUsernames = [ "alice" "bob" ];
@@ -178,38 +183,43 @@
       #   - Additional packages
       #   - Conditional logic based on custom options
 
-      customConfig = { config, lib, pkgs }: {
-        # Example: Bind custom dataDir into sandbox
-        # modules.apps.APPNAME.sandbox.extraBinds = lib.mkIf
-        #   (config.modules.apps.APPNAME.sandbox.enable)
-        #   [ config.modules.apps.APPNAME.dataDir ];
+      customConfig =
+        {
+          config,
+          lib,
+          pkgs,
+        }:
+        {
+          # Example: Bind custom dataDir into sandbox
+          # modules.apps.APPNAME.sandbox.extraBinds = lib.mkIf
+          #   (config.modules.apps.APPNAME.sandbox.enable)
+          #   [ config.modules.apps.APPNAME.dataDir ];
 
-        # Example: Systemd user service
-        # systemd.user.services.APPNAME = lib.mkIf
-        #   (config.modules.apps.APPNAME.enableFeatureX)
-        #   {
-        #     description = "APPNAME background service";
-        #     wantedBy = [ "default.target" ];
-        #     serviceConfig = {
-        #       ExecStart = "${config.modules.apps.APPNAME.package}/bin/APPNAME-daemon";
-        #       Restart = "on-failure";
-        #     };
-        #   };
+          # Example: Systemd user service
+          # systemd.user.services.APPNAME = lib.mkIf
+          #   (config.modules.apps.APPNAME.enableFeatureX)
+          #   {
+          #     description = "APPNAME background service";
+          #     wantedBy = [ "default.target" ];
+          #     serviceConfig = {
+          #       ExecStart = "${config.modules.apps.APPNAME.package}/bin/APPNAME-daemon";
+          #       Restart = "on-failure";
+          #     };
+          #   };
 
-        # Example: Environment variables
-        # environment.sessionVariables = {
-        #   APPNAME_LOG_LEVEL = config.modules.apps.APPNAME.logLevel;
-        # };
+          # Example: Environment variables
+          # environment.sessionVariables = {
+          #   APPNAME_LOG_LEVEL = config.modules.apps.APPNAME.logLevel;
+          # };
 
-        # Example: Install additional packages
-        # environment.systemPackages = lib.optionals
-        #   (config.modules.apps.APPNAME.enableFeatureX)
-        #   [ pkgs.APPNAME-plugin ];
-      };
+          # Example: Install additional packages
+          # environment.systemPackages = lib.optionals
+          #   (config.modules.apps.APPNAME.enableFeatureX)
+          #   [ pkgs.APPNAME-plugin ];
+        };
     };
   }
 )
-
 
 # ═════════════════════════════════════════════════════════════════════════════
 # USAGE IN SYSTEM CONFIG
@@ -258,7 +268,6 @@
 #   };
 #
 # ═════════════════════════════════════════════════════════════════════════════
-
 
 # ═════════════════════════════════════════════════════════════════════════════
 # ADVANCED: NIXPAK MODULE REFERENCE

@@ -1,7 +1,13 @@
 # Zen Browser (Firefox-based privacy-focused browser)
 
 (import ../../../lib/apps.nix).mkApp (
-  { config, lib, pkgs, ... }: {
+  {
+    config,
+    lib,
+    pkgs,
+    ...
+  }:
+  {
     imports = [
       ../../../lib/features/browser.nix
       ../../../lib/features/needs-gpu.nix
@@ -21,9 +27,12 @@
 
       # Sandbox both zen and zen-beta executables
       nixpakModules = [
-        ({ lib, ... }: {
-          app.extraEntrypoints = [ "/bin/zen-beta" ];
-        })
+        (
+          { lib, ... }:
+          {
+            app.extraEntrypoints = [ "/bin/zen-beta" ];
+          }
+        )
       ];
     };
   }

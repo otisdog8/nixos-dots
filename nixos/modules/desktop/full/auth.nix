@@ -1,5 +1,11 @@
 # Authentication configuration - 1Password, KWallet, polkit
-{ config, lib, pkgs, username, ... }:
+{
+  config,
+  lib,
+  pkgs,
+  username,
+  ...
+}:
 let
   cfg = config.modules.desktop.full.auth;
 in

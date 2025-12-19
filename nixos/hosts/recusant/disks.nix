@@ -122,8 +122,9 @@
     device = "/dev/disk/by-id/ata-HUH721212ALE601_2AG2SR1Y";
     #device = "/dev/disk/by-uuid/bd79c925-1d8b-4e56-b91b-c1c4c5c303fc";
     fsType = "bcachefs";
-    options = [ "nofail" 
-];
+    options = [
+      "nofail"
+    ];
 
   };
 

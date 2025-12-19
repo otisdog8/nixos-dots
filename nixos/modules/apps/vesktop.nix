@@ -1,7 +1,13 @@
 # Vesktop (third-party Discord client)
 
 (import ../../../lib/apps.nix).mkApp (
-  { config, lib, pkgs, ... }: {
+  {
+    config,
+    lib,
+    pkgs,
+    ...
+  }:
+  {
     imports = [
       ../../../lib/features/chromium.nix
       ../../../lib/features/needs-gpu.nix

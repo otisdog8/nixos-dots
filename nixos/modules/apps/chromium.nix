@@ -1,7 +1,13 @@
 # Chromium web browser
 
 (import ../../../lib/apps.nix).mkApp (
-  { config, lib, pkgs, ... }: {
+  {
+    config,
+    lib,
+    pkgs,
+    ...
+  }:
+  {
     imports = [
       ../../../lib/features/chromium.nix
       ../../../lib/features/browser.nix

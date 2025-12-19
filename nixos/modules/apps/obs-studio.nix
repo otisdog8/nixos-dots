@@ -1,7 +1,13 @@
 # OBS Studio - Screen recording and streaming
 
 (import ../../../lib/apps.nix).mkApp (
-  { config, lib, pkgs, ... }: {
+  {
+    config,
+    lib,
+    pkgs,
+    ...
+  }:
+  {
     imports = [
       ../../../lib/features/gui.nix
       ../../../lib/features/needs-gpu.nix
@@ -30,16 +36,22 @@
       ];
 
       # Additional NixOS configuration
-      customConfig = { config, lib, pkgs }: {
-        # System-level OBS configuration
-        # Pass null as package since our sandboxed package is already in systemPackages
-        # Plugins are configured outside this module
-        programs.obs-studio = {
-          enable = true;
-          enableVirtualCamera = true;
-          package = null;
+      customConfig =
+        {
+          config,
+          lib,
+          pkgs,
+        }:
+        {
+          # System-level OBS configuration
+          # Pass null as package since our sandboxed package is already in systemPackages
+          # Plugins are configured outside this module
+          programs.obs-studio = {
+            enable = true;
+            enableVirtualCamera = true;
+            package = null;
+          };
         };
-      };
     };
   }
 )

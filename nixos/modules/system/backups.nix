@@ -1,5 +1,10 @@
 # Backup configuration using Borgmatic
-{ config, lib, pkgs, ... }:
+{
+  config,
+  lib,
+  pkgs,
+  ...
+}:
 let
   cfg = config.modules.system.backups;
 in

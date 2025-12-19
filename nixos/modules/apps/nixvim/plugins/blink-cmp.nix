@@ -3,7 +3,10 @@
 {
   plugins.blink-cmp = {
     enable = true;
-    lazyLoad.settings.event = [ "InsertEnter" "CmdlineEnter" ];
+    lazyLoad.settings.event = [
+      "InsertEnter"
+      "CmdlineEnter"
+    ];
     settings = {
       keymap.preset = "enter";
       appearance.nerd_font_variant = "mono";

@@ -9,32 +9,71 @@
 
     # LSP keymaps (set on LspAttach)
     keymaps = [
-      { key = "grn"; lspBufAction = "rename"; }
-      { key = "gra"; lspBufAction = "code_action"; }
-      { key = "grD"; lspBufAction = "declaration"; }
+      {
+        key = "grn";
+        lspBufAction = "rename";
+      }
+      {
+        key = "gra";
+        lspBufAction = "code_action";
+      }
+      {
+        key = "grD";
+        lspBufAction = "declaration";
+      }
     ];
   };
 
   # Additional LSP keybindings using nixvim keymaps
   keymaps = [
     # Snacks picker integrations for LSP
-    { mode = "n"; key = "grr"; action.__raw = "function() Snacks.picker.lsp_references() end"; options.desc = "LSP: [G]oto [R]eferences"; }
-    { mode = "n"; key = "gri"; action.__raw = "function() Snacks.picker.lsp_implementations() end"; options.desc = "LSP: [G]oto [I]mplementation"; }
-    { mode = "n"; key = "grd"; action.__raw = "function() Snacks.picker.lsp_definitions() end"; options.desc = "LSP: [G]oto [D]efinition"; }
-    { mode = "n"; key = "gO"; action.__raw = "function() Snacks.picker.lsp_symbols() end"; options.desc = "LSP: Open Document Symbols"; }
-    { mode = "n"; key = "gW"; action.__raw = "function() Snacks.picker.lsp_workspace_symbols() end"; options.desc = "LSP: Open Workspace Symbols"; }
-    { mode = "n"; key = "grt"; action.__raw = "function() Snacks.picker.lsp_type_definitions() end"; options.desc = "LSP: [G]oto [T]ype Definition"; }
-    
+    {
+      mode = "n";
+      key = "grr";
+      action.__raw = "function() Snacks.picker.lsp_references() end";
+      options.desc = "LSP: [G]oto [R]eferences";
+    }
+    {
+      mode = "n";
+      key = "gri";
+      action.__raw = "function() Snacks.picker.lsp_implementations() end";
+      options.desc = "LSP: [G]oto [I]mplementation";
+    }
+    {
+      mode = "n";
+      key = "grd";
+      action.__raw = "function() Snacks.picker.lsp_definitions() end";
+      options.desc = "LSP: [G]oto [D]efinition";
+    }
+    {
+      mode = "n";
+      key = "gO";
+      action.__raw = "function() Snacks.picker.lsp_symbols() end";
+      options.desc = "LSP: Open Document Symbols";
+    }
+    {
+      mode = "n";
+      key = "gW";
+      action.__raw = "function() Snacks.picker.lsp_workspace_symbols() end";
+      options.desc = "LSP: Open Workspace Symbols";
+    }
+    {
+      mode = "n";
+      key = "grt";
+      action.__raw = "function() Snacks.picker.lsp_type_definitions() end";
+      options.desc = "LSP: [G]oto [T]ype Definition";
+    }
+
     # Inlay hints toggle
-    { 
-      mode = "n"; 
-      key = "<leader>th"; 
+    {
+      mode = "n";
+      key = "<leader>th";
       action.__raw = ''
         function()
           vim.lsp.inlay_hint.enable(not vim.lsp.inlay_hint.is_enabled({ bufnr = 0 }))
         end
-      ''; 
-      options.desc = "LSP: [T]oggle Inlay [H]ints"; 
+      '';
+      options.desc = "LSP: [T]oggle Inlay [H]ints";
     }
   ];
 

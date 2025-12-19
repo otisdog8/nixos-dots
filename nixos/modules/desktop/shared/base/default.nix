@@ -1,5 +1,11 @@
 # Base desktop configuration - audio, bluetooth, graphics, core utilities
-{ config, lib, pkgs, username, ... }:
+{
+  config,
+  lib,
+  pkgs,
+  username,
+  ...
+}:
 let
   cfg = config.modules.desktop.shared.base;
 in

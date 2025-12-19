@@ -1,5 +1,10 @@
 # Audio configuration via PipeWire
-{ config, lib, pkgs, ... }:
+{
+  config,
+  lib,
+  pkgs,
+  ...
+}:
 let
   cfg = config.modules.desktop.shared.base.audio;
 in

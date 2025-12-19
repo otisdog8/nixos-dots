@@ -7,10 +7,10 @@
       event = "BufWritePre";
       cmd = "ConformInfo";
     };
-    
+
     settings = {
       notify_on_error = false;
-      
+
       format_on_save.__raw = ''
         function(bufnr)
           -- Disable format_on_save for specific filetypes
@@ -25,7 +25,7 @@
           end
         end
       '';
-      
+
       formatters_by_ft = {
         lua = [ "stylua" ];
         nix = [ "nixfmt" ];

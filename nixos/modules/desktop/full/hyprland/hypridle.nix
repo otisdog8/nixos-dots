@@ -1,5 +1,11 @@
 # Hypridle idle management configuration
-{ config, lib, pkgs, username, ... }:
+{
+  config,
+  lib,
+  pkgs,
+  username,
+  ...
+}:
 let
   cfg = config.modules.desktop.full.hyprland.hypridle;
 in

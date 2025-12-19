@@ -1,5 +1,11 @@
 # CLI tools and shell configuration
-{ config, lib, pkgs, username, ... }:
+{
+  config,
+  lib,
+  pkgs,
+  username,
+  ...
+}:
 let
   cfg = config.modules.system.cli;
 in

@@ -37,49 +37,49 @@
     persistence.user = {
       persist = lib.mkOption {
         type = lib.types.listOf lib.types.str;
-        default = [];
+        default = [ ];
         description = "User paths for /persist (mutable config/data)";
       };
 
       persistFiles = lib.mkOption {
         type = lib.types.listOf lib.types.str;
-        default = [];
+        default = [ ];
         description = "User file paths for /persist (mutable config/data files)";
       };
 
       large = lib.mkOption {
         type = lib.types.listOf lib.types.str;
-        default = [];
+        default = [ ];
         description = "User paths for /large (large persistent data)";
       };
 
       largeFiles = lib.mkOption {
         type = lib.types.listOf lib.types.str;
-        default = [];
+        default = [ ];
         description = "User file paths for /large (large persistent data files)";
       };
 
       cache = lib.mkOption {
         type = lib.types.listOf lib.types.str;
-        default = [];
+        default = [ ];
         description = "User paths for cache (ephemeral, can be cleared)";
       };
 
       cacheFiles = lib.mkOption {
         type = lib.types.listOf lib.types.str;
-        default = [];
+        default = [ ];
         description = "User file paths for cache (ephemeral, can be cleared)";
       };
 
       baked = lib.mkOption {
         type = lib.types.listOf lib.types.str;
-        default = [];
+        default = [ ];
         description = "User paths for /baked (immutable setup-time data)";
       };
 
       bakedFiles = lib.mkOption {
         type = lib.types.listOf lib.types.str;
-        default = [];
+        default = [ ];
         description = "User file paths for /baked (immutable setup-time data)";
       };
     };
@@ -88,25 +88,25 @@
     persistence.system = {
       persist = lib.mkOption {
         type = lib.types.listOf lib.types.str;
-        default = [];
+        default = [ ];
         description = "System paths for /persist";
       };
 
       large = lib.mkOption {
         type = lib.types.listOf lib.types.str;
-        default = [];
+        default = [ ];
         description = "System paths for /large";
       };
 
       cache = lib.mkOption {
         type = lib.types.listOf lib.types.str;
-        default = [];
+        default = [ ];
         description = "System paths for cache (ephemeral, can be cleared)";
       };
 
       baked = lib.mkOption {
         type = lib.types.listOf lib.types.str;
-        default = [];
+        default = [ ];
         description = "System paths for /baked";
       };
     };
@@ -115,7 +115,7 @@
     # Features and apps add modules to this list, which are composed by nixpak's module system
     nixpakModules = lib.mkOption {
       type = lib.types.listOf lib.types.deferredModule;
-      default = [];
+      default = [ ];
       description = ''
         List of nixpak modules to compose for sandboxing.
 
@@ -161,7 +161,7 @@
     # Apps set this to declare their own options
     customOptions = lib.mkOption {
       type = lib.types.raw;
-      default = config: {};
+      default = config: { };
       description = ''
         Function that takes the full system config and returns an attrset of option declarations.
         These will be merged into the final app module options.
@@ -183,7 +183,13 @@
     # Additional NixOS configuration to merge into the final module
     customConfig = lib.mkOption {
       type = lib.types.raw;
-      default = { config, lib, pkgs }: {};
+      default =
+        {
+          config,
+          lib,
+          pkgs,
+        }:
+        { };
       description = ''
         Function that takes {config, lib, pkgs} and returns additional NixOS configuration.
         This is merged into the final module's config section.

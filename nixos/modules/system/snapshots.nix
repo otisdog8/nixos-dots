@@ -1,5 +1,10 @@
 # BTRFS snapshot configuration using btrbk
-{ config, lib, pkgs, ... }:
+{
+  config,
+  lib,
+  pkgs,
+  ...
+}:
 let
   cfg = config.modules.system.snapshots;
 in
@@ -21,7 +26,11 @@ in
 
     subvolumes = lib.mkOption {
       type = lib.types.listOf lib.types.str;
-      default = [ "persist" "large" "dots" ];
+      default = [
+        "persist"
+        "large"
+        "dots"
+      ];
       description = "Subvolumes to snapshot";
     };
 
@@ -56,7 +65,10 @@ in
               "${cfg.btrfsRoot}" = {
                 snapshot_dir = cfg.snapshotDir;
                 subvolume = builtins.listToAttrs (
-                  map (sv: { name = sv; value = { }; }) cfg.subvolumes
+                  map (sv: {
+                    name = sv;
+                    value = { };
+                  }) cfg.subvolumes
                 );
               };
             };

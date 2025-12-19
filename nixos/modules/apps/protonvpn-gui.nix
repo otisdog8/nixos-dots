@@ -1,7 +1,13 @@
 # ProtonVPN GUI - VPN client
 
 (import ../../../lib/apps.nix).mkApp (
-  { config, lib, pkgs, ... }: {
+  {
+    config,
+    lib,
+    pkgs,
+    ...
+  }:
+  {
     imports = [
       ../../../lib/features/gui.nix
       ../../../lib/features/network.nix

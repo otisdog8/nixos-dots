@@ -1,5 +1,10 @@
 # Laptop-specific configuration - power management, battery, thermals
-{ config, lib, pkgs, ... }:
+{
+  config,
+  lib,
+  pkgs,
+  ...
+}:
 let
   cfg = config.modules.system.laptop;
 in

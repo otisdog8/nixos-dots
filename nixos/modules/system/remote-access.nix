@@ -1,5 +1,11 @@
 # Remote access configuration - SSH, Tailscale
-{ config, lib, pkgs, username, ... }:
+{
+  config,
+  lib,
+  pkgs,
+  username,
+  ...
+}:
 let
   cfg = config.modules.system.remote-access;
 

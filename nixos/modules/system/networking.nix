@@ -1,5 +1,10 @@
 # Networking configuration - NetworkManager, DHCP
-{ config, lib, pkgs, ... }:
+{
+  config,
+  lib,
+  pkgs,
+  ...
+}:
 {
   networking.useDHCP = lib.mkDefault true;
   networking.networkmanager = {

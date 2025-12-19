@@ -1,5 +1,11 @@
 # ydotool - Generic Linux command-line automation tool
-{ config, lib, pkgs, username, ... }:
+{
+  config,
+  lib,
+  pkgs,
+  username,
+  ...
+}:
 {
   programs.ydotool.enable = true;
 
@@ -7,7 +13,10 @@
   users.groups.hidraw = { };
 
   # Add user to necessary groups for ydotool
-  users.users.${username}.extraGroups = [ "ydotool" "hidraw" ];
+  users.users.${username}.extraGroups = [
+    "ydotool"
+    "hidraw"
+  ];
 
   # Provide custom udev rules for hidraw devices
   services.udev.extraRules = ''

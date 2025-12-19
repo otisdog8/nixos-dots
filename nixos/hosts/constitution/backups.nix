@@ -8,6 +8,10 @@
   # Enable BTRFS snapshots with btrbk
   modules.system.snapshots = {
     enable = true;
-    subvolumes = [ "persist" "large" "dots" ];
+    subvolumes = [
+      "persist"
+      "large"
+      "dots"
+    ];
   };
 }

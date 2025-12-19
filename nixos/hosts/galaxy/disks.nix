@@ -47,7 +47,7 @@ _: {
       "subvol=baked"
       "compress=zstd"
       "noatime"
-      "ro"  # Read-only mount
+      "ro" # Read-only mount
     ];
     neededForBoot = true;
   };

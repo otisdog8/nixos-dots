@@ -1,5 +1,10 @@
 # Minimal display manager configuration
-{ config, lib, pkgs, ... }:
+{
+  config,
+  lib,
+  pkgs,
+  ...
+}:
 let
   cfg = config.modules.desktop.minimal.display-manager;
 in

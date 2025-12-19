@@ -1,5 +1,12 @@
 # Waybar configuration for Hyprland
-{ config, lib, pkgs, username, inputs, ... }:
+{
+  config,
+  lib,
+  pkgs,
+  username,
+  inputs,
+  ...
+}:
 let
   cfg = config.modules.desktop.full.hyprland.waybar;
   betterTransition = "all 0.3s cubic-bezier(.55,-0.68,.48,1.682)";

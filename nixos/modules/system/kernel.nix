@@ -1,5 +1,10 @@
 # Kernel configuration - packages, parameters, modules, firmware
-{ config, lib, pkgs, ... }:
+{
+  config,
+  lib,
+  pkgs,
+  ...
+}:
 {
   boot.kernelPackages = pkgs.linuxPackages_latest;
   boot.initrd.systemd.enable = true;

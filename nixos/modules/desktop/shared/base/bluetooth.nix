@@ -1,5 +1,10 @@
 # Bluetooth configuration
-{ config, lib, pkgs, ... }:
+{
+  config,
+  lib,
+  pkgs,
+  ...
+}:
 let
   cfg = config.modules.desktop.shared.base.bluetooth;
 in

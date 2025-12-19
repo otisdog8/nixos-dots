@@ -1,7 +1,13 @@
 # Obsidian note-taking application
 
 (import ../../../lib/apps.nix).mkApp (
-  { config, lib, pkgs, ... }: {
+  {
+    config,
+    lib,
+    pkgs,
+    ...
+  }:
+  {
     imports = [
       ../../../lib/features/chromium.nix
       ../../../lib/features/needs-gpu.nix
@@ -26,11 +32,17 @@
         };
       };
 
-      customConfig = { config, lib, pkgs }: {
-        modules.apps.obsidian.sandbox.extraBinds = lib.mkIf
-          (config.modules.apps.obsidian.sandbox.enable)
-          [ config.modules.apps.obsidian.vaultPath ];
-      };
+      customConfig =
+        {
+          config,
+          lib,
+          pkgs,
+        }:
+        {
+          modules.apps.obsidian.sandbox.extraBinds = lib.mkIf (config.modules.apps.obsidian.sandbox.enable) [
+            config.modules.apps.obsidian.vaultPath
+          ];
+        };
     };
   }
 )

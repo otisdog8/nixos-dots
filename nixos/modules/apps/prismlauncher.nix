@@ -1,7 +1,13 @@
 # PrismLauncher - Minecraft launcher
 
 (import ../../../lib/apps.nix).mkApp (
-  { config, lib, pkgs, ... }: {
+  {
+    config,
+    lib,
+    pkgs,
+    ...
+  }:
+  {
     imports = [
       ../../../lib/features/gui.nix
       ../../../lib/features/needs-gpu.nix
@@ -32,30 +38,33 @@
 
       # Additional sandbox configuration
       nixpakModules = [
-        ({ lib, sloth, ... }: {
-          # Flatpak app ID
-          flatpak.appId = "org.prismlauncher.PrismLauncher";
+        (
+          { lib, sloth, ... }:
+          {
+            # Flatpak app ID
+            flatpak.appId = "org.prismlauncher.PrismLauncher";
 
-          bubblewrap = {
-            bind.rw = [
-              # Sysfs for GPU detection
-              "/sys/dev/char"
-              "/sys/devices"
-            ];
+            bubblewrap = {
+              bind.rw = [
+                # Sysfs for GPU detection
+                "/sys/dev/char"
+                "/sys/devices"
+              ];
 
-            bind.ro = [
-              # System binaries (for Java detection)
-              "/run/current-system/sw/bin"
-              "/etc/profiles/per-user"
-              "/nix/var/nix/profiles"
-            ];
+              bind.ro = [
+                # System binaries (for Java detection)
+                "/run/current-system/sw/bin"
+                "/etc/profiles/per-user"
+                "/nix/var/nix/profiles"
+              ];
 
-            bind.dev = [
-              # Input devices (for controllers)
-              "/dev/input"
-            ];
-          };
-        })
+              bind.dev = [
+                # Input devices (for controllers)
+                "/dev/input"
+              ];
+            };
+          }
+        )
       ];
     };
   }

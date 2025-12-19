@@ -1,5 +1,10 @@
 # AMD GPU configuration
-{ config, lib, pkgs, ... }:
+{
+  config,
+  lib,
+  pkgs,
+  ...
+}:
 let
   cfg = config.modules.system.hardware.amd;
 in
