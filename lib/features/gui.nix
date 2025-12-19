@@ -18,7 +18,6 @@
         # System integration
         fonts.enable = true;
         locale.enable = true;
-        etc.sslCertificates.enable = true;
 
         # Bubblewrap sandbox configuration
         bubblewrap = {

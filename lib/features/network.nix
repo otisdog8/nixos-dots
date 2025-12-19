@@ -7,6 +7,7 @@
   config.app.nixpakModules = [
     ({ config, lib, ... }: {
       bubblewrap.network = true;
+      etc.sslCertificates.enable = true;
     })
   ];
 }
