@@ -56,14 +56,16 @@ helper.mkApp (
                   (sloth.concat' sloth.homeDir "/.local/share/opencode")
                   (sloth.concat' sloth.homeDir "/.config/opencode")
                   (sloth.concat' sloth.homeDir "/.opencode")
+                  (sloth.concat' sloth.homeDir "/.cache/opencode")
+                  # Git repositories and operations
+                  (sloth.concat' sloth.homeDir "/.gitconfig") # Git configuration file (for git config --global)
+                  (sloth.concat' sloth.homeDir "/.config/git") # Git configuration directory
                 ];
                 ro = [
                   "/nix" # Required for nixd LSP to access nix store and evaluate nix expressions
                   "/etc/nix" # Required for nixd LSP to access nix configuration
                   "/etc/static/nix" # Required for nixd LSP to access nix configuration
-                  (sloth.concat' sloth.homeDir "/.gitconfig") # Git configuration
-                  # OpenCode cache directory (read-only)
-                  (sloth.concat' sloth.homeDir "/.cache/opencode")
+                  "/etc/gitconfig" # System git configuration
                 ];
                 lastArg = true;
               };

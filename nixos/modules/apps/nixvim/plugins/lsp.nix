@@ -5,7 +5,12 @@
 
   lsp = {
     inlayHints.enable = true;
-    servers.nixd.enable = true;
+    servers = {
+      nixd.enable = true;
+      yamlls.enable = true;
+      bashls.enable = true;
+      marksman.enable = true;
+    };
   };
 
   # LSP keybindings

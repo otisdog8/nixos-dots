@@ -10,6 +10,9 @@
 
     lintersByFt = {
       markdown = [ "markdownlint" ];
+      yaml = [ "yamllint" ];
+      sh = [ "shellcheck" ];
+      bash = [ "shellcheck" ];
       nix = [ "statix" ];
       # Add other linters as needed
       # python = [ "pylint" ];

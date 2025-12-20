@@ -29,6 +29,10 @@
       formatters_by_ft = {
         lua = [ "stylua" ];
         nix = [ "nixfmt" ];
+        yaml = [ "yamlfmt" ];
+        sh = [ "shfmt" ];
+        bash = [ "shfmt" ];
+        markdown = [ "markdownlint" ];
         # Add more formatters as needed
         # python = [ "isort" "black" ];
         # javascript = {

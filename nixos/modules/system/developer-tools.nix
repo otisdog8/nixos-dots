@@ -41,6 +41,11 @@ in
         shellcheck
         shfmt
 
+        # YAML/Markdown tools
+        yamlfmt
+        yamllint
+        nodePackages.markdownlint-cli
+
         # Nix development
         nixd
         nixfmt-rfc-style
