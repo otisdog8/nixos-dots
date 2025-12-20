@@ -15,7 +15,7 @@ in
   programs = {
     git = {
       enable = true;
-      signing.signByDefault = false;
+      signing.signByDefault = true;
       lfs.enable = true;
       signing.key = "~/.ssh/id_ed25519.pub";
       settings = {
@@ -80,5 +80,18 @@ in
 
   home.file.".profile".text = ''
     export SSH_AUTH_SOCK=$XDG_RUNTIME_DIR/ssh-agent
+  '';
+
+  home.activation.fixSshConfigPermissions = lib.hm.dag.entryAfter [ "writeBoundary" ] ''
+    run mkdir -p "$HOME/.ssh"
+    run chmod 700 "$HOME/.ssh"
+
+    if [ -L "$HOME/.ssh/config" ]; then
+      src="$(readlink -f "$HOME/.ssh/config")"
+      if [ -f "$src" ]; then
+        run rm -f "$HOME/.ssh/config"
+        run install -m600 "$src" "$HOME/.ssh/config"
+      fi
+    fi
   '';
 }

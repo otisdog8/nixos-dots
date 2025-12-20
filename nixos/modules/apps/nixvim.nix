@@ -65,6 +65,7 @@ helper.mkApp (
                   "/nix" # Required for nixd LSP to access nix store and evaluate nix expressions
                   "/etc/nix" # Required for nixd LSP to access nix configuration
                   "/etc/static/nix" # Required for nixd LSP to access nix configuration
+                  "/etc/passwd" # Required for nixd LSP to access nix configuration
                 ];
                 lastArg = true;
               };
