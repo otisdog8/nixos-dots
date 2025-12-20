@@ -51,11 +51,19 @@ helper.mkApp (
               bind = {
                 rw = [
                   (sloth.concat' (sloth.envOr "XDG_RUNTIME_DIR" "/") "/wayland-1")
+                  # OpenCode state directories (required for ACP integration)
+                  (sloth.concat' sloth.homeDir "/.local/state/opencode")
+                  (sloth.concat' sloth.homeDir "/.local/share/opencode")
+                  (sloth.concat' sloth.homeDir "/.config/opencode")
+                  (sloth.concat' sloth.homeDir "/.opencode")
                 ];
                 ro = [
                   "/nix" # Required for nixd LSP to access nix store and evaluate nix expressions
                   "/etc/nix" # Required for nixd LSP to access nix configuration
                   "/etc/static/nix" # Required for nixd LSP to access nix configuration
+                  (sloth.concat' sloth.homeDir "/.gitconfig") # Git configuration
+                  # OpenCode cache directory (read-only)
+                  (sloth.concat' sloth.homeDir "/.cache/opencode")
                 ];
                 lastArg = true;
               };

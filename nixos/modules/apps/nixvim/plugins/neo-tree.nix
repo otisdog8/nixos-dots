@@ -4,11 +4,11 @@
   plugins.neo-tree = {
     enable = true;
     lazyLoad.settings.cmd = "Neotree";
-    
+
     settings = {
       close_if_last_window = false;
       popup_border_style = "rounded";
-      
+
       filesystem = {
         window = {
           mappings = {
@@ -21,14 +21,14 @@
         };
         use_libuv_file_watcher = true;
       };
-      
+
       window = {
         position = "left";
         width = 30;
       };
     };
   };
-  
+
   # Keybindings
   keymaps = [
     {

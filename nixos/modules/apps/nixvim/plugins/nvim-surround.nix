@@ -4,7 +4,7 @@
   plugins.nvim-surround = {
     enable = true;
     lazyLoad.settings.event = "VimEnter";
-    
+
     settings = {
       # Keep default keymaps
       keymaps = {
@@ -20,15 +20,27 @@
         change = "cs";
         change_line = "cS";
       };
-      
+
       # Keep default aliases
       aliases = {
         a = ">";
         b = ")";
         B = "}";
         r = "]";
-        q = [ "\"" "'" "`" ];
-        s = [ "}" "]" ")" ">" "\"" "'" "`" ];
+        q = [
+          "\""
+          "'"
+          "`"
+        ];
+        s = [
+          "}"
+          "]"
+          ")"
+          ">"
+          "\""
+          "'"
+          "`"
+        ];
       };
     };
   };

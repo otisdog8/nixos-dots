@@ -7,12 +7,12 @@
       "InsertLeave"
       "TextChanged"
     ];
-    
+
     settings = {
       enabled = true;
       debounce_delay = 1000;
       write_all_buffers = false;
-      
+
       # Don't save special buffers
       condition = lib.nixvim.mkRaw ''
         function(buf)

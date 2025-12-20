@@ -14,7 +14,7 @@
 
   plugins.indent-blankline = {
     enable = true;
-    
+
     settings = {
       indent = {
         highlight = [
@@ -33,7 +33,10 @@
         show_end = false;
       };
       exclude = {
-        buftypes = [ "terminal" "nofile" ];
+        buftypes = [
+          "terminal"
+          "nofile"
+        ];
         filetypes = [
           "help"
           "alpha"
@@ -52,7 +55,7 @@
 
   # Update highlight groups when colorscheme changes and register hooks
   autoGroups.ibl_rainbow_setup.clear = true;
-  
+
   autoCmd = [
     {
       event = "ColorScheme";
@@ -86,7 +89,7 @@
       '';
     }
   ];
-  
+
   # Toggle keymap
   keymaps = [
     {

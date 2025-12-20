@@ -10,12 +10,12 @@
       input.enabled = true;
       bigfile.enabled = true;
       dashboard.enabled = true;
-      
+
       # Bigfile optimization settings
       bigfile = {
         notify = true; # Show notification when big file is detected
         size = 1024 * 1024; # 1MB threshold
-        
+
         # Disable heavy features for big files
         setup = lib.nixvim.mkRaw ''
           function(ctx)
@@ -45,17 +45,47 @@
           end
         '';
       };
-      
+
       # Dashboard configuration - "files" example
       dashboard = {
         preset = {
           keys = [
-            { icon = " "; key = "f"; desc = "Find File"; action = lib.nixvim.mkRaw ''function() Snacks.dashboard.pick('files') end''; }
-            { icon = " "; key = "n"; desc = "New File"; action = ":ene | startinsert"; }
-            { icon = " "; key = "g"; desc = "Find Text"; action = lib.nixvim.mkRaw ''function() Snacks.dashboard.pick('live_grep') end''; }
-            { icon = " "; key = "r"; desc = "Recent Files"; action = lib.nixvim.mkRaw ''function() Snacks.dashboard.pick('oldfiles') end''; }
-            { icon = " "; key = "c"; desc = "Config"; action = lib.nixvim.mkRaw ''function() Snacks.dashboard.pick('files', {cwd = vim.fn.stdpath('config')}) end''; }
-            { icon = " "; key = "q"; desc = "Quit"; action = ":qa"; }
+            {
+              icon = " ";
+              key = "f";
+              desc = "Find File";
+              action = lib.nixvim.mkRaw ''function() Snacks.dashboard.pick('files') end'';
+            }
+            {
+              icon = " ";
+              key = "n";
+              desc = "New File";
+              action = ":ene | startinsert";
+            }
+            {
+              icon = " ";
+              key = "g";
+              desc = "Find Text";
+              action = lib.nixvim.mkRaw ''function() Snacks.dashboard.pick('live_grep') end'';
+            }
+            {
+              icon = " ";
+              key = "r";
+              desc = "Recent Files";
+              action = lib.nixvim.mkRaw ''function() Snacks.dashboard.pick('oldfiles') end'';
+            }
+            {
+              icon = " ";
+              key = "c";
+              desc = "Config";
+              action = lib.nixvim.mkRaw ''function() Snacks.dashboard.pick('files', {cwd = vim.fn.stdpath('config')}) end'';
+            }
+            {
+              icon = " ";
+              key = "q";
+              desc = "Quit";
+              action = ":qa";
+            }
           ];
           header = ''
             ███╗   ██╗███████╗ ██████╗ ██╗   ██╗██╗███╗   ███╗
@@ -67,9 +97,27 @@
         };
         sections = [
           { section = "header"; }
-          { section = "keys"; gap = 1; }
-          { icon = " "; title = "Recent Files"; section = "recent_files"; indent = 2; padding = { __unkeyed-1 = 2; __unkeyed-2 = 2; }; }
-          { icon = " "; title = "Projects"; section = "projects"; indent = 2; padding = 2; }
+          {
+            section = "keys";
+            gap = 1;
+          }
+          {
+            icon = " ";
+            title = "Recent Files";
+            section = "recent_files";
+            indent = 2;
+            padding = {
+              __unkeyed-1 = 2;
+              __unkeyed-2 = 2;
+            };
+          }
+          {
+            icon = " ";
+            title = "Projects";
+            section = "projects";
+            indent = 2;
+            padding = 2;
+          }
         ];
       };
     };

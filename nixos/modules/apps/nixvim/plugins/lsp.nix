@@ -17,15 +17,18 @@
       action.__raw = "vim.lsp.buf.rename";
       options.desc = "LSP: [R]e[n]ame";
     }
-    
+
     # Code action (normal and visual mode)
     {
-      mode = [ "n" "x" ];
+      mode = [
+        "n"
+        "x"
+      ];
       key = "gra";
       action.__raw = "vim.lsp.buf.code_action";
       options.desc = "LSP: [G]oto Code [A]ction";
     }
-    
+
     # Declaration
     {
       mode = "n";
@@ -33,7 +36,7 @@
       action.__raw = "vim.lsp.buf.declaration";
       options.desc = "LSP: [G]oto [D]eclaration";
     }
-    
+
     # Snacks picker integrations for LSP
     {
       mode = "n";

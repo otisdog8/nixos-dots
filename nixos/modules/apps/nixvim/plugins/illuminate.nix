@@ -3,10 +3,13 @@
 {
   plugins.illuminate = {
     enable = true;
-    
+
     # Lazy load on buffer read
-    lazyLoad.settings.event = [ "BufReadPost" "BufNewFile" ];
-    
+    lazyLoad.settings.event = [
+      "BufReadPost"
+      "BufNewFile"
+    ];
+
     settings = {
       # Providers: ordered by priority
       providers = [
@@ -14,16 +17,16 @@
         "treesitter"
         "regex"
       ];
-      
+
       # Delay in milliseconds before highlighting
       delay = 200;
-      
+
       # Large file handling
       large_file_cutoff = 10000;
       large_file_overrides = {
         providers = [ "lsp" ];
       };
-      
+
       # Filetypes to exclude
       filetypes_denylist = [
         "dirbuf"
@@ -39,15 +42,15 @@
         "notify"
         "toggleterm"
       ];
-      
+
       # Highlight word under cursor
       under_cursor = true;
-      
+
       # Minimum number of matches to highlight
       min_count_to_highlight = 1;
     };
   };
-  
+
   # Navigation keymaps for references
   keymaps = [
     {
@@ -71,7 +74,7 @@
       options.desc = "Prev Reference";
     }
   ];
-  
+
   # Also set keymaps after loading ftplugins, since many overwrite [[ and ]]
   autoCmd = [
     {

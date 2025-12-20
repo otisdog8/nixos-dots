@@ -3,31 +3,31 @@
 {
   plugins.auto-session = {
     enable = true;
-    
+
     settings = {
       # Use git branch name in session names
       git_use_branch_name = true;
       git_auto_restore_on_branch_change = false;
-      
+
       # Keep default behavior for most settings
       enabled = true;
       auto_save = true;
       auto_restore = true;
       auto_create = true;
       auto_restore_last_session = false;
-      
+
       # Suppress in common directories
       suppressed_dirs = [
         "~/"
         "~/Downloads"
         "/"
       ];
-      
+
       log_level = "error";
       show_auto_restore_notif = false;
     };
   };
-  
+
   # Keybindings
   keymaps = [
     {
