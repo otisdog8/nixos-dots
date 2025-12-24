@@ -38,6 +38,7 @@
 
   imports = [
     ./disks.nix
+    ./garage.nix
     ./minecraft.nix
     ./media.nix
     ./secrets.nix
@@ -71,4 +72,7 @@
   '';
 
   networking.firewall.allowedTCPPorts = [ 2049 ];
+
+  # Prometheus node exporter
+  services.prometheus.exporters.node.enable = true;
 }

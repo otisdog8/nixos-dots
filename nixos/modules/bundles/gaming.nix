@@ -10,6 +10,7 @@ in
     ../apps/lunar-client.nix
     ../apps/tetrio-desktop.nix
     ../apps/slipstream.nix
+    ../apps/r2modman.nix
   ];
 
   options.modules.bundles.gaming = {
@@ -50,6 +51,12 @@ in
       default = cfg.enable;
       description = "Enable Slipstream (FTL mod manager)";
     };
+
+    r2modman.enable = lib.mkOption {
+      type = lib.types.bool;
+      default = cfg.enable;
+      description = "Enable r2modman (game mod manager)";
+    };
   };
 
   config = lib.mkIf cfg.enable {
@@ -76,6 +83,11 @@ in
 
       slipstream = {
         inherit (cfg.slipstream) enable;
+        sandbox.enable = lib.mkDefault cfg.enableSandboxing;
+      };
+
+      r2modman = {
+        inherit (cfg.r2modman) enable;
         sandbox.enable = lib.mkDefault cfg.enableSandboxing;
       };
     };

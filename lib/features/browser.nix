@@ -35,6 +35,8 @@
             # Chromium-based browsers
             "org.chromium.Chromium.*" = "own";
             "com.brave.Browser.*" = "own";
+            # MPRIS media player controls (for playerctl, media keys, etc.)
+            "org.mpris.MediaPlayer2.*" = "own";
           };
         }
       )
