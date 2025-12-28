@@ -36,11 +36,16 @@
       # Enable input devices for game controllers
       nixpakModules = [
         (
-          { lib, ... }:
+          { lib, sloth, ... }:
           {
             bubblewrap.bind.dev = [
               "/dev/input"
               "/dev/uinput"
+            ];
+
+            bubblewrap.bind.rw = [
+              # r2modman mod data
+              (sloth.concat' sloth.homeDir "/.config/r2modmanPlus-local")
             ];
           }
         )
