@@ -78,5 +78,11 @@
   services.prometheus.exporters.smartctl = {
     enable = true;
     devices = [ ];
+    maxInterval = "5m"; # Cache results for 5 minutes (13 devices = slow cold scrapes)
   };
+
+  # Give disk group access to NVMe controller devices for smartctl
+  services.udev.extraRules = ''
+    SUBSYSTEM=="nvme", KERNEL=="nvme[0-9]*", GROUP="disk", MODE="0660"
+  '';
 }
