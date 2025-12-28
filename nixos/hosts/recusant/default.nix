@@ -73,6 +73,10 @@
 
   networking.firewall.allowedTCPPorts = [ 2049 ];
 
-  # Prometheus node exporter
+  # Prometheus exporters
   services.prometheus.exporters.node.enable = true;
+  services.prometheus.exporters.smartctl = {
+    enable = true;
+    devices = [ ];
+  };
 }
