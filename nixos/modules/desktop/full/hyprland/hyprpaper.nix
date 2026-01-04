@@ -22,8 +22,12 @@ in
       services.hyprpaper = {
         enable = true;
         settings = {
-          preload = "${inputs.self}/images/wallpaper.png";
-          wallpaper = ", ${inputs.self}/images/wallpaper.png";
+          wallpaper = [
+            {
+              monitor = "";
+              path = "${inputs.self}/images/wallpaper.png";
+            }
+          ];
         };
       };
     };

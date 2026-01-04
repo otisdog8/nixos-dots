@@ -36,9 +36,6 @@ in
   };
 
   config = lib.mkIf cfg.enable {
-    # Kubernetes requires swap to be disabled
-    swapDevices = lib.mkForce [ ];
-
     networking.firewall = {
       allowedTCPPorts = [
         4240 # cluster health checks (cilium-health)
