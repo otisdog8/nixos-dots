@@ -1,6 +1,9 @@
 # Snacks.nvim - picker and utilities
 { lib, ... }:
 {
+  # Prevent snacks from being combined to avoid query conflicts with nvim-treesitter
+  performance.combinePlugins.standalonePlugins = [ "snacks.nvim" ];
+
   plugins.snacks = {
     enable = true;
     settings = {
