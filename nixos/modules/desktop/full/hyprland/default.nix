@@ -91,6 +91,15 @@ in
           debug = {
             disable_logs = false;
           };
+          gesture = [
+            "3, horizontal, workspace"
+          ];
+          gestures = {
+            workspace_swipe_invert = false;
+          };
+          animation = [
+            "global, 0"
+          ];
           "$mod" = "SUPER";
           "$home" = "/home/${username}";
           binde = [
