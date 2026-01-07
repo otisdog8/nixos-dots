@@ -23,6 +23,7 @@
           # Browsers need access to downloads
           bubblewrap.bind.rw = [
             (sloth.concat' sloth.homeDir "/Downloads")
+            (sloth.concat' sloth.homeDir "/Documents/tthtml")
           ];
 
           # DBus policies for browser to advertise its remote control service
