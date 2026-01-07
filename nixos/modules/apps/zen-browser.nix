@@ -19,7 +19,7 @@
       name = "zen-browser";
       package = pkgs.zen-browser;
       packageName = "zen";
-      desktopFileName = "zen-beta.desktop";
+      desktopFileName = "zen-twilight.desktop";
 
       persistence.user.persist = [
         ".zen"
@@ -30,7 +30,7 @@
         (
           { lib, ... }:
           {
-            app.extraEntrypoints = [ "/bin/zen-beta" ];
+            app.extraEntrypoints = [ "/bin/zen-twilight" ];
           }
         )
       ];
