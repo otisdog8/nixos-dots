@@ -17,7 +17,7 @@ const int AVERAGE = 2;
 /**
  * Type of grayscale conversion.
  */
-const int Type = {{#nc}}{{type}} ? LUMINOSITY{{/nc}};
+const int Type = LUMINOSITY;
 
 // Enum for selecting luma coefficients
 const int PAL = 0;
@@ -28,7 +28,7 @@ const int HDR = 2;
  * Formula used to calculate relative luminance.
  * (Only applies when type = "luminosity".)
  */
-const int LuminosityType = {{#nc}}{{luminosity_type}} ? HDR{{/nc}};
+const int LuminosityType = HDR;
 
 void main() {
     vec4 pixColor = texture(tex, v_texcoord);
