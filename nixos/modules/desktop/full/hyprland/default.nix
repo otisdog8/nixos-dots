@@ -47,6 +47,7 @@ in
       brightnessctl
       hyprpolkitagent
       mako
+      hyprshade
       inputs.hyprland.packages."${pkgs.stdenv.hostPlatform.system}".hyprland
       xdg-desktop-portal-hyprland
       networkmanager-openvpn
@@ -77,6 +78,9 @@ in
       imports = [
         inputs.hyprland.homeManagerModules.default
       ];
+
+      # Hyprshade shaders
+      xdg.configFile."hypr/shaders/grayscale.glsl".source = ./shaders/grayscale.glsl;
 
       wayland.windowManager.hyprland = {
         enable = true;
@@ -122,6 +126,8 @@ in
             "$mod, s, togglefloating"
             "$mod, d, split:swapactiveworkspaces, current + 1"
             "$mod, g, split:grabroguewindows"
+            "$mod_SHIFT, g, exec, hyprshade toggle grayscale"
+            "$mod_SHIFT, b, exec, hyprshade toggle blue-light-filter"
             "$mod, r, layoutmsg, togglesplit"
             "$mod, w, exec, killall -SIGUSR1 waybar"
             "CTRL_SHIFT, Space, exec, grimblast --freeze copysave area"

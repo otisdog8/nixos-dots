@@ -42,6 +42,7 @@
     modules/system/laptop.nix
     modules/system/remote-access.nix
     modules/system/virt.nix
+    modules/system/hardware/openrazer.nix
 
     # Optional apps
     modules/apps/opencode.nix
@@ -59,6 +60,7 @@
       laptop.enable = lib.mkDefault false; # Only enable on laptops
       remote-access.enable = lib.mkDefault true;
       virt.enable = lib.mkDefault true;
+      hardware.openrazer.enable = lib.mkDefault true;
     };
     apps = {
       jellyfin.enable = lib.mkDefault false;
@@ -139,6 +141,7 @@
       "video"
       "libvirtd"
       "networkmanager"
+      "openrazer"
     ];
     packages = with pkgs; [
       tree
