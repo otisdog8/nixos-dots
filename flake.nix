@@ -8,7 +8,7 @@
   # inputs.c-hello.url = "path:../c-hello";
 
   inputs = {
-    nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable-small";
+    nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
     nix-bwrapper.url = "github:Naxdy/nix-bwrapper";
     nixpak = {
       url = "github:otisdog8/nixpak/sandbox-xdg-runtime-dir";
@@ -100,7 +100,7 @@
           username = "jrt";
         };
       };
-      
+
       nixosConfigurations = {
         constitution = helper.mkNixos {
           hostname = "constitution";
