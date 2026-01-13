@@ -139,6 +139,7 @@ in
             ",XF86AudioPlay, exec, playerctl play-pause"
             ",XF86AudioPrev, exec, playerctl previous"
             ",XF86AudioNext, exec, playerctl next"
+            "SHIFT, XF86AudioNext, exec, playerctl previous"
             ",XF86AudioMute, exec, wpctl set-mute @DEFAULT_AUDIO_SINK@ toggle"
           ]
           ++ (builtins.concatLists (
