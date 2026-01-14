@@ -10,6 +10,7 @@
       yamlls.enable = true;
       bashls.enable = true;
       marksman.enable = true;
+      verible.enable = true;
     };
   };
 
