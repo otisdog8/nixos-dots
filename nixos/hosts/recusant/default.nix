@@ -31,7 +31,7 @@
       "nvme_core.default_ps_max_latency_us=0"
       "pcie_aspm=off"
       "pcie_port_pm=off"
-      "usb-storage.quirks=2ce5:0014:u" # Disable UAS for AKiTiO NT2 enclosures
+      #"usb-storage.quirks=2ce5:0014:u" # Disable UAS for AKiTiO NT2 enclosures
     ];
 
     plymouth.enable = lib.mkForce false;

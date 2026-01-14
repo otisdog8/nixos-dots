@@ -8,7 +8,7 @@
 {
   boot = {
     kernelPackages = pkgs.linuxPackages_latest;
-    
+
     initrd = {
       systemd.enable = true;
       verbose = false;
@@ -16,7 +16,7 @@
         "xhci_pci"
         "thunderbolt"
         "nvme"
-        "usb_storage"
+        #"usb_storage"
         "sd_mod"
       ];
       kernelModules = [ ];
