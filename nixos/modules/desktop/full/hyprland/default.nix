@@ -48,6 +48,7 @@ in
       hyprpolkitagent
       mako
       hyprshade
+      psmisc
       inputs.hyprland.packages."${pkgs.stdenv.hostPlatform.system}".hyprland
       xdg-desktop-portal-hyprland
       networkmanager-openvpn

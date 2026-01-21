@@ -28,6 +28,7 @@ in
               path = "${inputs.self}/images/wallpaper.png";
             }
           ];
+          splash = false;
         };
       };
     };
