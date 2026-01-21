@@ -13,6 +13,7 @@
       verible.enable = true;
       ocamllsp.enable = true;
       ocamllsp.package = null;
+      basedpyright.enable = true;
     };
   };
 
