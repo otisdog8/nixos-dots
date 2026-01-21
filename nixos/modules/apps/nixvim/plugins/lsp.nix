@@ -11,6 +11,8 @@
       bashls.enable = true;
       marksman.enable = true;
       verible.enable = true;
+      ocamllsp.enable = true;
+      ocamllsp.package = null;
     };
   };
 
