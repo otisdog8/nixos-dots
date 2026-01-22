@@ -42,14 +42,14 @@ in
     # Create user and group
     users.users = lib.mkIf (cfg.user == "sabnzbd") {
       sabnzbd = {
-        uid = config.ids.uids.sabnzbd;
+        isSystemUser = true;
         group = cfg.group;
         description = "sabnzbd user";
       };
     };
 
     users.groups = lib.mkIf (cfg.group == "sabnzbd") {
-      sabnzbd.gid = config.ids.gids.sabnzbd;
+      sabnzbd = { };
     };
 
     # Custom sabnzbd systemd service
