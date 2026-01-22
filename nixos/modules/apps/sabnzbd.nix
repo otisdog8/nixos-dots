@@ -11,6 +11,9 @@ let
   sabnzbdCfg = config.services.sabnzbd;
 in
 {
+  # Disable the built-in NixOS sabnzbd module
+  disabledModules = [ "services/networking/sabnzbd.nix" ];
+
   options.modules.apps.${appName} = {
     enable = lib.mkEnableOption "SABnzbd usenet downloader";
     sandbox.enable = lib.mkEnableOption "sandboxing" // {
