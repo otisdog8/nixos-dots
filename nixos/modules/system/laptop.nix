@@ -39,9 +39,9 @@ in
         enable = true;
         settings = {
           CPU_SCALING_GOVERNOR_ON_AC = "performance";
-          CPU_SCALING_GOVERNOR_ON_BAT = "performance";
+          CPU_SCALING_GOVERNOR_ON_BAT = "powersave";
 
-          CPU_ENERGY_PERF_POLICY_ON_BAT = "performance";
+          CPU_ENERGY_PERF_POLICY_ON_BAT = "balance_power";
           CPU_ENERGY_PERF_POLICY_ON_AC = "performance";
 
           CPU_MIN_PERF_ON_AC = 0;
@@ -56,8 +56,11 @@ in
       };
 
       # Suspend on lid close when unplugged (hypridle file trigger)
+      # Disable USB/PCIe wakeup to prevent battery drain during suspend
       udev.extraRules = ''
         SUBSYSTEM=="power_supply", ATTR{online}=="0", RUN+="${pkgs.bash}/bin/bash -c \"cat /tmp/10midle && systemctl suspend\""
+        ACTION=="add", SUBSYSTEM=="usb", TEST=="power/wakeup", ATTR{power/wakeup}="disabled"
+        ACTION=="add", SUBSYSTEM=="pci", TEST=="power/wakeup", ATTR{power/wakeup}="disabled"
       '';
     };
 
