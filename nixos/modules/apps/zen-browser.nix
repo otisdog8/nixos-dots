@@ -30,7 +30,7 @@
         (
           { lib, ... }:
           {
-            app.extraEntrypoints = [ "/bin/zen-twilight" ];
+            app.extraEntrypoints = [ "/bin/zen-beta" ];
           }
         )
       ];

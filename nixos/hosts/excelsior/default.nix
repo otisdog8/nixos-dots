@@ -12,6 +12,8 @@
   time.timeZone = "America/Los_Angeles";
 
   boot.supportedFilesystems = [ "btrfs" ];
+  boot.blacklistedKernelModules = [ "amdgpu" ];
+  boot.kernelPackages = lib.mkOverride 50 pkgs.linuxPackages_6_18;
 
   imports = [
     ./disks.nix
