@@ -13,7 +13,7 @@
 
   boot.supportedFilesystems = [ "btrfs" ];
   boot.blacklistedKernelModules = [ "amdgpu" ];
-  boot.kernelPackages = lib.mkOverride 50 pkgs.linuxPackages_6_18;
+  #boot.kernelPackages = lib.mkOverride 50 pkgs.linuxPackages_6_18;
 
   imports = [
     ./disks.nix

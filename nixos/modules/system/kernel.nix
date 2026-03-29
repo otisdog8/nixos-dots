@@ -47,6 +47,7 @@
     kernel.sysctl = {
       "fs.suid_dumpable" = 0;
       "vm.swappiness" = 10;
+      "kernel.sysrq" = 1;
     };
   };
 
