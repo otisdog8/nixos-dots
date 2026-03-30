@@ -25,10 +25,16 @@
 
     # Desktop environment
     ../../modules/desktop/full
+
+    # Gaming bundle
+    ../../modules/bundles/gaming.nix
   ];
 
   # Enable full desktop environment
   modules.desktop.full.enable = true;
+
+  # Enable gaming bundle
+  modules.bundles.gaming.enable = true;
 
   # Enable laptop power management
   modules.system.laptop.enable = true;
