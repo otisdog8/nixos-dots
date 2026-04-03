@@ -6,6 +6,7 @@
   lsp = {
     inlayHints.enable = true;
     servers = {
+      clangd.enable = true;
       nixd.enable = true;
       yamlls.enable = true;
       bashls.enable = true;
