@@ -20,6 +20,9 @@ in
       systemPackages = with pkgs; [
         # Language tools
         python3
+        nodejs
+        corepack # pnpm/yarn version manager via Node.js
+        nodePackages.typescript
 
         # Build tools
         gnumake
@@ -56,6 +59,10 @@ in
         # Container tools
         dive
 
+        # JavaScript/TypeScript tools
+        prettierd
+        nodePackages.eslint
+
         # Environment management
         direnv
       ];
@@ -69,6 +76,7 @@ in
         users.${username} = {
           directories = [
             ".cargo" # Rust toolchain
+            ".local/share/pnpm" # pnpm global store
             ".local/share/direnv" # direnv cache
             ".config/github-copilot" # GitHub Copilot
             # .claude and .claude.json moved to modules/apps/claude-code.nix
@@ -81,6 +89,8 @@ in
         users.${username} = {
           directories = [
             ".cache/uv" # Python uv cache
+            ".npm" # npm cache
+            ".cache/pnpm" # pnpm cache
           ];
         };
       };

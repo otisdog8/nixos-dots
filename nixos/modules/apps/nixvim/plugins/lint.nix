@@ -14,10 +14,10 @@
       sh = [ "shellcheck" ];
       bash = [ "shellcheck" ];
       nix = [ "statix" ];
-      # Add other linters as needed
-      # python = [ "pylint" ];
-      # javascript = [ "eslint" ];
-      # typescript = [ "eslint" ];
+      javascript = [ "eslint" ];
+      javascriptreact = [ "eslint" ];
+      typescript = [ "eslint" ];
+      typescriptreact = [ "eslint" ];
     };
 
     # Disable the default autoCmd (we'll set it up in luaConfig.post)

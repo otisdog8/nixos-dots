@@ -15,6 +15,9 @@
       ocamllsp.enable = true;
       ocamllsp.package = null;
       basedpyright.enable = true;
+      ts_ls.enable = true;
+      tailwindcss.enable = true;
+      eslint.enable = true;
     };
   };
 
