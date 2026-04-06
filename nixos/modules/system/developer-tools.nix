@@ -22,7 +22,6 @@ in
         python3
         nodejs
         corepack # pnpm/yarn version manager via Node.js
-        nodePackages.typescript
 
         # Build tools
         gnumake
@@ -47,7 +46,7 @@ in
         # YAML/Markdown tools
         yamlfmt
         yamllint
-        nodePackages.markdownlint-cli
+        markdownlint-cli
 
         # Nix development
         nixd
@@ -61,7 +60,7 @@ in
 
         # JavaScript/TypeScript tools
         prettierd
-        nodePackages.eslint
+        eslint
 
         # Environment management
         direnv
