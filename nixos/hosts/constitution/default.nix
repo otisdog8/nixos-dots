@@ -23,6 +23,9 @@
     inputs.nixos-hardware.nixosModules.common-pc-laptop
     inputs.nixos-hardware.nixosModules.common-pc-laptop-ssd
 
+    # System modules
+    ../../modules/system/hardware/intel.nix
+
     # Desktop environment
     ../../modules/desktop/full
 
@@ -41,6 +44,12 @@
 
   hardware.cpu.intel.updateMicrocode = true;
   boot.kernelModules = [ "kvm-intel" ];
+
+  # Enable Intel iGPU (VA-API hardware video encode/decode)
+  modules.system.hardware.intel = {
+    enable = true;
+    enableCompute = true;
+  };
 
   networking.firewall.enable = lib.mkForce false;
 }
