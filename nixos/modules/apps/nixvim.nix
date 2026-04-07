@@ -46,6 +46,7 @@ helper.mkApp (
           {
             dbus.enable = false;
             bubblewrap = {
+              dieWithParent = true;
               sockets.wayland = false;
               tmpfs = [ "/tmp" ];
               bind = {

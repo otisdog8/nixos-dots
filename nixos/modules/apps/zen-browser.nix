@@ -19,7 +19,7 @@
       name = "zen-browser";
       package = pkgs.zen-browser;
       packageName = "zen";
-      desktopFileName = "zen-twilight.desktop";
+      desktopFileName = "zen-beta.desktop";
 
       persistence.user.persist = [
         ".zen"

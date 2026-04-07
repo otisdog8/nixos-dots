@@ -48,6 +48,7 @@
       "fs.suid_dumpable" = 0;
       "vm.swappiness" = 10;
       "kernel.sysrq" = 1;
+      "dev.tty.legacy_tiocsti" = 0;
     };
   };
 

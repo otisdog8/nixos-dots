@@ -8,7 +8,6 @@
       { lib, ... }:
       {
         # Bind hidraw devices for FIDO/U2F keys
-        # Note: Requires user to be in 'hidraw' group (configured in ydotool.nix)
         bubblewrap.bind.dev = [
           "/dev/hidraw0"
           "/dev/hidraw1"
@@ -20,6 +19,13 @@
           "/dev/hidraw7"
           "/dev/hidraw8"
           "/dev/hidraw9"
+        ];
+
+        # libudev needs these to enumerate and identify FIDO devices
+        bubblewrap.bind.ro = [
+          "/run/udev"
+          "/sys/class/hidraw"
+          "/sys/bus/hid"
         ];
       }
     )

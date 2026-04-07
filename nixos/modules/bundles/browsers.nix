@@ -9,6 +9,7 @@ in
     ../apps/firefox.nix
     ../apps/brave.nix
     ../apps/chromium.nix
+    ../apps/ungoogled-chromium.nix
   ];
 
   options.modules.bundles.browsers = {
@@ -34,16 +35,22 @@ in
 
     brave.enable = lib.mkOption {
       type = lib.types.bool;
-      default = true;
+      default = false;
       description = "Enable Brave";
     };
 
     chromium.enable = lib.mkOption {
       type = lib.types.bool;
-      default = true;
+      default = false;
       description = "Enable Chromium";
     };
-  };
+
+    ungoogled-chromium.enable = lib.mkOption {
+      type = lib.types.bool;
+      default = true;
+      description = "Enable Ungoogled Chromium (ephemeral, tmpfs homedir)";
+    };
+};
 
   config = lib.mkIf cfg.enable {
     modules.apps = {
@@ -66,6 +73,14 @@ in
       chromium = {
         inherit (cfg.chromium) enable;
         sandbox.enable = lib.mkDefault cfg.enableSandboxing;
+      };
+
+      ungoogled-chromium = {
+        inherit (cfg.ungoogled-chromium) enable;
+        sandbox.enable = lib.mkDefault cfg.enableSandboxing;
+        persistConfig = false;
+        persistData = false;
+        enableCache = false;
       };
     };
   };

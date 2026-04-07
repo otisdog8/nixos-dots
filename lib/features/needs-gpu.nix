@@ -24,6 +24,7 @@
           rw = [
             "/sys/dev/char"
             "/sys/devices"
+            "/sys/class/drm"
           ];
 
           # Read-only GPU-related paths (matching prismlauncher-sandboxed)
