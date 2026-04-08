@@ -102,6 +102,7 @@ in
     # Enable developer-facing apps by default
     modules.apps = {
       claude-code.enable = lib.mkDefault true;
+      codex.enable = lib.mkDefault true;
       gsd.enable = lib.mkDefault true;
       opencode.enable = lib.mkDefault true;
       nixvim.enable = lib.mkDefault true;
