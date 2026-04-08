@@ -28,6 +28,7 @@ in
         qt6.qtimageformats
         qt6.qt5compat
         kdePackages.qtstyleplugin-kvantum
+        sweet-nova
 
         # Icons and cursors
         candy-icons
