@@ -32,6 +32,7 @@
           {
             bubblewrap.bind.rw = [
               (sloth.env "PWD")
+              "/tmp"
             ];
           }
         )

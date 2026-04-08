@@ -64,6 +64,9 @@ in
 
         # Environment management
         direnv
+
+        # Sandboxing
+        bubblewrap
       ];
 
       variables = {
