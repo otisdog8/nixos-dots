@@ -45,6 +45,7 @@
     modules/system/hardware/openrazer.nix
 
     # Optional apps
+    modules/apps/gsd.nix
     modules/apps/opencode.nix
     modules/apps/claude-code.nix
     modules/apps/nixvim.nix
