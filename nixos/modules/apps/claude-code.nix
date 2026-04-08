@@ -38,6 +38,7 @@
                 (sloth.concat' sloth.homeDir "/.claude")
                 (sloth.concat' sloth.homeDir "/.claude.json")
                 (sloth.env "PWD")
+                "/tmp"
               ];
             };
           }
