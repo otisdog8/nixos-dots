@@ -113,6 +113,11 @@ in
           ];
           bind = [
             "SUPER, V, exec, cliphist list | fuzzel --dmenu | cliphist decode | wl-copy"
+            "SUPER, o, exec, op-fuzzel"
+            "SUPER_SHIFT, o, exec, op-fuzzel-browser"
+            "SUPER_ALT, o, exec, op-auth me@rooty.dev"
+            "SUPER, n, exec, nix-search-fuzzel"
+            "SUPER_SHIFT, n, exec, nix-search-clipboard"
             "CTRL_ALT, l, exec, loginctl lock-session"
             "CTRL_ALT, t, exec, kitty"
             "CTRL, Space, exec, rofi -show drun"
@@ -213,6 +218,7 @@ in
           ];
           exec-once = [
             "1password --silent"
+            "op-fuzzel-daemon"
             "kwalletd6"
             "systemctl --user start hyprpolkitagent"
             "polkit-agent-helper-1"

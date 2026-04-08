@@ -9,6 +9,7 @@ in
     ./hyprland
     ./sddm
     ./auth.nix
+    ./op-fuzzel.nix
     ./plymouth.nix
 
     # App bundles
@@ -37,6 +38,7 @@ in
           hyprland.enable = lib.mkDefault true;
           sddm.enable = lib.mkDefault true;
           auth.enable = lib.mkDefault true;
+          op-fuzzel.enable = lib.mkDefault true;
           plymouth.enable = lib.mkDefault true;
         };
         
