@@ -8,6 +8,12 @@
     ...
   }:
   let
+    version = "2.74.0";
+
+    # Pin npm registry metadata to this instant so `npm install --package-lock-only`
+    # produces a reproducible lockfile. Bump alongside `version`.
+    registrySnapshot = "2026-04-14T00:00:00Z";
+
     stripWorkspaces = pkgs.writeText "strip-workspaces.py" ''
       import json
       with open("package.json") as f:
@@ -18,8 +24,8 @@
     '';
 
     gsd-pi-src = pkgs.fetchurl {
-      url = "https://registry.npmjs.org/gsd-pi/-/gsd-pi-2.66.1.tgz";
-      hash = "sha256-yHS7VxX/ofzHjs2KOhpE1ErTHfVVoU2IbtXhr0bk/2E=";
+      url = "https://registry.npmjs.org/gsd-pi/-/gsd-pi-${version}.tgz";
+      hash = "sha256-VNCoTSm/tsjzP9FhUgznFuvJ5a0XXr9hmIZVL/oNfwM=";
     };
 
     gsd-pi-lockfile = pkgs.stdenvNoCC.mkDerivation {
@@ -31,19 +37,19 @@
         export HOME=$(mktemp -d)
         export SSL_CERT_FILE=${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt
         ${pkgs.python3}/bin/python3 ${stripWorkspaces}
-        npm install --package-lock-only --ignore-scripts
+        npm install --package-lock-only --ignore-scripts --before=${registrySnapshot}
       '';
       installPhase = ''
         cp package-lock.json $out
       '';
       outputHashMode = "flat";
       outputHashAlgo = "sha256";
-      outputHash = "sha256-nnMRLFgTEvHiuCkabCaA68E5vuCO7CQishyLYsS2i9U=";
+      outputHash = "sha256-1nO3GMdwqoUG5kvObj/a6pTKZumcZTOTpa2dpx6UGwo=";
     };
 
-    gsd-pi = pkgs.buildNpmPackage rec {
+    gsd-pi = pkgs.buildNpmPackage {
       pname = "gsd-pi";
-      version = "2.66.1";
+      inherit version;
 
       src = gsd-pi-src;
 
@@ -54,7 +60,7 @@
         cp ${gsd-pi-lockfile} package-lock.json
       '';
 
-      npmDepsHash = "sha256-8OTgrm+RVzYcWwR+xPsPimCMinvS7sUVzucpn9pfbkI=";
+      npmDepsHash = "sha256-7xOPtTTVMcAd9woPhou7pb/9BWw+It2joQq8ksvCghQ=";
       npmDepsFetcherVersion = 2;
       makeCacheWritable = true;
 
