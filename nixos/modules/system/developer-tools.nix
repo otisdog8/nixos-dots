@@ -37,6 +37,7 @@ in
         cloc
 
         # Version control
+        gh
         lazygit
 
         # Shell tools
@@ -80,6 +81,7 @@ in
             ".cargo" # Rust toolchain
             ".local/share/pnpm" # pnpm global store
             ".local/share/direnv" # direnv cache
+            ".config/gh" # GitHub CLI
             ".config/github-copilot" # GitHub Copilot
             # .claude and .claude.json moved to modules/apps/claude-code.nix
           ];

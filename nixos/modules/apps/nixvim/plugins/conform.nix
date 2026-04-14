@@ -14,7 +14,7 @@
       format_on_save.__raw = ''
         function(bufnr)
           -- Disable format_on_save for specific filetypes
-          local disable_filetypes = { c = true, cpp = true }
+          local disable_filetypes = {}
           if disable_filetypes[vim.bo[bufnr].filetype] then
             return nil
           else
@@ -27,6 +27,8 @@
       '';
 
       formatters_by_ft = {
+        c = [ "clang-format" ];
+        cpp = [ "clang-format" ];
         lua = [ "stylua" ];
         nix = [ "nixfmt" ];
         yaml = [ "yamlfmt" ];

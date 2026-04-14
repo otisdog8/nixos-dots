@@ -229,7 +229,9 @@ in
             "mako"
             "wl-paste --watch cliphist store"
           ];
-          windowrule = [ ];
+          windowrule = [
+            "float on, match:title Hello World"
+          ];
           env = [
             "XDG_SCREENSHOTS_DIR,$home/Pictures/Screenshots/"
             "XDG_PICTURES_DIR,$home/Pictures/"

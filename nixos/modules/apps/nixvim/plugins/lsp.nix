@@ -6,7 +6,9 @@
   lsp = {
     inlayHints.enable = true;
     servers = {
+      cmake.enable = true;
       clangd.enable = true;
+      glsl_analyzer.enable = true;
       nixd.enable = true;
       yamlls.enable = true;
       bashls.enable = true;
