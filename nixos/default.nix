@@ -46,6 +46,7 @@
 
     # Optional apps
     modules/apps/codex.nix
+    modules/apps/gemini-cli.nix
     modules/apps/gsd.nix
     modules/apps/opencode.nix
     modules/apps/claude-code.nix

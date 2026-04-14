@@ -108,6 +108,7 @@ in
     modules.apps = {
       claude-code.enable = lib.mkDefault true;
       codex.enable = lib.mkDefault true;
+      gemini-cli.enable = lib.mkDefault true;
       gsd.enable = lib.mkDefault true;
       opencode.enable = lib.mkDefault true;
       nixvim.enable = lib.mkDefault true;
