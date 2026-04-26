@@ -88,7 +88,7 @@ in
 
       r2modman = {
         inherit (cfg.r2modman) enable;
-        sandbox.enable = lib.mkDefault cfg.enableSandboxing;
+        sandbox.enable = false;
       };
     };
   };
