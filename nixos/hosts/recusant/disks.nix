@@ -30,6 +30,7 @@
 
     "/export/k8s" = {
       device = "/mnt/bcachefs/k8s";
+      fsType = "none";
       options = [
         "bind"
         "nofail"
@@ -38,6 +39,7 @@
 
     "/media" = {
       device = "/mnt/bcachefs/k8s/media";
+      fsType = "none";
       options = [
         "bind"
         "nofail"
