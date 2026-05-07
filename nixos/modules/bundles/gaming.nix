@@ -11,6 +11,8 @@ in
     ../apps/tetrio-desktop.nix
     ../apps/slipstream.nix
     ../apps/r2modman.nix
+    ../apps/wine.nix
+    ../apps/lutris.nix
   ];
 
   options.modules.bundles.gaming = {
@@ -57,6 +59,18 @@ in
       default = cfg.enable;
       description = "Enable r2modman (game mod manager)";
     };
+
+    wine.enable = lib.mkOption {
+      type = lib.types.bool;
+      default = cfg.enable;
+      description = "Enable Wine (run Windows games and applications)";
+    };
+
+    lutris.enable = lib.mkOption {
+      type = lib.types.bool;
+      default = cfg.enable;
+      description = "Enable Lutris (game launcher / wine prefix manager)";
+    };
   };
 
   config = lib.mkIf cfg.enable {
@@ -88,6 +102,19 @@ in
 
       r2modman = {
         inherit (cfg.r2modman) enable;
+        sandbox.enable = false;
+      };
+
+      # Wine and Lutris run arbitrary Windows binaries from arbitrary
+      # filesystem locations — sandboxing is off by default since it would
+      # block access to user-chosen game install dirs.
+      wine = {
+        inherit (cfg.wine) enable;
+        sandbox.enable = false;
+      };
+
+      lutris = {
+        inherit (cfg.lutris) enable;
         sandbox.enable = false;
       };
     };
