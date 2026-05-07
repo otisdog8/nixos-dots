@@ -22,6 +22,13 @@
       kernelModules = [ ];
     };
 
+    blacklistedKernelModules = [
+      "esp4"
+      "esp6"
+      "rxrpc"
+      "algif_aead"
+    ];
+
     # Quiet boot
     consoleLogLevel = 0;
     kernelParams = [
