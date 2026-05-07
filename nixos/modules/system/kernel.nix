@@ -22,12 +22,12 @@
       kernelModules = [ ];
     };
 
-    blacklistedKernelModules = [
-      "esp4"
-      "esp6"
-      "rxrpc"
-      "algif_aead"
-    ];
+    extraModprobeConfig = ''
+      install esp4 /bin/false
+      install esp6 /bin/false
+      install rxrpc /bin/false
+      install algif_aead /bin/false
+    '';
 
     # Quiet boot
     consoleLogLevel = 0;
