@@ -40,11 +40,15 @@ in
         PasswordAuthentication = true;
         AllowUsers = null; # Allows all users by default
         UseDns = true;
-        X11Forwarding = false;
+        X11Forwarding = true;
         PermitRootLogin = "no";
 
-        # Hardened crypto algorithms (Mozilla "modern" / Arch hardening guide)
+        # Hardened crypto algorithms. Post-quantum KEX listed first to satisfy
+        # OpenSSH 9.9+/10 PQ readiness check (store-now-decrypt-later warning).
         KexAlgorithms = [
+          "mlkem768x25519-sha256"
+          "sntrup761x25519-sha512"
+          "sntrup761x25519-sha512@openssh.com"
           "curve25519-sha256"
           "curve25519-sha256@libssh.org"
           "diffie-hellman-group16-sha512"
