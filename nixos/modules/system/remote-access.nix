@@ -16,6 +16,7 @@ let
     "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAID8cRRtLtbuTMeLNvA4oB1Ui0yk0yhdPTPBvqku6lQZj jrt@galaxy"
     "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIP/Ue/yVo+tbYIPCRAmIEPNbwQWctjPUnhgICrgDqHc2 root@excelsior"
     "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDh9fZN0PYM8E4yYCBPsAZcnBl0xbBfC7rH6w3cxV5+1 root@galaxy"
+    "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAgWOz/HGTcO8CJy67MvX6da4Ufelxy6ocbivhBa6hyg root@constitution"
   ];
 in
 {
