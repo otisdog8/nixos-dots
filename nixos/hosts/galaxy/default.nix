@@ -41,6 +41,14 @@
     # Enable gaming bundle
     bundles.gaming.enable = true;
 
+    # Hardening baseline (pilot host) — workstation profile keeps userns on
+    # for Steam/Chromium sandboxing and skips the linux-hardened kernel so
+    # NVIDIA DKMS keeps working.
+    system.hardening = {
+      enable = true;
+      profile = "workstation";
+    };
+
     # Enable NVIDIA drivers (beta)
     system.hardware.nvidia = {
       enable = true;

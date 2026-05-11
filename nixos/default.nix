@@ -39,6 +39,7 @@
     # System modules (conditionally enabled)
     modules/system/cli.nix
     modules/system/developer-tools.nix
+    modules/system/hardening.nix
     modules/system/laptop.nix
     modules/system/remote-access.nix
     modules/system/virt.nix
@@ -60,6 +61,7 @@
     system = {
       cli.enable = lib.mkDefault true;
       developer-tools.enable = lib.mkDefault true;
+      hardening.enable = lib.mkDefault false; # Opt-in per host
       laptop.enable = lib.mkDefault false; # Only enable on laptops
       remote-access.enable = lib.mkDefault true;
       virt.enable = lib.mkDefault true;
