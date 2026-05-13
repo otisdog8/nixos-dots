@@ -1,7 +1,9 @@
 # Encrypted DNS stack. See ./DNS.md for the architecture and rollout.
 #
 # Stub:      systemd-resolved on 127.0.0.53:53 (only entry in resolv.conf)
-# Upstream:  dnscrypt-proxy on 127.0.0.1:53 (DoH/DoH3/DNSCrypt/ODoH)
+# Upstream:  dnscrypt-proxy on 127.0.0.1:53 (DoH / DoH3 only — every
+#            upstream is a static stamp with the IP baked in, so we never
+#            do a bootstrap DNS lookup on the hot path)
 # Split-DNS: Tailscale pushes *.ts.net + tailnet rules to resolved via D-Bus
 # Captive:   handled by `programs.captive-browser` in networking.nix
 {
@@ -68,10 +70,10 @@ in
         "dns-rooty-dev-origin"
       ];
       description = ''
-        dnscrypt-proxy server_names. The defaults all resolve via static
-        stamps below (no bootstrap DNS needed). Add public-resolvers names
-        from the source list if you want to fall back to ranked
-        auto-selection in addition.
+        dnscrypt-proxy server_names. Each must have a matching entry in
+        `builtinStaticStamps` or `customResolvers` — we don't subscribe
+        to the public-resolvers source list, so names from there won't
+        resolve without an accompanying stamp.
       '';
     };
 
@@ -89,14 +91,17 @@ in
     bootstrapResolvers = lib.mkOption {
       type = lib.types.listOf lib.types.str;
       # Deliberately NOT 1.1.1.1 / 9.9.9.9 — those are the IPs most
-      # often blocked on hostile networks.
+      # often blocked on hostile networks. Currently unused on the hot
+      # path (every stamp embeds an IP) but kept set so it has sane
+      # defaults if you ever add a hostname-only stamp or re-enable
+      # source-list fetching.
       default = [
         "208.67.222.222:53" # OpenDNS
         "101.101.101.101:53" # Quad101
         "94.140.14.140:53" # AdGuard
         "76.76.2.0:53" # ControlD
       ];
-      description = "dnscrypt-proxy bootstrap_resolvers (source-list refresh only).";
+      description = "dnscrypt-proxy bootstrap_resolvers (fallback for hostname lookups).";
     };
 
     customResolvers = lib.mkOption {
