@@ -51,5 +51,5 @@
     enableCompute = true;
   };
 
-  networking.firewall.enable = lib.mkForce false;
+  programs.captive-browser.enable = true;
 }

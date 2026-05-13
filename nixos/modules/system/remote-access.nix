@@ -78,8 +78,10 @@ in
       };
     };
 
+    # Firewall enable lives in networking.nix; declare just the SSH port.
+    # tailscale0 is in trustedInterfaces so administrative SSH-over-tailnet
+    # works regardless.
     networking.firewall.allowedTCPPorts = [ 22 ];
-    networking.firewall.enable = true;
 
     # SSH authorized keys for users
     users.users.root.openssh.authorizedKeys.keys = sshKeys;

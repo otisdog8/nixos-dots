@@ -113,8 +113,15 @@ in
         # IPv4 network stack hardening
         "net.ipv4.tcp_syncookies" = 1;
         "net.ipv4.tcp_rfc1337" = 1;
-        "net.ipv4.conf.all.rp_filter" = 1;
-        "net.ipv4.conf.default.rp_filter" = 1;
+        # rp_filter=2 (loose, RFC 3704) + src_valid_mark=1 makes the
+        # reverse-path check honour fwmark-based policy routing — required
+        # for asymmetric layouts (Tailscale exit nodes, Cilium overlay,
+        # any layered WireGuard). Strict (=1) would silently drop their
+        # return traffic. Matches networking.firewall.checkReversePath="loose".
+        "net.ipv4.conf.all.rp_filter" = 2;
+        "net.ipv4.conf.default.rp_filter" = 2;
+        "net.ipv4.conf.all.src_valid_mark" = 1;
+        "net.ipv4.conf.default.src_valid_mark" = 1;
         "net.ipv4.conf.all.log_martians" = 1;
         "net.ipv4.conf.default.log_martians" = 1;
         "net.ipv4.conf.all.accept_redirects" = 0;

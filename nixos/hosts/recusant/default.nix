@@ -66,12 +66,13 @@
     enableCompute = true;
   };
 
-  # NFS server for k8s storage
+  # NFS server for k8s storage. Export and firewall both pin to the tailnet
+  # (the global trustedInterfaces = [ "tailscale0" ] makes 2049 belt-and-
+  # suspenders, but keep it declared for clarity).
   services.nfs.server.enable = true;
   services.nfs.server.exports = ''
     /export/k8s  100.0.0.0/8(rw,nohide,insecure,no_subtree_check,all_squash)
   '';
-
   networking.firewall.allowedTCPPorts = [ 2049 ];
 
   # Prometheus exporters

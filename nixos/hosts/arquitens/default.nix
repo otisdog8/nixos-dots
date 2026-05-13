@@ -61,5 +61,6 @@
     /tmp 100.0.0.0/8(rw,nohide,insecure,no_subtree_check,all_squash)
   '';
 
+  # Firewall deferred — see DNS.md (rollout) for the per-host flip recipe.
   networking.firewall.enable = lib.mkForce false;
 }

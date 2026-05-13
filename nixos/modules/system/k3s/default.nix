@@ -36,6 +36,9 @@ in
   };
 
   config = lib.mkIf cfg.enable {
+    # tailscale0 is trusted globally in networking.nix, so these allow-lists
+    # are only needed if a host ever drops trustedInterfaces. Keep them
+    # declared as documentation + a safety net.
     networking.firewall = {
       allowedTCPPorts = [
         4240 # cluster health checks (cilium-health)
@@ -63,8 +66,6 @@ in
       allowedUDPPorts = [
         51871 # WireGuard encryption tunnel endpoint
       ];
-
-      enable = lib.mkForce false;
     };
 
     environment.systemPackages = with pkgs; [

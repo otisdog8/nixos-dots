@@ -55,5 +55,6 @@
     };
   };
 
+  # Firewall deferred — see DNS.md (rollout) for the per-host flip recipe.
   networking.firewall.enable = lib.mkForce false;
 }
