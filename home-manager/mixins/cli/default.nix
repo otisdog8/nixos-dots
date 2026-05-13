@@ -26,6 +26,7 @@ in
         };
         # Sign all commits using ssh key
         gpg.format = "ssh";
+        pull.rebase = true;
       };
     };
     ripgrep.enable = true;
