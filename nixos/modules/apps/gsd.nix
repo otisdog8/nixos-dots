@@ -94,6 +94,7 @@
       ../../../lib/features/network.nix
       ../../../lib/features/system-bin.nix
       ../../../lib/features/cwd.nix
+      ../../../lib/features/git.nix
     ];
 
     config.app = {
