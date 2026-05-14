@@ -42,6 +42,9 @@
   # Enable laptop power management
   modules.system.laptop.enable = true;
 
+  # Enable system hardening baseline (workstation profile)
+  modules.system.hardening.enable = true;
+
   hardware.cpu.intel.updateMicrocode = true;
   boot.kernelModules = [ "kvm-intel" ];
 
