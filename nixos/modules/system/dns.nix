@@ -151,6 +151,30 @@ in
     networking.networkmanager.dns = "systemd-resolved";
     networking.nameservers = lib.mkForce [ ];
 
+    # Boot-time race fix: dnscrypt-proxy ships with Type=simple, so After=
+    # only blocks until fork() — not until 127.0.0.1:53 is bound and
+    # upstream cert exchange has finished. resolved then sprints ahead,
+    # fires its DNSSEC chain queries into a not-yet-ready upstream, marks
+    # 127.0.0.1 as degraded, and stays stuck on "no-signature" failures
+    # until a manual restart. dnscrypt-proxy links against
+    # coreos/go-systemd and calls SdNotify("READY=1") only after upstream
+    # resolvers have been probed, so Type=notify is the canonical signal —
+    # then ordering resolved After= it actually means what it looks like.
+    systemd.services.dnscrypt-proxy.serviceConfig = {
+      Type = "notify";
+      # sd_notify writes to an AF_UNIX socket; the upstream unit's
+      # RestrictAddressFamilies whitelist is INET/INET6 only, so without
+      # this the READY=1 syscall is blocked and systemd times out the
+      # unit. Append rather than override — we still want the INET
+      # restriction for everything else.
+      RestrictAddressFamilies = [ "AF_UNIX" ];
+    };
+
+    systemd.services.systemd-resolved = {
+      after = [ "dnscrypt-proxy.service" ];
+      wants = [ "dnscrypt-proxy.service" ];
+    };
+
     services.dnscrypt-proxy = {
       enable = true;
       settings = {
