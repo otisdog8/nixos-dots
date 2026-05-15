@@ -42,6 +42,12 @@
     system.hardening = {
       enable = true;
       profile = "workstation";
+      blacklistAfAlg = true;
+    };
+
+    system.pcr-verification = {
+      enable = true;
+      expectedPcr15 = "a764815e35045166ee14a593919eac6b4538a128ac8d2118f90febe9f6001070";
     };
 
     # Enable NVIDIA drivers (beta)
