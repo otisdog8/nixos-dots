@@ -76,6 +76,10 @@ in
           package = pkgs.gnome-themes-extra;
           name = "Sweet";
         };
+        gtk4.theme = {
+          package = pkgs.gnome-themes-extra;
+          name = "Sweet";
+        };
       };
 
       qt = {

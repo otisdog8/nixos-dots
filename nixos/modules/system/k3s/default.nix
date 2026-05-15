@@ -122,7 +122,7 @@ in
 
     # Safety net: if shutdown stalls (rook/containerd/ceph kernel-side hang),
     # arm the hardware watchdog so the box reboots without needing SysRq.
-    systemd.watchdog.rebootTime = "3min";
+    systemd.settings.Manager.RebootWatchdogSec = "3min";
 
     # Persistence for k3s
     environment.persistence."/large" = {

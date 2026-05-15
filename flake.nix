@@ -141,7 +141,7 @@
             statix
             nixd
             markdownlint-cli
-            nixfmt-rfc-style
+            nixfmt
           ];
         };
 

@@ -51,7 +51,7 @@ in
 
         # Nix development
         nixd
-        nixfmt-rfc-style
+        nixfmt
 
         # Python tools
         uv
