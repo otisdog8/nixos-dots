@@ -173,8 +173,12 @@ in
 
     ipForward = lib.mkOption {
       type = lib.types.bool;
-      default = cfg.profile == "k3s-node";
-      description = "Enable net.ipv4.ip_forward. Required for K3s/CNI and routers.";
+      default = true;
+      description = ''
+        Enable net.ipv4.ip_forward. Required for K3s/CNI, routers, and any
+        host that may act as a Tailscale exit node or subnet router. On by
+        default since most hosts here should be exit-node-capable.
+      '';
     };
 
     allowUserns = lib.mkOption {
