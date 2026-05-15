@@ -16,6 +16,27 @@ let
     "hfs"
     "hfsplus"
     "udf"
+    # Exotic / legacy filesystems autoloaded by mount(8) via the fs alias.
+    "jfs"
+    "ufs"
+    "efs"
+    "befs"
+    "affs"
+    "adfs"
+    "omfs"
+    "qnx4"
+    "qnx6"
+    "hpfs"
+    "bfs"
+    "minix"
+    "gfs2"
+    "ocfs2"
+    "nilfs2"
+    "coda"
+    # In-kernel NTFS read/write driver. Userspace ntfs-3g (FUSE) still works
+    # if added to environment.systemPackages; this only blocks the kernel
+    # driver's auto-load on external-drive insert.
+    "ntfs3"
   ];
 
   netModules = [
@@ -30,6 +51,103 @@ let
     "firewire-ohci"
     "firewire-sbp2"
     "ohci1394"
+    # FireWire siblings (DMA-attack surface, defense in depth alongside the
+    # blacklisted core/ohci modules).
+    "firewire-net"
+    "dv1394"
+    "raw1394"
+    "video1394"
+    # Rare socket families autoloadable via socket(AF_*). Same attack class
+    # as Copy Fail (CVE-2026-31431) and Dirty Frag (CVE-2026-43284 / -43500):
+    # unprivileged socket() triggers in-kernel request_module().
+    "appletalk"
+    "x25"
+    "llc2"
+    "can"
+    "atm"
+    "kcm"
+    "phonet"
+    "nfc"
+    "caif_socket"
+    "ieee802154_socket"
+    "af_802154"
+    "smc"
+    "qrtr"
+    # Removed-from-upstream AF families. Modprobe alias resolution is a
+    # no-op, but keeping these documented protects against future revival.
+    "ipx"
+    "decnet"
+    "econet"
+    # LLC encapsulation modules (legacy, autoloaded by old net stacks).
+    "p8022"
+    "p8023"
+    "psnap"
+    # Diag-socket and transport siblings of protocols already blocked above.
+    "tipc_diag"
+    "sctp_diag"
+    "rds_rdma"
+    "rds_tcp"
+    # ATM USB modems (defense in depth — ATM core is blocked above).
+    "ueagle-atm"
+    "usbatm"
+    "xusbatm"
+    # Full CAN-bus family. The core "can" module above blocks socket(AF_CAN),
+    # but specific protocol/driver modules also expose attack surface.
+    "can-bcm"
+    "can-raw"
+    "can-gw"
+    "can-isotp"
+    "can-j1939"
+    "can-dev"
+    "c_can"
+    "m_can"
+    "vcan"
+    "vxcan"
+    # AF_PPPOX (net-pf-24) family — PPPoE, PPTP-GRE, and PPPoL2TP all hang
+    # off pppox. Blocking pppox closes the whole family in one stroke; the
+    # individual modules are listed too as belt-and-suspenders.
+    "pppox"
+    "pppoe"
+    "pptp"
+    # L2TP — l2tp_core is the base; blocking it kills l2tp_ppp / l2tp_eth /
+    # l2tp_ip{,6} / l2tp_netlink. Reachable via socket(AF_PPPOX, _, PX_PROTO_OL2TP).
+    "l2tp_core"
+    "l2tp_ppp"
+    "l2tp_eth"
+    "l2tp_ip"
+    "l2tp_ip6"
+    "l2tp_netlink"
+  ];
+
+  ttyModules = [
+    # TTY line discipline modules autoloaded via the TIOCSETD ioctl.
+    # CVE-2017-2636 was a local-root via n_hdlc reached this way.
+    "n_hdlc"
+    "n_gsm"
+    "mkiss"
+    "6pack"
+    "slcan"
+    "can327"
+    "slip"
+  ];
+
+  afAlgModules = [
+    # AF_ALG userspace crypto API (net-pf-38). Blocking af_alg subsumes the
+    # algif_* algorithm providers — algif_aead (Copy Fail), algif_hash,
+    # algif_skcipher, algif_rng. Breaks bluez/libell crypto (AES-CMAC,
+    # AES-CCM, P-256 ECDH), so Bluetooth pairing will not work on hosts
+    # where this is enabled.
+    "af_alg"
+  ];
+
+  miscModules = [
+    # V4L Virtual Video Test Driver — chained for root in Pwn2Own 2020
+    # (CVE-2019-18683 + uvcvideo). Autoloads via /dev/videoN open. No
+    # legitimate use outside V4L kernel development.
+    "vivid"
+    # Floppy controller. No hardware on any host here; module has had
+    # historical UAF/race bugs. Autoloads when /dev/fd* is opened.
+    "floppy"
   ];
 
   mkInstallFalse = mods: lib.concatMapStringsSep "\n" (m: "install ${m} /bin/false") mods;
@@ -75,6 +193,36 @@ in
       type = lib.types.bool;
       default = true;
       description = "Blacklist obscure network protocol and firewire kernel modules.";
+    };
+
+    blacklistTty = lib.mkOption {
+      type = lib.types.bool;
+      default = true;
+      description = ''
+        Blacklist TTY line discipline kernel modules autoloadable via the
+        TIOCSETD ioctl (the CVE-2017-2636 n_hdlc class).
+      '';
+    };
+
+    blacklistAfAlg = lib.mkOption {
+      type = lib.types.bool;
+      default = false;
+      description = ''
+        Blacklist the AF_ALG userspace crypto socket family. Closes the
+        attack surface that produced Copy Fail (CVE-2026-31431). Breaks
+        bluez Bluetooth pairing because libell does AES-CMAC / AES-CCM /
+        P-256 ECDH through AF_ALG. Off by default; opt in per host where
+        Bluetooth is unused (or accepted as broken).
+      '';
+    };
+
+    blacklistMisc = lib.mkOption {
+      type = lib.types.bool;
+      default = true;
+      description = ''
+        Blacklist obscure hardware/test kernel modules that autoload on
+        device access (vivid V4L test driver, floppy controller).
+      '';
     };
 
     hardenMounts = lib.mkOption {
@@ -168,13 +316,19 @@ in
 
     boot.blacklistedKernelModules =
       lib.optionals cfg.blacklistFs fsModules
-      ++ lib.optionals cfg.blacklistNet netModules;
+      ++ lib.optionals cfg.blacklistNet netModules
+      ++ lib.optionals cfg.blacklistTty ttyModules
+      ++ lib.optionals cfg.blacklistAfAlg afAlgModules
+      ++ lib.optionals cfg.blacklistMisc miscModules;
 
     # Defense in depth alongside blacklistedKernelModules — matches the existing
     # install-bin pattern in modules/system/kernel.nix for esp4/esp6/rxrpc.
     boot.extraModprobeConfig =
       lib.optionalString cfg.blacklistFs (mkInstallFalse fsModules + "\n")
-      + lib.optionalString cfg.blacklistNet (mkInstallFalse netModules + "\n");
+      + lib.optionalString cfg.blacklistNet (mkInstallFalse netModules + "\n")
+      + lib.optionalString cfg.blacklistTty (mkInstallFalse ttyModules + "\n")
+      + lib.optionalString cfg.blacklistAfAlg (mkInstallFalse afAlgModules + "\n")
+      + lib.optionalString cfg.blacklistMisc (mkInstallFalse miscModules + "\n");
 
     # Kernel image / page table protections
     security.protectKernelImage = lib.mkDefault true;
