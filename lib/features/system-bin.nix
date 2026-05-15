@@ -3,13 +3,11 @@
   imports = [ ../app-spec.nix ];
 
   config.app.nixpakModules = [
-    (
-      _:
-      {
-        bubblewrap.bind.ro = [
-          "/run/current-system/sw/bin"
-        ];
-      }
-    )
+    (_: {
+      bubblewrap.bind.ro = [
+        "/run/current-system/sw/bin"
+        "/usr/bin/env"
+      ];
+    })
   ];
 }
