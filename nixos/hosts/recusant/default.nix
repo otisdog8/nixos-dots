@@ -80,7 +80,7 @@
   # into expectedPcr15, rebuild, and reboot.
   modules.system.pcr-verification = {
     enable = true;
-    # expectedPcr15 = "...";
+    expectedPcr15 = "b4074ce9edb24552602ca6dd4eb01d8b74d1a374ca3945795e2403d56dabab44";
   };
 
   # NFS server for k8s storage. Export and firewall both pin to the tailnet
