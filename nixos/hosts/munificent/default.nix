@@ -67,7 +67,7 @@
     # into expectedPcr15, rebuild, and reboot.
     system.pcr-verification = {
       enable = true;
-      # expectedPcr15 = "...";
+      expectedPcr15 = "8f2d8bcfd3e57f0ab4691dd53a339e2c365e4b475307a534485ddbde7d8c88e9";
     };
   };
 
