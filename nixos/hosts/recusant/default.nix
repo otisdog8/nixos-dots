@@ -66,6 +66,23 @@
     enableCompute = true;
   };
 
+  # Enable system hardening baseline (server profile).
+  # No Bluetooth on this host, so af_alg can go too.
+  modules.system.hardening = {
+    enable = true;
+    profile = "server";
+    blacklistAfAlg = true;
+  };
+
+  # Post-unlock PCR 15 verification for TPM2 LUKS unlock.
+  # Bootstrap pass: measurement only, no enforcement. After a known-good boot,
+  # capture with `sudo systemd-analyze pcrs 15 --json=short`, paste the sha256
+  # into expectedPcr15, rebuild, and reboot.
+  modules.system.pcr-verification = {
+    enable = true;
+    # expectedPcr15 = "...";
+  };
+
   # NFS server for k8s storage. Export and firewall both pin to the tailnet
   # (the global trustedInterfaces = [ "tailscale0" ] makes 2049 belt-and-
   # suspenders, but keep it declared for clarity).
