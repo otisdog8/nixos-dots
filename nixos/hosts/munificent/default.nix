@@ -53,6 +53,22 @@
         "--advertise-address=100.65.16.13"
       ];
     };
+
+    # System hardening baseline (k3s-node profile leaves /tmp on disk for kubelet).
+    system.hardening = {
+      enable = true;
+      profile = "k3s-node";
+      blacklistAfAlg = true;
+    };
+
+    # Post-unlock PCR 15 verification for TPM2 LUKS unlock.
+    # Bootstrap pass: measurement only, no enforcement. After a known-good boot,
+    # capture with `sudo systemd-analyze pcrs 15 --json=short`, paste the sha256
+    # into expectedPcr15, rebuild, and reboot.
+    system.pcr-verification = {
+      enable = true;
+      # expectedPcr15 = "...";
+    };
   };
 
   # Firewall deferred — see DNS.md (rollout) for the per-host flip recipe.

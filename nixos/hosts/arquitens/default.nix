@@ -53,6 +53,23 @@
         "--advertise-address=100.126.30.73"
       ];
     };
+
+    # System hardening baseline (k3s-node profile leaves /tmp on disk, which
+    # matters here because arquitens NFS-exports /tmp to the tailnet).
+    system.hardening = {
+      enable = true;
+      profile = "k3s-node";
+      blacklistAfAlg = true;
+    };
+
+    # Post-unlock PCR 15 verification for TPM2 LUKS unlock.
+    # Bootstrap pass: measurement only, no enforcement. After a known-good boot,
+    # capture with `sudo systemd-analyze pcrs 15 --json=short`, paste the sha256
+    # into expectedPcr15, rebuild, and reboot.
+    system.pcr-verification = {
+      enable = true;
+      # expectedPcr15 = "...";
+    };
   };
 
   # NFS server
