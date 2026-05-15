@@ -151,28 +151,44 @@ in
     networking.networkmanager.dns = "systemd-resolved";
     networking.nameservers = lib.mkForce [ ];
 
-    # Boot-time race fix: dnscrypt-proxy ships with Type=simple, so After=
-    # only blocks until fork() — not until 127.0.0.1:53 is bound and
-    # upstream cert exchange has finished. resolved then sprints ahead,
-    # fires its DNSSEC chain queries into a not-yet-ready upstream, marks
-    # 127.0.0.1 as degraded, and stays stuck on "no-signature" failures
-    # until a manual restart. dnscrypt-proxy links against
-    # coreos/go-systemd and calls SdNotify("READY=1") only after upstream
-    # resolvers have been probed, so Type=notify is the canonical signal —
-    # then ordering resolved After= it actually means what it looks like.
+    # Boot-time race fix: dnscrypt-proxy ships with Type=simple, so a plain
+    # After= on it only blocks until fork() — not until 127.0.0.1:53 is
+    # bound. dnscrypt-proxy links against coreos/go-systemd and calls
+    # SdNotify("READY=1") only after upstream resolvers are probed, so
+    # Type=notify is the canonical signal we can hang ordering off of.
+    #
+    # We can't put After=dnscrypt-proxy on systemd-resolved itself: resolved
+    # is part of sysinit.target on NixOS, and dnscrypt-proxy transitively
+    # depends on sysinit (via basic→sockets→nix-daemon.socket), so the edge
+    # closes the loop and systemd silently *deletes* resolved's start job to
+    # break the cycle. resolved still comes up via socket activation later,
+    # but by then tailscaled has already inspected the system, found no
+    # resolved on D-Bus, and locked itself into "direct /etc/resolv.conf
+    # rewrite" mode for the rest of the boot — losing the *.ts.net split-DNS
+    # push and any tailnet search domain.
+    #
+    # Instead, push the dependency the other way: when dnscrypt-proxy reaches
+    # READY=1, restart resolved so it forgets any "degraded" marking it
+    # accumulated against 127.0.0.1 during the warmup window.
     systemd.services.dnscrypt-proxy.serviceConfig = {
       Type = "notify";
       # sd_notify writes to an AF_UNIX socket; the upstream unit's
       # RestrictAddressFamilies whitelist is INET/INET6 only, so without
-      # this the READY=1 syscall is blocked and systemd times out the
-      # unit. Append rather than override — we still want the INET
-      # restriction for everything else.
+      # this the READY=1 syscall is blocked. Append-merges with upstream.
       RestrictAddressFamilies = [ "AF_UNIX" ];
+      # `+` runs this one exec with full privileges, bypassing User=/Caps=
+      # set on the unit — needed because dnscrypt-proxy runs as its own
+      # dynamic user and can't restart system units without polkit.
+      ExecStartPost = "+${pkgs.systemd}/bin/systemctl --no-block try-restart systemd-resolved.service";
     };
 
-    systemd.services.systemd-resolved = {
-      after = [ "dnscrypt-proxy.service" ];
-      wants = [ "dnscrypt-proxy.service" ];
+    # Tailscaled picks its DNS-management mode once at startup and never
+    # reconsiders. Order it after resolved so the D-Bus handoff path is the
+    # one that gets picked — otherwise it falls back to direct mode and the
+    # whole encrypted-DNS + tailnet split-DNS chain is bypassed.
+    systemd.services.tailscaled = {
+      after = [ "systemd-resolved.service" ];
+      wants = [ "systemd-resolved.service" ];
     };
 
     services.dnscrypt-proxy = {
