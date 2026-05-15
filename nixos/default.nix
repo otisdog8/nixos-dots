@@ -42,6 +42,7 @@
     modules/system/dns.nix
     modules/system/hardening.nix
     modules/system/laptop.nix
+    modules/system/pcr-verification.nix
     modules/system/remote-access.nix
     modules/system/virt.nix
     modules/system/hardware/openrazer.nix
@@ -65,6 +66,7 @@
       dns.enable = lib.mkDefault true;
       hardening.enable = lib.mkDefault false; # Opt-in per host
       laptop.enable = lib.mkDefault false; # Only enable on laptops
+      pcr-verification.enable = lib.mkDefault false; # Opt-in per host
       remote-access.enable = lib.mkDefault true;
       virt.enable = lib.mkDefault true;
       hardware.openrazer.enable = lib.mkDefault false;

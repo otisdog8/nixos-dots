@@ -48,6 +48,16 @@
     blacklistAfAlg = true;
   };
 
+  # Post-unlock PCR 15 verification for TPM2 LUKS auto-unlock.
+  # See nixos/modules/system/PCR-VERIFICATION.md for the enrollment dance.
+  modules.system.pcr-verification = {
+    enable = true;
+    # Boot 1: leave expectedPcr15 unset (measurement only).
+    # Boot 2: capture via `sudo systemd-analyze pcrs 15 --json=short`,
+    # paste the sha256 below, rebuild, reboot.
+    expectedPcr15 = "177dbed8d982069ea26086d2679e2ba3387d8c175a91eab0a042ab0b0945ba74";
+  };
+
   hardware.cpu.intel.updateMicrocode = true;
   boot.kernelModules = [ "kvm-intel" ];
 
