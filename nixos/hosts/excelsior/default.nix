@@ -60,37 +60,39 @@
   };
 
   # WiFi workarounds
-  networking.networkmanager.wifi.backend = "iwd";
+  # networking.networkmanager.wifi.backend = "iwd";
 
   programs.captive-browser.enable = true;
 
   systemd.services.connect-wifi = {
     script = ''
-      sleep 10
-      ${pkgs.networkmanager}/bin/nmcli device connect wlan0
+      for _ in $(seq 1 30); do
+        ${pkgs.networkmanager}/bin/nmcli -t connection show >/dev/null 2>&1 && break
+        sleep 1
+      done
+      # Pin secret storage to the .nmconnection file; without this NM falls back
+      # to a user-agent which is absent at boot. Idempotent on each start.
+      ${pkgs.networkmanager}/bin/nmcli connection modify "Rim And Job 1" \
+        802-11-wireless-security.psk-flags 0
+      ${pkgs.networkmanager}/bin/nmcli connection up id "Rim And Job 1"
     '';
     serviceConfig = {
       Type = "oneshot";
-      User = "jrt";
+      RemainAfterExit = true;
     };
     wantedBy = [ "multi-user.target" ];
     after = [
       "NetworkManager.service"
-      "iwd.service"
-      "multi-user.target"
+      #"iwd.service"
     ];
+    wants = [ "NetworkManager.service" ];
+    restartIfChanged = false;
   };
 
   systemd.services.network-restarter = {
-    description = "Check internet connectivity and restart iwd service if down";
-    after = [
-      "network-online.target"
-      "iwd.service"
-    ];
-    wants = [
-      "network-online.target"
-      "iwd.service"
-    ];
+    description = "Check internet connectivity and restart NetworkManager if down";
+    after = [ "network-online.target" ];
+    wants = [ "network-online.target" ];
     wantedBy = [ "multi-user.target" ];
     serviceConfig = {
       Type = "simple";
@@ -99,9 +101,6 @@
       RestartSec = "10s";
     };
     script = ''
-      #!${pkgs.runtimeShell}
-      set -e
-
       echo "Starting network-restarter service..."
 
       while true; do
@@ -109,9 +108,9 @@
         if ! ${pkgs.iputils}/bin/ping -c1 -W1 1.1.1.1 &>/dev/null && \
            ! ${pkgs.iputils}/bin/ping -c1 -W1 8.8.8.8 &>/dev/null && \
            ! ${pkgs.iputils}/bin/ping -c1 -W1 google.com &>/dev/null; then
-          echo "Network connectivity check failed. Restarting iwd.service..."
-          ${pkgs.systemd}/bin/systemctl restart iwd.service
-          echo "iwd.service restart requested."
+          echo "Network connectivity check failed. Restarting NetworkManager.service..."
+          ${pkgs.systemd}/bin/systemctl restart NetworkManager.service
+          echo "NetworkManager.service restart requested."
           ${pkgs.coreutils}/bin/sleep 15
         else
           echo "Network connectivity OK."
