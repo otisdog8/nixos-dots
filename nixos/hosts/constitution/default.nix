@@ -43,7 +43,10 @@
   modules.system.laptop.enable = true;
 
   # Enable system hardening baseline (workstation profile)
-  modules.system.hardening.enable = true;
+  modules.system.hardening = {
+    enable = true;
+    blacklistAfAlg = true;
+  };
 
   hardware.cpu.intel.updateMicrocode = true;
   boot.kernelModules = [ "kvm-intel" ];
