@@ -39,7 +39,7 @@
       inputs.home-manager.follows = "home-manager";
     };
     hyprland = {
-      url = "github:hyprwm/Hyprland/v0.54.1?submodules=1";
+      url = "github:hyprwm/Hyprland/v0.55.1?submodules=1";
       inputs.nixpkgs.follows = "nixpkgs";
     };
     nixvim = {
