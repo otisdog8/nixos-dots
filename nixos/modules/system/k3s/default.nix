@@ -103,10 +103,26 @@ in
       serviceConfig = {
         Type = "oneshot";
         User = "root";
-        ExecStart = ''${pkgs.util-linux}/bin/losetup -f /large/disk.img'';
         RemainAfterExit = "yes";
+        ExecStart = ''${pkgs.util-linux}/bin/losetup -f /large/disk.img'';
+        # Detach the loop before /large is unmounted. After=large.mount makes
+        # systemd stop us first at shutdown, so the backing file is still
+        # reachable when losetup -d runs. Without this, systemd-shutdown's
+        # sync(2) hangs on the dangling loop and the box only reboots via
+        # SysRq + the hardware watchdog below.
+        ExecStop = pkgs.writeShellScript "k3sloop-stop" ''
+          ${pkgs.util-linux}/bin/losetup -j /large/disk.img \
+            | ${pkgs.coreutils}/bin/cut -d: -f1 \
+            | while read -r dev; do
+                ${pkgs.util-linux}/bin/losetup -d "$dev" || true
+              done
+        '';
       };
     };
+
+    # Safety net: if shutdown stalls (rook/containerd/ceph kernel-side hang),
+    # arm the hardware watchdog so the box reboots without needing SysRq.
+    systemd.watchdog.rebootTime = "3min";
 
     # Persistence for k3s
     environment.persistence."/large" = {
