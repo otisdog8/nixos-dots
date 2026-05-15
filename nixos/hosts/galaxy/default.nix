@@ -47,6 +47,15 @@
     system.hardening = {
       enable = true;
       profile = "workstation";
+      blacklistAfAlg = true;
+    };
+
+    # Bootstrap pass: measurement only, no enforcement. Capture
+    # PCR 15 on a known-good boot with
+    # `systemd-analyze pcrs 15 --json=short`, then set expectedPcr15.
+    system.pcr-verification = {
+      enable = true;
+      expectedPcr15 = "440e25ba3289b1461cdd57ea062e4e43f714c5725863f1498b5b96256781647b";
     };
 
     # Enable NVIDIA drivers (beta)
