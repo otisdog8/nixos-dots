@@ -43,10 +43,7 @@
   modules.system.laptop.enable = true;
 
   # Enable system hardening baseline (workstation profile)
-  modules.system.hardening = {
-    enable = true;
-    blacklistAfAlg = true;
-  };
+  modules.system.hardening.enable = true;
 
   # Post-unlock PCR 15 verification for TPM2 LUKS auto-unlock.
   # See nixos/modules/system/PCR-VERIFICATION.md for the enrollment dance.
