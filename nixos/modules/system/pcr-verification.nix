@@ -26,7 +26,7 @@ in
         When null, only measurement is enabled (no enforcement) - use this
         for the bootstrap boot, then fill in the captured value.
       '';
-      #example = "caf33e79c645b65849256238a11fa68ae197e5cb89730c463c1cdf1d9128376f";
+      example = "caf33e79c645b65849256238a11fa68ae197e5cb89730c463c1cdf1d9128376f";
     };
   };
 
@@ -44,7 +44,17 @@ in
       }
     ];
     boot.initrd = {
-      luks.devices."luks".crypttabExtraOpts = [ "tpm2-measure-pcr=yes" ];
+      # tpm2-device=auto must accompany tpm2-measure-pcr=yes. Setting
+      # the measure option flips systemd-cryptsetup from the
+      # libcryptsetup-plugin auto-detect path to the "respect crypttab
+      # options literally" path. In that mode, TPM2 unseal is only
+      # attempted if tpm2-device is also declared - without it the
+      # service silently falls back to passphrase, even with a valid
+      # TPM2 token in the LUKS header. See systemd issue #37072.
+      luks.devices."luks".crypttabExtraOpts = [
+        "tpm2-device=auto"
+        "tpm2-measure-pcr=yes"
+      ];
 
       systemd = {
         # Initrd-stage emergency shell uses the root password, so a PCR
