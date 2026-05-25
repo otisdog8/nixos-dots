@@ -5,6 +5,7 @@
     config,
     lib,
     pkgs,
+    inputs,
     ...
   }:
   {
@@ -18,7 +19,7 @@
 
     config.app = {
       name = "blender";
-      package = pkgs.blender;
+      package = inputs.nix-warez.packages.${pkgs.stdenv.hostPlatform.system}.blender_5_0;
       packageName = "blender";
 
       persistence.user = {

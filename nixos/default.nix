@@ -149,6 +149,7 @@
       "input"
       "audio"
       "video"
+      "kvm"
       "libvirtd"
       "networkmanager"
     ];

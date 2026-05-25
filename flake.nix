@@ -62,6 +62,7 @@
     };
     wezterm-flake.url = "github:wez/wezterm?dir=nix&rev=4506a7648e2ebef266225c1acdcd79967a4fc73b";
     wezterm-flake.inputs.nixpkgs.follows = "nixpkgs";
+    nix-warez.url = "github:edolstra/nix-warez?dir=blender";
   };
 
   outputs =
