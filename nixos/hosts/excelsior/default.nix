@@ -57,6 +57,9 @@
     };
 
     bundles.gaming.enable = true;
+
+    # NoMachine remote desktop client
+    apps.nomachine-client.enable = true;
   };
 
   # WiFi workarounds

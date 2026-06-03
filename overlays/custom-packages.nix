@@ -5,4 +5,6 @@ final: prev: {
   xdg-desktop-portal = prev.xdg-desktop-portal.overrideAttrs (oldAttrs: {
     src = inputs.xdg-desktop-portal-src;
   });
+
+  nomachine-client = final.callPackage ../pkgs/nomachine-client { };
 }
