@@ -57,7 +57,6 @@
     modules/apps/nixvim.nix
     modules/apps/jellyfin.nix
     modules/apps/sabnzbd.nix
-    modules/apps/nomachine-client.nix
   ];
 
   # Enable conditional system modules and optional service apps
@@ -76,7 +75,6 @@
     apps = {
       jellyfin.enable = lib.mkDefault false;
       sabnzbd.enable = lib.mkDefault false;
-      nomachine-client.enable = lib.mkDefault false;
     };
   };
 

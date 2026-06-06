@@ -39,9 +39,6 @@
   # Enable gaming bundle
   modules.bundles.gaming.enable = true;
 
-  # NoMachine remote desktop client
-  modules.apps.nomachine-client.enable = true;
-
   # Enable laptop power management
   modules.system.laptop.enable = true;
 
@@ -71,9 +68,4 @@
   };
 
   programs.captive-browser.enable = true;
-
-  networking.firewall = {
-    allowedTCPPorts = [ 7777 ];
-    allowedUDPPorts = [ 7777 ];
-  };
 }
