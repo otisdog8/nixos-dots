@@ -10,6 +10,10 @@
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
     nix-bwrapper.url = "github:Naxdy/nix-bwrapper";
+    ccusage = {
+      url = "github:ccusage/ccusage";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
     nixpak = {
       url = "github:otisdog8/nixpak/sandbox-xdg-runtime-dir";
       inputs.nixpkgs.follows = "nixpkgs";
