@@ -24,6 +24,9 @@
     };
     nixpkgs-older.url = "github:NixOS/nixpkgs?rev=3e042434c17eff8ed5528faa4c4503facc2bdf6c";
     nixpkgs-otisdog8.url = "github:otisdog8/nixpkgs/marvin";
+    # Fresher, still cache-built channel for fast-moving packages (e.g. claude-code).
+    # Tracks more closely than nixos-unstable without master's source-build risk.
+    nixpkgs-unstable-small.url = "github:NixOS/nixpkgs/nixos-unstable-small";
     nixos-hardware.url = "github:NixOS/nixos-hardware/master";
     chaotic.url = "github:chaotic-cx/nyx/nyxpkgs-unstable";
     impermanence = {
@@ -43,7 +46,7 @@
       inputs.home-manager.follows = "home-manager";
     };
     hyprland = {
-      url = "github:hyprwm/Hyprland/v0.55.1?submodules=1";
+      url = "github:hyprwm/Hyprland/v0.55.3?submodules=1";
       inputs.nixpkgs.follows = "nixpkgs";
     };
     nixvim = {

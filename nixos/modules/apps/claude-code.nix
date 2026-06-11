@@ -22,7 +22,9 @@
     config.app = {
       name = "claude-code";
       packageName = "claude";
-      package = pkgs.claude-code;
+      # Track the fresher nixos-unstable-small channel so claude-code updates
+      # land sooner than the main nixos-unstable pin (still binary-cached).
+      package = pkgs.unstable-small.claude-code;
 
       persistence.user.persist = [
         ".claude"

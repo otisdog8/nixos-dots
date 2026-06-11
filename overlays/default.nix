@@ -12,5 +12,11 @@
       config.allowUnfree = true;
     };
   };
+  unstable-small-packages = final: _prev: {
+    unstable-small = import inputs.nixpkgs-unstable-small {
+      inherit (final.stdenv.hostPlatform) system;
+      config.allowUnfree = true;
+    };
+  };
   custom-packages = import ./custom-packages.nix { inherit inputs; };
 }
