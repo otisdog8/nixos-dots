@@ -95,6 +95,7 @@ in
             ".cache/uv" # Python uv cache
             ".npm" # npm cache
             ".cache/pnpm" # pnpm cache
+            ".local/share/nix/root" # shared on-disk Nix store for sandboxed apps (lib/features/nix-store.nix)
           ];
         };
       };
