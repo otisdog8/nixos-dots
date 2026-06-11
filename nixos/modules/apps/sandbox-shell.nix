@@ -17,6 +17,7 @@
       ../../../lib/features/network.nix
       ../../../lib/features/system-bin.nix
       ../../../lib/features/nix-store.nix
+      ../../../lib/features/bin-sh.nix
     ];
 
     config.app = {
