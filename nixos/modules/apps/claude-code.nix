@@ -15,6 +15,7 @@
       ../../../lib/features/system-bin.nix
       ../../../lib/features/cwd.nix
       ../../../lib/features/git.nix
+      ../../../lib/features/nix-store.nix
     ];
 
     config.app = {
