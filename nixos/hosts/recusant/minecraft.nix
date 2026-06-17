@@ -279,7 +279,9 @@ let
 
   velocityConfig = {
     config-version = "2.7";
-    bind = "0.0.0.0:25565";
+    # Internal only — the local HAProxy is the public entrypoint and feeds
+    # Velocity with PROXY (so haproxy-protocol below is required).
+    bind = "127.0.0.1:25600";
     motd = "<#5b9bd5>Recusant Network";
     show-max-players = 100;
     online-mode = true;
@@ -299,6 +301,7 @@ let
     advanced = {
       bungee-plugin-message-channel = true;
       failover-on-unexpected-server-disconnect = true;
+      haproxy-protocol = true; # all incoming comes via the local HAProxy
     };
     query.enabled = false;
   };
@@ -549,6 +552,43 @@ in
   # Console access to the tmux sockets and /mc files for the admin user.
   users.users.jrt.extraGroups = [ "mc" ];
 
+  # ── Public entrypoint: local HAProxy in front of Velocity ─────────────────
+  # Velocity (haproxy-protocol) expects PROXY on every connection, so HAProxy is
+  # the public listener and adds/forwards PROXY headers. Two paths:
+  #   :25565  mc.rooty.dev (direct/DDNS) — raw clients; HAProxy adds a PROXY header
+  #   :25601  mc-proxy.rooty.dev relay — the relay sends PROXY over the tailnet
+  # 25601 is NOT opened publicly (only the trusted tailscale0 reaches it), so the
+  # accept-proxy port can't be abused to spoof source IPs from the internet — and
+  # the relay→recusant hop over tailscale is what dodges DDNS.
+  services.haproxy = {
+    enable = true;
+    config = ''
+      global
+        log /dev/log local0
+
+      defaults
+        mode tcp
+        log global
+        option tcplog
+        timeout connect 10s
+        timeout client 1h
+        timeout server 1h
+
+      frontend mc_direct
+        bind *:25565
+        default_backend velocity
+
+      frontend mc_relay
+        bind *:25601 accept-proxy
+        default_backend velocity
+
+      backend velocity
+        server velocity 127.0.0.1:25600 send-proxy-v2
+    '';
+  };
+  # Only the direct path is public; 25601 rides the trusted tailnet.
+  networking.firewall.allowedTCPPorts = [ 25565 ];
+
   # mc-monitor: pings every server (proxy, lobby, all backends) and exports
   # loader-agnostic up/down + player counts on :9150 (tailnet-only via the
   # firewall). The on-demand backends read as down until AutoServer starts them.
@@ -649,7 +689,7 @@ in
     servers.velocity = {
       enable = true;
       autoStart = true;
-      openFirewall = true; # public entrypoint, port 25565
+      openFirewall = false; # HAProxy owns the public port (see services.haproxy)
       package = pkgs.velocityServers.velocity;
       # Bumped known-packs cap for heavily-modded backends (default 64 can crash
       # the proxy during 1.20.5+ known-pack negotiation). Raise
