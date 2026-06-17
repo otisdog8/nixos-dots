@@ -68,6 +68,9 @@ in
 
         # Sandboxing
         bubblewrap
+
+        # tmux
+        tmux
       ];
 
       variables = {
