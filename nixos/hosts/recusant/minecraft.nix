@@ -113,7 +113,7 @@ let
       javaPackage = pkgs.jdk21;
       jvmOpts = modMem "4G" "8G";
       modLoaderLauncher = true;
-      pcf = pcfNeoforge_1_21_1; # NeoForge 1.21.1
+      neoVelocity = neoVelocityJar; # Connector-safe modern forwarding
       startupDelay = 120;
       autoShutdownDelay = 600;
     };
@@ -127,7 +127,7 @@ let
       javaPackage = pkgs.jdk21;
       jvmOpts = modMem "6G" "10G";
       modLoaderLauncher = true;
-      pcf = pcfNeoforge_1_21_1; # NeoForge 1.21.1
+      neoVelocity = neoVelocityJar; # Connector-safe modern forwarding
       startupDelay = 180;
       autoShutdownDelay = 600;
     };
@@ -135,7 +135,7 @@ let
     evolution = {
       port = 25570;
       directory = "/mc/evolution";
-      pcf = pcfNeoforge_1_21_1; # NeoForge (PCF 1.1.5 covers 1.20.1–26.1.2)
+      neoVelocity = neoVelocityJar; # Connector-safe modern forwarding
       # No cpburnz NeoForge build for 1.21.0; using the 1.21.1 jar (verify it loads).
       metricsMod = cpbNeoforge_1_21_1;
       javaPackage = pkgs.jdk21;
@@ -148,7 +148,7 @@ let
     ob2 = {
       port = 25571;
       directory = "/mc/ob2";
-      pcf = pcfNeoforge_1_21_1; # NeoForge (PCF 1.1.5 covers 1.20.1–26.1.2)
+      neoVelocity = neoVelocityJar; # Connector-safe modern forwarding
       metricsMod = cpbNeoforge_1_21_1;
       javaPackage = pkgs.jdk21;
       jvmOpts = modMem "3G" "6G";
@@ -160,7 +160,7 @@ let
     sb4 = {
       port = 25572;
       directory = "/mc/sb4";
-      pcf = pcfNeoforge_1_21_1; # NeoForge (PCF 1.1.5 covers 1.20.1–26.1.2)
+      neoVelocity = neoVelocityJar; # Connector-safe modern forwarding
       metricsMod = cpbNeoforge_1_21_1;
       javaPackage = pkgs.jdk21;
       jvmOpts = modMem "2G" "4G";
@@ -172,7 +172,7 @@ let
     skies2 = {
       port = 25573;
       directory = "/mc/skies2";
-      pcf = pcfNeoforge_1_21_1; # NeoForge (PCF 1.1.5 covers 1.20.1–26.1.2)
+      neoVelocity = neoVelocityJar; # Connector-safe modern forwarding
       metricsMod = cpbNeoforge_1_21_1;
       javaPackage = pkgs.jdk21;
       jvmOpts = modMem "4G" "8G";
@@ -396,6 +396,18 @@ let
     hackMessageChain = true
     disconnectMessage = "This server requires you to connect through the proxy."
     secret = "@FORWARDING_SECRET@"
+  '';
+
+  # NeoVelocity — modern forwarding for NeoForge that is compatible with Sinytra
+  # Connector (PCF is NOT; Connector breaks PCF's forwarding handshake — see
+  # Sinytra/Connector#1736). Used on the NeoForge backends via `neoVelocity = …`.
+  neoVelocityJar = pkgs.fetchurl {
+    url = "https://cdn.modrinth.com/data/RT18TcxA/versions/YGKlK28u/neovelocity-1.2.6%2B1.21.1-1.21.5.jar";
+    hash = "sha512-fwuPJhXsmCFOm4bUmTkYN6fTTIftulEiTMAal8A5HaXXJii6HnkY67aIUcL5lx8Rg4zLAWGw5wUvgcjsq4ABSQ==";
+  };
+  neoVelocityConfig = pkgs.writeText "neovelocity-common.toml" ''
+    forwarding-secret-type = "IN_LINE"
+    forwarding-secret = "@FORWARDING_SECRET@"
   '';
 
   # ── Observability: Prometheus JMX agent on every JVM ──────────────────────
@@ -656,6 +668,9 @@ in
         lib.optionalAttrs (b ? pcf) {
           "mods/zz-proxy-compatible-forge.jar" = b.pcf;
         }
+        // lib.optionalAttrs (b ? neoVelocity) {
+          "mods/zz-neovelocity.jar" = b.neoVelocity;
+        }
         // lib.optionalAttrs (b ? fabricProxy) {
           "mods/zz-fabricproxy-lite.jar" = b.fabricProxy;
         }
@@ -665,6 +680,9 @@ in
       files =
         lib.optionalAttrs (b ? pcf) {
           "config/proxy-compatible-forge.toml" = pcfConfig;
+        }
+        // lib.optionalAttrs (b ? neoVelocity) {
+          "config/neovelocity-common.toml" = neoVelocityConfig;
         }
         // lib.optionalAttrs (b ? fabricProxy) {
           "config/FabricProxy-Lite.toml" = fabricProxyLiteConfig;
