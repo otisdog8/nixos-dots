@@ -6,7 +6,7 @@
 }:
 {
   services.garage = {
-    enable = true;
+    enable = false; # temporarily disabled
     package = pkgs.garage;
 
     environmentFile = "/persist/garage.env";
