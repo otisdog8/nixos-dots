@@ -465,6 +465,39 @@ let
     )
   );
 
+  # Velocity-specific proxy exporter (player connects/disconnects/kicks, per-server
+  # distribution, online players + latency). JVM metrics are off here since the
+  # JMX agent already covers them. Listens on the velocity port + 20000 (45565).
+  bungeeExporterJar = pkgs.fetchurl {
+    url = "https://github.com/weihao/bungeecord-prometheus-exporter/releases/download/3.2.7/bungeecord-prometheus-exporter-3.2.7.jar";
+    hash = "sha256-+Nb1lmwhypGFod+skUnpBl6UYvGFKhbuc1FeNLhK2FQ=";
+  };
+  bungeeExporterConfig = pkgs.writeText "config.json" (
+    builtins.toJSON {
+      bstats = "false";
+      host = "0.0.0.0";
+      port = toString (metricsPort2 25565);
+      prefix = "velocity_";
+      jvm_gc = "false";
+      jvm_memory = "false";
+      jvm_threads = "false";
+      player_connects = "true";
+      player_disconnects = "true";
+      player_kicks = "true";
+      player_chats = "true";
+      player_commands = "true";
+      server_list_pings = "true";
+      managed_servers = "true";
+      installed_network_plugins = "true";
+      online_player = "true";
+      online_player_latency = "true";
+      redis_player_connects = "false";
+      redis_player_disconnects = "false";
+      redis_online_player = "false";
+      redis_bungee_online_proxies = "false";
+    }
+  );
+
 in
 {
   imports = [
@@ -614,10 +647,12 @@ in
       symlinks = {
         "plugins/autoserver.jar" = autoserverJar;
         "plugins/ambassador.jar" = ambassadorJar;
+        "plugins/velocity-prometheus-exporter.jar" = bungeeExporterJar;
       };
       files = {
         "velocity.toml" = velocityTomlFile;
         "plugins/autoserver/config.toml" = autoserverTomlFile;
+        "plugins/velocity-prometheus-exporter/config.json" = bungeeExporterConfig;
       };
     };
 
