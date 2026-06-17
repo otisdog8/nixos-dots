@@ -56,6 +56,10 @@
       "vm.swappiness" = 10;
       "kernel.sysrq" = 1;
       "dev.tty.legacy_tiocsti" = 0;
+      # Raise inotify limits: large modpacks (PrismLauncher) open many config
+      # file watchers and exhaust the defaults, crashing the game at startup.
+      "fs.inotify.max_user_watches" = 1048576;
+      "fs.inotify.max_user_instances" = 1024;
     };
   };
 
