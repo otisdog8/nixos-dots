@@ -116,7 +116,21 @@ let
       javaPackage = pkgs.jdk21;
       jvmOpts = modMem "4G" "8G";
       modLoaderLauncher = true;
+      pcf = pcfNeoforge_1_21_1; # NeoForge 1.21.1
       startupDelay = 120;
+      autoShutdownDelay = 600;
+    };
+
+    # Better MC BMC5 — NeoForge 1.21.1 (Java 21). Stage the server pack manually
+    # (incl. Proxy Compatible Forge for modern forwarding), like the other packs.
+    bettermc = {
+      port = 25574;
+      directory = "/mc/bettermc";
+      javaPackage = pkgs.jdk21;
+      jvmOpts = modMem "6G" "10G";
+      modLoaderLauncher = true;
+      pcf = pcfNeoforge_1_21_1; # NeoForge 1.21.1
+      startupDelay = 180;
       autoShutdownDelay = 600;
     };
 
@@ -159,6 +173,55 @@ let
       startupDelay = 120;
       autoShutdownDelay = 600;
     };
+
+    # Fabric 1.20.1 (Java 17). Plain-jar launch (no unix_args.txt) + FabricProxy-
+    # Lite for modern forwarding. Stage the pack into /mc/p2haustian.
+    p2haustian = {
+      port = 25575;
+      directory = "/mc/p2haustian";
+      javaPackage = pkgs.jdk17;
+      jvmOpts = modMem "2G" "4G";
+      jar = "fabric-server-launcher.jar";
+      modLoaderLauncher = false; # Fabric: plain jar, not unix_args.txt
+      fabricProxy = fabricProxyLite_1_20_1; # Fabric 1.20.1
+      startupDelay = 120;
+      autoShutdownDelay = 600;
+    };
+
+    # Fabric 1.21.1 (Java 21). Plain-jar launch + FabricProxy-Lite.
+    dungeonheroes = {
+      port = 25576;
+      directory = "/mc/dungeonheroes";
+      javaPackage = pkgs.jdk21;
+      jvmOpts = modMem "2G" "4G";
+      jar = "fabric-server-launcher.jar";
+      modLoaderLauncher = false;
+      fabricProxy = fabricProxyLite_1_21_1; # Fabric 1.21.1
+      startupDelay = 120;
+      autoShutdownDelay = 600;
+    };
+
+    # Forge 1.20.1 (Java 17). Like atm9: forwarding via Ambassador on the proxy,
+    # so no backend mod.
+    integratedmc = {
+      port = 25577;
+      directory = "/mc/integratedmc";
+      javaPackage = pkgs.jdk17;
+      jvmOpts = modMem "4G" "8G";
+      modLoaderLauncher = true;
+      startupDelay = 120;
+      autoShutdownDelay = 600;
+    };
+
+    abyssalascent = {
+      port = 25578;
+      directory = "/mc/abyssalascent";
+      javaPackage = pkgs.jdk17;
+      jvmOpts = modMem "4G" "8G";
+      modLoaderLauncher = true;
+      startupDelay = 120;
+      autoShutdownDelay = 600;
+    };
   };
 
   lobbyPort = 25566;
@@ -171,18 +234,6 @@ let
       port = 25568;
       directory = "/mc/sdfs";
       startupDelay = 30;
-      autoShutdownDelay = 600;
-    };
-    bettermc = {
-      port = 25574;
-      directory = "/mc/bettermc";
-      startupDelay = 180;
-      autoShutdownDelay = 600;
-    };
-    baplus = {
-      port = 25575;
-      directory = "/mc/baplus";
-      startupDelay = 150;
       autoShutdownDelay = 600;
     };
   };
@@ -269,24 +320,23 @@ let
     hash = "sha512-HB9Nt3XZ374oh3a9vS4LL0kQZDuQNGB9gT7lCdol/EXoTPsBg838MFYLJjLyTHXcxRpKm7Dej/KayeJL2J78lA==";
   };
 
-  # ── Modrinth modpack backends (declarative via fetchModrinthModpack) ──────
-  # fetchModrinthModpack is a fixed-output derivation: build once with
-  # packHash = lib.fakeHash, then paste the sha256 Nix reports. Each pack's mods
-  # are verified against the manifest's own hashes during the build.
-  #
-  # Forwarding mods (added to mods/ so these work behind Velocity's modern
-  # forwarding): Proxy Compatible Forge for NeoForge, FabricProxy-Lite for Fabric.
-  pcfNeoforgeJar = pkgs.fetchurl {
+  # server.properties forced on every custom-module backend so they behave as
+  # proxy backends (version-agnostic; applied to all).
+  proxyProps = {
+    online-mode = false; # the proxy authenticates
+    server-ip = "127.0.0.1"; # only reachable via Velocity
+    enforce-secure-profile = false; # offline-mode backend behind the proxy
+    white-list = globalWhitelist != { }; # enforce the same whitelist everywhere
+  };
+
+  # Forwarding mods, pinned per MC version. A backend selects its build with
+  # `pcf = <jar>` (Forge/NeoForge → Proxy Compatible Forge) or
+  # `fabricProxy = <jar>` (Fabric → FabricProxy-Lite); the matching config below
+  # carries @FORWARDING_SECRET@ from the sops env file.
+  pcfNeoforge_1_21_1 = pkgs.fetchurl {
     url = "https://cdn.modrinth.com/data/vDyrHl8l/versions/9j2U3PgC/proxy-compatible-forge-1.1.5.jar";
     hash = "sha512-1o+HW/SPOqGLw3G7NfOD/Z+LlmbSRQBCXxyzUPiusewr2MYii8qw3ApnLlD1peNij5woc4bHKBR3DA3FDkAXyQ==";
   };
-  fabricProxyLiteJar = pkgs.fetchurl {
-    url = "https://cdn.modrinth.com/data/8dI2tmqs/versions/nR8AIdvx/FabricProxy-Lite-2.11.0.jar";
-    hash = "sha512-wuHZJ59vGaVh+TS4RlQLKKAzWGtLQZucGqJ6xD/8j60s5g4hKhVAbl+jkH/17L5a96XtsYOp7mc3pB5GSuwTdQ==";
-  };
-
-  # Forwarding-mod configs. @FORWARDING_SECRET@ is substituted at start from the
-  # sops env file (same mechanism as the lobby).
   pcfConfig = pkgs.writeText "proxy-compatible-forge.toml" ''
     [forwarding]
     enabled = true
@@ -300,6 +350,15 @@ let
     [advanced]
     modernForwardingVersion = "NO_OVERRIDE"
   '';
+
+  fabricProxyLite_1_20_1 = pkgs.fetchurl {
+    url = "https://cdn.modrinth.com/data/8dI2tmqs/versions/XJmDAnj5/FabricProxy-Lite-2.6.0.jar";
+    hash = "sha512-Nl0p667KVf/apNBmFBVZsA4xd0N7DZ+r7jmW/NvY4vuK5FwMYAyzV6BC7+dQyqK276r/pDn1cQy7BN7q6ZS33Q==";
+  };
+  fabricProxyLite_1_21_1 = pkgs.fetchurl {
+    url = "https://cdn.modrinth.com/data/8dI2tmqs/versions/KqB3UA0q/FabricProxy-Lite-2.10.1.jar";
+    hash = "sha512-nAwdRLon7TSDu2B/lUQb6p+xxlviaqXcCvdDFn+3kzYjumEpNEc4sIQFau98tafbDbR3NI0HZy1cZ6LhIE6clA==";
+  };
   fabricProxyLiteConfig = pkgs.writeText "FabricProxy-Lite.toml" ''
     hackOnlineMode = true
     hackEarlySend = false
@@ -308,25 +367,6 @@ let
     secret = "@FORWARDING_SECRET@"
   '';
 
-  # Better MC [NeoForge] BMC5 — NeoForge 21.1.176 / MC 1.21.1.
-  bmc5Pack =
-    (pkgs.fetchModrinthModpack {
-      url = "https://cdn.modrinth.com/data/B37WQ89b/versions/Mo8ro6Ra/Better%20MC%20%5BNEOFORGE%5D%20BMC5%20v31.mrpack";
-      packHash = "sha256-b/7XStGyGi5M9Et+XHF8u0JOdpdfCf+9lQ9s6JKzgpc="; # build once → paste reported sha256
-      pname = "better-mc-bmc5";
-      version = "v31";
-    }).addFiles
-      { "mods/zz-proxy-compatible-forge.jar" = pcfNeoforgeJar; };
-
-  # Better Adventures+ (BA+) — Fabric loader 0.18.4 / MC 1.21.11.
-  baplusPack =
-    (pkgs.fetchModrinthModpack {
-      url = "https://cdn.modrinth.com/data/39X4pv9r/versions/zt2Xrekv/1.0.mrpack";
-      packHash = "sha256-mqofLLd4BMJQ3di5GJpB8syLE+nfZodnQx89W7A7C+Q="; # build once → paste reported sha256
-      pname = "better-adventures-plus";
-      version = "1.0";
-    }).addFiles
-      { "mods/zz-fabricproxy-lite.jar" = fabricProxyLiteJar; };
 in
 {
   imports = [
@@ -368,6 +408,7 @@ in
     enable = true;
     operators = globalOperators;
     whitelist = globalWhitelist;
+    environmentFile = config.sops.templates."minecraft.env".path; # forwarding secret
     servers = lib.mapAttrs (_: b: {
       enable = true;
       autoStart = false; # started on connect by AutoServer
@@ -381,6 +422,26 @@ in
         modLoaderLauncher
         ;
       jar = b.jar or null;
+      serverProperties = proxyProps;
+      # Forwarding mod + config wired per loader; the backend carries the version-
+      # specific jar in `pcf`/`fabricProxy` (the modpack jars are staged manually).
+      #   pcf         → Proxy Compatible Forge (Forge/NeoForge)
+      #   fabricProxy → FabricProxy-Lite (Fabric)
+      # atm9 (Forge 1.20.1) uses Ambassador on the proxy, so no backend mod.
+      symlinks =
+        lib.optionalAttrs (b ? pcf) {
+          "mods/zz-proxy-compatible-forge.jar" = b.pcf;
+        }
+        // lib.optionalAttrs (b ? fabricProxy) {
+          "mods/zz-fabricproxy-lite.jar" = b.fabricProxy;
+        };
+      files =
+        lib.optionalAttrs (b ? pcf) {
+          "config/proxy-compatible-forge.toml" = pcfConfig;
+        }
+        // lib.optionalAttrs (b ? fabricProxy) {
+          "config/FabricProxy-Lite.toml" = fabricProxyLiteConfig;
+        };
     }) backends;
   };
 
@@ -479,55 +540,6 @@ in
         enforce-secure-profile = false; # backend is offline-mode behind the proxy
         white-list = globalWhitelist != { };
         view-distance = 32; # the one non-default tuning from the old config
-      };
-    };
-
-    # ── Modrinth modpack backends (on-demand, behind Velocity) ──────────────
-    # mods/ is symlinked read-only (pack mods + the forwarding mod); config/ is a
-    # writable copy reset to pack defaults each boot; the forwarding toml carries
-    # the secret. world/ is unmanaged and persists.
-    servers.bettermc = {
-      enable = true;
-      autoStart = false;
-      restart = "no";
-      package = pkgs.neoforgeServers.neoforge-1_21_1-21_1_176;
-      jvmOpts = modMem "6G" "10G";
-      operators = globalOperators;
-      whitelist = globalWhitelist;
-      symlinks."mods" = "${bmc5Pack}/mods";
-      files = {
-        "config" = "${bmc5Pack}/config";
-        "defaultconfigs" = "${bmc5Pack}/defaultconfigs";
-        "config/proxy-compatible-forge.toml" = pcfConfig;
-      };
-      serverProperties = {
-        server-port = 25574;
-        server-ip = "127.0.0.1";
-        online-mode = false;
-        white-list = globalWhitelist != { };
-        motd = "Better MC BMC5";
-      };
-    };
-
-    servers.baplus = {
-      enable = true;
-      autoStart = false;
-      restart = "no";
-      package = pkgs.fabricServers.fabric-1_21_11;
-      jvmOpts = modMem "4G" "8G";
-      operators = globalOperators;
-      whitelist = globalWhitelist;
-      symlinks."mods" = "${baplusPack}/mods";
-      files = {
-        "config" = "${baplusPack}/config";
-        "config/FabricProxy-Lite.toml" = fabricProxyLiteConfig;
-      };
-      serverProperties = {
-        server-port = 25575;
-        server-ip = "127.0.0.1";
-        online-mode = false;
-        white-list = globalWhitelist != { };
-        motd = "Better Adventures+";
       };
     };
   };

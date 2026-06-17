@@ -58,6 +58,58 @@ let
     builtins.toJSON (lib.mapAttrsToList (name: uuid: { inherit name uuid; }) cfg.whitelist)
   );
 
+  # Stage declarative state into the (persistent) data dir before each start:
+  # ops/whitelist, server.properties overrides, symlinks (e.g. an extra mod), and
+  # files (e.g. a forwarding config with @FORWARDING_SECRET@). symlinks/files are
+  # tracked in .mc-managed and cleaned at the next start so removals take effect.
+  mkPreStart =
+    name: serverCfg:
+    let
+      esc = lib.escapeShellArg;
+      propLines = lib.mapAttrsToList (
+        k: v:
+        let
+          val = if lib.isBool v then lib.boolToString v else toString v;
+        in
+        ''
+          ${pkgs.gnused}/bin/sed -i ${esc "/^${k}=/d"} server.properties
+          printf '%s\n' ${esc "${k}=${val}"} >> server.properties
+        ''
+      ) serverCfg.serverProperties;
+      symlinkLines = lib.mapAttrsToList (n: src: ''
+        mkdir -p "$(dirname ${esc n})"
+        ln -sfn ${esc "${src}"} ${esc n}
+        printf '%s\n' ${esc n} >> .mc-managed
+      '') serverCfg.symlinks;
+      fileLines = lib.mapAttrsToList (n: src: ''
+        mkdir -p "$(dirname ${esc n})"
+        if ${pkgs.file}/bin/file --mime-encoding ${esc "${src}"} | grep -qv '\bbinary$'; then
+          ${pkgs.gawk}/bin/awk '{ for (v in ENVIRON) gsub("@" v "@", ENVIRON[v]); print }' ${esc "${src}"} > ${esc n}
+        else
+          cp -r --dereference ${esc "${src}"} ${esc n}
+        fi
+        chmod -R u+w ${esc n}
+        printf '%s\n' ${esc n} >> .mc-managed
+      '') serverCfg.files;
+    in
+    pkgs.writeShellScript "mc-pre-${name}" ''
+      set -eu
+      if [ -e .mc-managed ]; then
+        while IFS= read -r p; do [ -n "$p" ] && rm -rf "$p"; done < .mc-managed
+        rm -f .mc-managed
+      fi
+      ${lib.optionalString (
+        cfg.operators != { }
+      ) "${pkgs.coreutils}/bin/install -m640 ${opsFile} ops.json"}
+      ${lib.optionalString (
+        cfg.whitelist != { }
+      ) "${pkgs.coreutils}/bin/install -m640 ${whitelistFile} whitelist.json"}
+      ${lib.optionalString (serverCfg.serverProperties != { }) "touch server.properties"}
+      ${lib.concatStringsSep "\n" propLines}
+      ${lib.concatStringsSep "\n" symlinkLines}
+      ${lib.concatStringsSep "\n" fileLines}
+    '';
+
   serverOpts =
     { name, ... }:
     {
@@ -169,6 +221,46 @@ let
           default = true;
           description = "Enable systemd sandboxing";
         };
+
+        serverProperties = lib.mkOption {
+          type = lib.types.attrsOf (
+            lib.types.oneOf [
+              lib.types.bool
+              lib.types.int
+              lib.types.str
+            ]
+          );
+          default = { };
+          example = {
+            online-mode = false;
+            server-ip = "127.0.0.1";
+          };
+          description = ''
+            server.properties keys to force on each start. Merged into the
+            (persistent, pack-staged) server.properties — these keys are
+            overridden, the rest of the file is left alone.
+          '';
+        };
+
+        symlinks = lib.mkOption {
+          type = lib.types.attrsOf (lib.types.either lib.types.path lib.types.str);
+          default = { };
+          example = lib.literalExpression ''{ "mods/proxy-compatible-forge.jar" = pcfJar; }'';
+          description = ''
+            Read-only symlinks created in the data dir each start (and cleaned on
+            the next start). Handy for dropping an extra mod into a staged mods/.
+          '';
+        };
+
+        files = lib.mkOption {
+          type = lib.types.attrsOf (lib.types.either lib.types.path lib.types.str);
+          default = { };
+          description = ''
+            Writable files copied into the data dir each start (cleaned on the
+            next start). Text files have @VAR@ placeholders substituted from
+            <option>environmentFile</option> (e.g. @FORWARDING_SECRET@).
+          '';
+        };
       };
     };
 
@@ -248,6 +340,16 @@ in
         this to be enforced.
       '';
     };
+
+    environmentFile = lib.mkOption {
+      type = lib.types.nullOr lib.types.path;
+      default = null;
+      description = ''
+        Env file (var=value lines) loaded for every server. Used to provide
+        secrets to mods (e.g. the forwarding secret) and to substitute @VAR@
+        placeholders in per-server <option>files</option>.
+      '';
+    };
   };
 
   config = lib.mkIf cfg.enable {
@@ -296,16 +398,10 @@ in
           Type = "forking";
           GuessMainPID = true;
 
-          # Refresh the declarative ops/whitelist before each start (writable, so
-          # in-game /op still works for the session but resets to this on reboot).
-          ExecStartPre = pkgs.writeShellScript "mc-pre-${name}" ''
-            ${lib.optionalString (
-              cfg.operators != { }
-            ) "${pkgs.coreutils}/bin/install -m640 ${opsFile} ops.json"}
-            ${lib.optionalString (
-              cfg.whitelist != { }
-            ) "${pkgs.coreutils}/bin/install -m640 ${whitelistFile} whitelist.json"}
-          '';
+          # Stage declarative state (ops/whitelist, server.properties overrides,
+          # symlinks, files) before each start. Writable, so in-game changes work
+          # for the session but reset to this on reboot.
+          ExecStartPre = mkPreStart name serverCfg;
 
           ExecStart = pkgs.writeShellScript "mc-start-${name}" ''
             ${tmux} -S ${sock} new-session -d ${mkServerCommand name serverCfg}
@@ -340,6 +436,9 @@ in
           # Shared with the nix-minecraft module; sockets are named per server.
           RuntimeDirectory = "minecraft";
           RuntimeDirectoryPreserve = "yes";
+        }
+        // lib.optionalAttrs (cfg.environmentFile != null) {
+          EnvironmentFile = cfg.environmentFile;
         }
         // lib.optionalAttrs serverCfg.sandbox.enable {
           ProtectSystem = "strict";
