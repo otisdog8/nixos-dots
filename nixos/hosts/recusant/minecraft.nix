@@ -101,7 +101,7 @@ let
       javaPackage = pkgs.jdk17;
       jvmOpts = modMem "6G" "10G";
       modLoaderLauncher = true;
-      startupDelay = 120;
+      startupDelay = 30;
       autoShutdownDelay = 600;
     };
 
@@ -114,7 +114,7 @@ let
       jvmOpts = modMem "4G" "8G";
       modLoaderLauncher = true;
       neoVelocity = neoVelocityJar; # Connector-safe modern forwarding
-      startupDelay = 120;
+      startupDelay = 30;
       autoShutdownDelay = 600;
     };
 
@@ -128,7 +128,7 @@ let
       jvmOpts = modMem "6G" "10G";
       modLoaderLauncher = true;
       neoVelocity = neoVelocityJar; # Connector-safe modern forwarding
-      startupDelay = 180;
+      startupDelay = 30;
       autoShutdownDelay = 600;
     };
 
@@ -141,7 +141,7 @@ let
       javaPackage = pkgs.jdk21;
       jvmOpts = modMem "4G" "8G";
       modLoaderLauncher = true;
-      startupDelay = 120;
+      startupDelay = 30;
       autoShutdownDelay = 600;
     };
 
@@ -153,7 +153,7 @@ let
       javaPackage = pkgs.jdk21;
       jvmOpts = modMem "3G" "6G";
       modLoaderLauncher = true;
-      startupDelay = 120;
+      startupDelay = 30;
       autoShutdownDelay = 600;
     };
 
@@ -165,7 +165,7 @@ let
       javaPackage = pkgs.jdk21;
       jvmOpts = modMem "2G" "4G";
       modLoaderLauncher = true;
-      startupDelay = 120;
+      startupDelay = 30;
       autoShutdownDelay = 600;
     };
 
@@ -177,7 +177,7 @@ let
       javaPackage = pkgs.jdk21;
       jvmOpts = modMem "4G" "8G";
       modLoaderLauncher = true;
-      startupDelay = 120;
+      startupDelay = 30;
       autoShutdownDelay = 600;
     };
 
@@ -192,7 +192,7 @@ let
       jar = "fabric-server-launcher.jar";
       modLoaderLauncher = false; # Fabric: plain jar, not unix_args.txt
       fabricProxy = fabricProxyLite_1_20_1; # Fabric 1.20.1
-      startupDelay = 120;
+      startupDelay = 30;
       autoShutdownDelay = 600;
     };
 
@@ -206,7 +206,7 @@ let
       jar = "fabric-server-launcher.jar";
       modLoaderLauncher = false;
       fabricProxy = fabricProxyLite_1_21_1; # Fabric 1.21.1
-      startupDelay = 120;
+      startupDelay = 30;
       autoShutdownDelay = 600;
     };
 
@@ -219,7 +219,7 @@ let
       javaPackage = pkgs.jdk17;
       jvmOpts = modMem "4G" "8G";
       modLoaderLauncher = true;
-      startupDelay = 120;
+      startupDelay = 30;
       autoShutdownDelay = 600;
     };
 
@@ -230,7 +230,7 @@ let
       javaPackage = pkgs.jdk17;
       jvmOpts = modMem "4G" "8G";
       modLoaderLauncher = true;
-      startupDelay = 120;
+      startupDelay = 30;
       autoShutdownDelay = 600;
     };
   };
@@ -244,7 +244,7 @@ let
     sdfs = {
       port = 25568;
       directory = "/mc/sdfs";
-      startupDelay = 30;
+      startupDelay = 10;
       autoShutdownDelay = 600;
     };
   };
