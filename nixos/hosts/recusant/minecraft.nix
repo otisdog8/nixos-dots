@@ -254,12 +254,14 @@ let
   backendAddresses = lib.mapAttrs (_: b: "127.0.0.1:${toString b.port}") (backends // nixBackends);
 
   # Per-pack connect addresses, so a (NeoForge) client reaches its matching
-  # backend directly instead of the vanilla lobby. Two base domains: mc.rooty.dev
-  # (direct/DDNS) and mc-proxy.rooty.dev (a relay that adds latency but dodges
-  # DDNS). DNS-side, <pack>.<domain> CNAMEs to <domain>; Velocity matches on the
-  # hostname the client sends, so both resolve to the right server.
+  # backend directly instead of the vanilla lobby. Base domains:
+  #   mc.rooty.dev / mc.recusant.rooty.dev — direct (DDNS)
+  #   mc-proxy.rooty.dev                    — relay (extra latency, dodges DDNS)
+  # DNS-side, <pack>.<domain> CNAMEs to <domain>; Velocity matches on the hostname
+  # the client sends, so each resolves to the right server.
   mcDomains = [
     "mc.rooty.dev"
+    "mc.recusant.rooty.dev"
     "mc-proxy.rooty.dev"
   ];
   forcedHosts = lib.listToAttrs (
