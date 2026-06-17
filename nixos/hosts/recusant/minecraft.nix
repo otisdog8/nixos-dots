@@ -406,8 +406,12 @@ let
     hash = "sha512-fwuPJhXsmCFOm4bUmTkYN6fTTIftulEiTMAal8A5HaXXJii6HnkY67aIUcL5lx8Rg4zLAWGw5wUvgcjsq4ABSQ==";
   };
   neoVelocityConfig = pkgs.writeText "neovelocity-common.toml" ''
-    forwarding-secret-type = "IN_LINE"
+    [forwarding]
     forwarding-secret = "@FORWARDING_SECRET@"
+    forwarding-secret-type = "IN_LINE"
+
+    [compatibility]
+    login-custom-packet-catchall = true
   '';
 
   # ── Observability: Prometheus JMX agent on every JVM ──────────────────────
