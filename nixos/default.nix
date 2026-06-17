@@ -119,7 +119,7 @@
   # Nixpkgs configuration
   nixpkgs = {
     config.allowUnfree = true;
-    overlays = builtins.attrValues outputs.overlays;
+    overlays = builtins.attrValues outputs.overlays ++ [ inputs.nix-minecraft.overlay ];
     hostPlatform = lib.mkDefault platform;
   };
 

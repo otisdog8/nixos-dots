@@ -1,0 +1,8 @@
+keys:
+  - &recusant_host age1vawwp80rdgfkajed3tvluzgucl3ykh8ra5r4ullqcze8hj4lr9jsldezda
+  - &galaxy_host age17r8aq0y6mrtwqtwffp6t9a8fu0pdar6yerwzq6sr4m6ppk880gwqypxy6k
+creation_rules:
+  - path_regex: .*recusant\.yaml
+    age:
+      - *recusant_host
+      - *galaxy_host
