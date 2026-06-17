@@ -253,6 +253,21 @@ let
   # Velocity [servers] covers every backend (both frameworks) + the lobby.
   backendAddresses = lib.mapAttrs (_: b: "127.0.0.1:${toString b.port}") (backends // nixBackends);
 
+  # Per-pack connect addresses, so a (NeoForge) client reaches its matching
+  # backend directly instead of the vanilla lobby. Two base domains: mc.rooty.dev
+  # (direct/DDNS) and mc-proxy.rooty.dev (a relay that adds latency but dodges
+  # DDNS). DNS-side, <pack>.<domain> CNAMEs to <domain>; Velocity matches on the
+  # hostname the client sends, so both resolve to the right server.
+  mcDomains = [
+    "mc.rooty.dev"
+    "mc-proxy.rooty.dev"
+  ];
+  forcedHosts = lib.listToAttrs (
+    lib.concatMap (name: map (d: lib.nameValuePair "${name}.${d}" [ name ]) mcDomains) (
+      [ "lobby" ] ++ lib.attrNames (backends // nixBackends)
+    )
+  );
+
   mkAutoserverEntry = unit: b: {
     workingDirectory = b.directory;
     start = "systemctl start ${unit}";
@@ -280,7 +295,7 @@ let
       lobby = "127.0.0.1:${toString lobbyPort}";
       try = [ "lobby" ];
     };
-    forced-hosts = { };
+    forced-hosts = forcedHosts;
     advanced = {
       bungee-plugin-message-channel = true;
       failover-on-unexpected-server-disconnect = true;
