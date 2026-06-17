@@ -318,7 +318,7 @@ let
   bmc5Pack =
     (pkgs.fetchModrinthModpack {
       url = "https://cdn.modrinth.com/data/B37WQ89b/versions/Mo8ro6Ra/Better%20MC%20%5BNEOFORGE%5D%20BMC5%20v31.mrpack";
-      packHash = lib.fakeHash; # build once → paste reported sha256
+      packHash = "sha256-b/7XStGyGi5M9Et+XHF8u0JOdpdfCf+9lQ9s6JKzgpc="; # build once → paste reported sha256
       pname = "better-mc-bmc5";
       version = "v31";
     }).addFiles
