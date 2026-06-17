@@ -93,7 +93,15 @@
   networking.firewall.allowedTCPPorts = [ 2049 ];
 
   # Prometheus exporters
-  services.prometheus.exporters.node.enable = true;
+  services.prometheus.exporters.node = {
+    enable = true;
+    # bcachefs collector is default-enabled in node_exporter 1.11.1; listed
+    # explicitly to document intent. Reads /sys/fs/bcachefs (root-only files),
+    # which works since the exporter runs as root (DynamicUser = false).
+    # systemd: per-unit state (failed/active) across all units.
+    # processes: aggregate process/thread counts by state.
+    enabledCollectors = [ "bcachefs" "systemd" "processes" ];
+  };
   services.prometheus.exporters.smartctl = {
     enable = true;
     devices = [ ];
