@@ -74,6 +74,10 @@ in
         nfs-utils
         bcachefs-tools
         clevis
+
+        # xterm-kitty terminfo so SSHing in from a kitty terminal (TERM=xterm-kitty)
+        # doesn't break tmux/ncurses apps. Split output — does not pull in kitty.
+        kitty.terminfo
       ];
 
       pathsToLink = [ "/share/zsh" ];

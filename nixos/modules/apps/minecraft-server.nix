@@ -260,6 +260,10 @@ in
     };
     users.groups.mc = { };
 
+    # tmux on the system PATH so admins (root / mc / members of the mc group) can
+    # attach to a server console: `tmux -S /run/minecraft/<name>.sock attach`.
+    environment.systemPackages = [ pkgs.tmux ];
+
     # Let the `mc` user manage minecraft-* units without sudo. This is what
     # AutoServer (running inside Velocity as `mc`) uses to start/stop backends.
     # Matches both `minecraft-<name>` (this module) and `minecraft-server-<name>`
