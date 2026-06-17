@@ -328,7 +328,7 @@ let
   baplusPack =
     (pkgs.fetchModrinthModpack {
       url = "https://cdn.modrinth.com/data/39X4pv9r/versions/zt2Xrekv/1.0.mrpack";
-      packHash = lib.fakeHash; # build once → paste reported sha256
+      packHash = "sha256-mqofLLd4BMJQ3di5GJpB8syLE+nfZodnQx89W7A7C+Q="; # build once → paste reported sha256
       pname = "better-adventures-plus";
       version = "1.0";
     }).addFiles
