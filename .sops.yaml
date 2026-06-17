@@ -1,8 +1,12 @@
 keys:
   - &recusant_host age1vawwp80rdgfkajed3tvluzgucl3ykh8ra5r4ullqcze8hj4lr9jsldezda
   - &galaxy_host age17r8aq0y6mrtwqtwffp6t9a8fu0pdar6yerwzq6sr4m6ppk880gwqypxy6k
+  # Admin workstation (constitution host key). Lets you edit secrets directly
+  # from constitution without SSHing to a host that holds a recipient key.
+  - &constitution_host age1850lrhfzq39frupln50mgqwxhgzlv78kzmgwxadk0wszxgxlhausq86luv
 creation_rules:
   - path_regex: .*recusant\.yaml
     age:
       - *recusant_host
       - *galaxy_host
+      - *constitution_host
