@@ -97,19 +97,6 @@ let
   # ~1.20.5+/NeoForge 1.21, Java 17 for 1.17–1.20.4). Memory taken from each
   # pack's user_jvm_args.txt where it set one; sb4 set none, so a sane default.
   backends = {
-    # Paper survival (formerly standalone). Needs its paper-global.yml velocity
-    # block + online-mode=false to work behind the proxy.
-    sdfs = {
-      port = 25568;
-      directory = "/mc/sdfs";
-      javaPackage = pkgs.jdk21;
-      jvmOpts = "${mem "2G" "6G"} ${aikarFlags}";
-      jar = "paper.jar";
-      modLoaderLauncher = false;
-      startupDelay = 30;
-      autoShutdownDelay = 600;
-    };
-
     # All the Mods 9 — Forge 1.20.1 (Java 17). 1.20.1 forwarding rides the
     # Ambassador plugin on Velocity; no backend mod required.
     atm9 = {
@@ -179,6 +166,13 @@ let
   # nix-minecraft-managed Modrinth backends (declarative .mrpack, on-demand). Same
   # model as the custom-module backends, but the unit is minecraft-server-<name>.
   nixBackends = {
+    # Paper survival (was a custom-module backend; now nix-managed + pinned).
+    sdfs = {
+      port = 25568;
+      directory = "/mc/sdfs";
+      startupDelay = 30;
+      autoShutdownDelay = 600;
+    };
     bettermc = {
       port = 25574;
       directory = "/mc/bettermc";
@@ -426,7 +420,11 @@ in
     servers.lobby = {
       enable = true;
       autoStart = true; # always-on `try` fallback
-      package = pkgs.paperServers.paper;
+      # Pinned to the latest MC so the lobby never silently jumps versions on a
+      # rebuild (keeps the paper-global.yml schema and the Via* plugins in sync).
+      # ViaBackwards (5.9.1) covers every lower client version. Bump in lockstep
+      # with the Via* pins.
+      package = pkgs.paperServers.paper-26_1_2;
       # disableChannelLimit lets modded (Forge/NeoForge) clients register their
       # plugin channels without being kicked ("Invalid payload REGISTER").
       jvmOpts = "-Xmx2G -Xms1G -Dpaper.disableChannelLimit=true";
@@ -452,6 +450,35 @@ in
         gamemode = "adventure";
         spawn-protection = 0;
         motd = "Recusant Lobby";
+      };
+    };
+
+    # Paper survival (on-demand). Plugins in /mc/sdfs/plugins and the world are
+    # unmanaged and persist; only server.properties/ops/whitelist are declarative.
+    # Needs the same paper-global.yml velocity block as the lobby (one-time).
+    servers.sdfs = {
+      enable = true;
+      autoStart = false;
+      restart = "no";
+      package = pkgs.paperServers.paper-1_21_11;
+      # disableChannelLimit lets modded clients register their channels; the Via
+      # stack lets any-version clients (e.g. 26.x) join this 1.21.11 server.
+      jvmOpts = "${modMem "2G" "6G"} -Dpaper.disableChannelLimit=true";
+      # Symlinked alongside the persistent /mc/sdfs/plugins jars (not replacing them).
+      symlinks = {
+        "plugins/ViaVersion.jar" = viaVersionJar;
+        "plugins/ViaBackwards.jar" = viaBackwardsJar;
+        "plugins/ViaRewind.jar" = viaRewindJar;
+      };
+      operators = globalOperators;
+      whitelist = globalWhitelist;
+      serverProperties = {
+        server-port = 25568;
+        server-ip = "127.0.0.1";
+        online-mode = false; # proxy authenticates
+        enforce-secure-profile = false; # backend is offline-mode behind the proxy
+        white-list = globalWhitelist != { };
+        view-distance = 32; # the one non-default tuning from the old config
       };
     };
 
