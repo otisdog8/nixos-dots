@@ -132,10 +132,6 @@ let
       neoVelocity = neoVelocityJar; # Connector-safe modern forwarding
       startupDelay = 30;
       autoShutdownDelay = 600;
-      # Better MC's `stop` is slow/can hang on save. Wait 120s, then SIGINT to
-      # force the JVM shutdown hook; give the whole stop up to 300s before SIGKILL.
-      sigintDelay = 120;
-      timeoutStop = "300s";
     };
 
     evolution = {
@@ -732,10 +728,6 @@ in
         javaPackage
         modLoaderLauncher
         ;
-      # Per-pack shutdown tuning (e.g. bettermc's SIGINT fallback); both fall
-      # back to the module defaults when a backend doesn't set them.
-      sigintDelay = b.sigintDelay or null;
-      timeoutStop = b.timeoutStop or "120s";
       jvmOpts = "${b.jvmOpts} ${jmxOpts b.port}"; # + JMX metrics agent
       jar = b.jar or null;
       serverProperties = proxyProps;
