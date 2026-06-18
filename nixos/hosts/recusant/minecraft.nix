@@ -726,23 +726,25 @@ in
       openFirewall = false; # HAProxy owns the public port (see services.haproxy)
       package = pkgs.velocityServers.velocity;
       # Bumped known-packs cap for heavily-modded backends (default 64 can crash
-      # the proxy during 1.20.5+ known-pack negotiation). Raise
-      # -Dvelocity.max-plugin-message-payload-size too if a modded backend trips
-      # a "Packet ... was too big" error on join.
+      # the proxy during 1.20.5+ known-pack negotiation).
       #
-      # increased-compression-cap + skip-uncompressed-packet-size-validation let
-      # mods send custom payloads over Velocity's vanilla 8 MiB cap. Without them
-      # a large config-sync (e.g. Fzzy Config's S2C sync on a big pack) decodes as
-      # "A packet did not decode successfully (invalid data)" and drops the player
-      # right after spawn. No Fzzy Config update fixes this — it's a proxy limit.
+      # Big modded packs send oversized CUSTOM PAYLOADS (plugin messages) during
+      # config/play — registry & mod-data syncs. Three independent Velocity limits
+      # gate these, and a large pack can trip any of them:
+      #   - max-plugin-message-payload-size: per-plugin-message cap. Velocity's
+      #     default (~1.18 MiB) is far too small; atm10's config-phase sync is
+      #     ~1.96 MiB and threw `PluginMessagePacket was too big`. Set to 32 MiB.
+      #   - increased-compression-cap: raises the frame uncompressed cap 8→128 MiB
+      #     (needed once a payload above 8 MiB is allowed through).
+      #   - skip-uncompressed-packet-size-validation: lets modded frames over the
+      #     threshold pass instead of decoding as "invalid data".
+      # Backends are trusted (bind 127.0.0.1), so a generous cap is safe here.
       jvmOpts = lib.concatStringsSep " " [
         "-Xmx1G -Xms512M"
         "-Dvelocity.max-known-packs=4096"
+        "-Dvelocity.max-plugin-message-payload-size=33554432" # 32 MiB
         "-Dvelocity.increased-compression-cap=true"
         "-Dvelocity.skip-uncompressed-packet-size-validation=true"
-        # TEMP DIAGNOSTIC: names the exact packet/channel that fails to decode
-        # (e.g. atm10 ConfigSessionHandler "invalid data"). Remove once resolved.
-        "-Dvelocity.packet-decode-logging=true"
         (jmxOpts 25565)
       ];
       stopCommand = "end";
