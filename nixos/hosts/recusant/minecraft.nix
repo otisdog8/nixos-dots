@@ -731,6 +731,7 @@ in
       jvmOpts = "${b.jvmOpts} ${jmxOpts b.port}"; # + JMX metrics agent
       jar = b.jar or null;
       serverProperties = proxyProps;
+      whitelist = b.whitelist or backendWhitelist; # per-pack override (e.g. bettermc)
       # Forwarding mod + config wired per loader; the backend carries the version-
       # specific jar in `pcf`/`fabricProxy` (the modpack jars are staged manually).
       #   pcf         → Proxy Compatible Forge (Forge/NeoForge)

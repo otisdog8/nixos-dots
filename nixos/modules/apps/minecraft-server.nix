@@ -54,9 +54,11 @@ let
       }) cfg.operators
     )
   );
-  whitelistFile = pkgs.writeText "whitelist.json" (
-    builtins.toJSON (lib.mapAttrsToList (name: uuid: { inherit name uuid; }) cfg.whitelist)
-  );
+  mkWhitelistFile =
+    wl:
+    pkgs.writeText "whitelist.json" (
+      builtins.toJSON (lib.mapAttrsToList (name: uuid: { inherit name uuid; }) wl)
+    );
 
   # Stage declarative state into the (persistent) data dir before each start:
   # ops/whitelist, server.properties overrides, symlinks (e.g. an extra mod), and
@@ -102,8 +104,8 @@ let
         cfg.operators != { }
       ) "${pkgs.coreutils}/bin/install -m640 ${opsFile} ops.json"}
       ${lib.optionalString (
-        cfg.whitelist != { }
-      ) "${pkgs.coreutils}/bin/install -m640 ${whitelistFile} whitelist.json"}
+        serverCfg.whitelist != { }
+      ) "${pkgs.coreutils}/bin/install -m640 ${mkWhitelistFile serverCfg.whitelist} whitelist.json"}
       ${lib.optionalString (serverCfg.serverProperties != { }) "touch server.properties"}
       ${lib.concatStringsSep "\n" propLines}
       ${lib.concatStringsSep "\n" symlinkLines}
@@ -176,6 +178,18 @@ let
           description = ''
             Server port. Passed as `--port` on the command line, which overrides
             server.properties, so this value is authoritative.
+          '';
+        };
+
+        whitelist = lib.mkOption {
+          type = lib.types.attrsOf lib.types.str;
+          default = cfg.whitelist;
+          defaultText = lib.literalExpression "config.modules.apps.minecraft-server.whitelist";
+          example = lib.literalExpression ''{ player = "uuid"; }'';
+          description = ''
+            Whitelisted players (whitelist.json) for THIS server. Defaults to the
+            module-level `whitelist`; set per-server to restrict or extend it
+            (e.g. a wider roster on one pack).
           '';
         };
 
