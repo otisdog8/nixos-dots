@@ -53,7 +53,7 @@ let
   # Whitelists live in git-crypt-encrypted whitelist-secrets.nix (player roster
   # kept out of the plaintext repo). globalWhitelist → lobby + sdfs;
   # backendWhitelist → the modded backends.
-  inherit (import ./whitelist-secrets.nix) globalWhitelist backendWhitelist;
+  inherit (import ./whitelist-secrets.nix) globalWhitelist backendWhitelist bmcWhitelist;
 
   # Aikar's flags (the standard modded-server GC tuning; matches the atm10
   # user_jvm_args.txt). Memory is set per server below.
@@ -124,6 +124,7 @@ let
     bettermc = {
       port = 25574;
       directory = "/mc/bettermc";
+      whitelist = bmcWhitelist;
       metricsMod = cpbNeoforge_1_21_1;
       javaPackage = pkgs.jdk21;
       jvmOpts = modMem "6G" "10G";
@@ -409,11 +410,13 @@ let
   # abyssalascent don't, and 1.2.x carries the FFAPI/#1736 forwarding fixes, so
   # they use it. The config SCHEMA differs between the two lines (verified against
   # PCF source), so we render each filename in its own schema below.
-  pcfForge_1_2_6 = pkgs.fetchurl { # non-FFAPI Forge packs (atm9, abyssalascent)
+  pcfForge_1_2_6 = pkgs.fetchurl {
+    # non-FFAPI Forge packs (atm9, abyssalascent)
     url = "https://cdn.modrinth.com/data/vDyrHl8l/versions/iRclYdm8/proxy-compatible-forge-1.2.6.jar";
     hash = "sha512-3kj0CcD3gCF6JX3Ftxlv716TBwO1E6yT9YZY8dsNPAArqO5ofq2QsWklV67jzWgJX4hgNwRg7dRG+vMHqN9IWw==";
   };
-  pcfForge_1_1_7 = pkgs.fetchurl { # FFAPI packs that crash on taterapi (integratedmc)
+  pcfForge_1_1_7 = pkgs.fetchurl {
+    # FFAPI packs that crash on taterapi (integratedmc)
     url = "https://cdn.modrinth.com/data/vDyrHl8l/versions/jfiEc2mQ/proxy-compatible-forge-1.1.7.jar";
     hash = "sha512-DVaRNpYbZa9jXsiKyEKYz3i8hSBa5cGCoW4BVa3UviQcSumS5rnKt9958GpI0LpJk0bMTGQ3czWfymYvpf73Vw==";
   };
