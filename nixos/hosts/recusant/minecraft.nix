@@ -745,6 +745,9 @@ in
         "-Dvelocity.max-plugin-message-payload-size=33554432" # 32 MiB
         "-Dvelocity.increased-compression-cap=true"
         "-Dvelocity.skip-uncompressed-packet-size-validation=true"
+        # TEMP DIAGNOSTIC: logs the exact packet/class that fails to decode.
+        # Remove once the remaining backend connection issues are resolved.
+        "-Dvelocity.packet-decode-logging=true"
         (jmxOpts 25565)
       ];
       stopCommand = "end";
