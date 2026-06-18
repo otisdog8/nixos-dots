@@ -192,6 +192,7 @@ let
       jar = "fabric-server-launcher.jar";
       modLoaderLauncher = false; # Fabric: plain jar, not unix_args.txt
       fabricProxy = fabricProxyLite_1_20_1; # Fabric 1.20.1
+      crossStitch = crossStitchJar; # modded command/registry packets over Velocity
       startupDelay = 30;
       autoShutdownDelay = 600;
     };
@@ -206,6 +207,7 @@ let
       jar = "fabric-server-launcher.jar";
       modLoaderLauncher = false;
       fabricProxy = fabricProxyLite_1_21_1; # Fabric 1.21.1
+      crossStitch = crossStitchJar; # modded command/registry packets over Velocity
       startupDelay = 30;
       autoShutdownDelay = 600;
     };
@@ -400,6 +402,15 @@ let
     url = "https://cdn.modrinth.com/data/8dI2tmqs/versions/KqB3UA0q/FabricProxy-Lite-2.10.1.jar";
     hash = "sha512-nAwdRLon7TSDu2B/lUQb6p+xxlviaqXcCvdDFn+3kzYjumEpNEc4sIQFau98tafbDbR3NI0HZy1cZ6LhIE6clA==";
   };
+  # CrossStitch — restores support behind Velocity for Minecraft features mods
+  # extend over the network (notably custom brigadier command argument types).
+  # Recommended companion to FabricProxy-Lite on a modded Fabric backend; without
+  # it the proxy can mangle modded command/registry packets. Version-agnostic jar.
+  crossStitchJar = pkgs.fetchurl {
+    url = "https://cdn.modrinth.com/data/YkOyn1Pn/versions/dJioNlO8/crossstitch-0.1.6.jar";
+    hash = "sha512-Q0OWyKk57v4bUC15bcx/tnWMBmQVnan0I7z5ED7jDmzk5OHvVJJNZWRNTD84czMXhrh6p9X6iyBqzbs1Uefsrw==";
+  };
+
   fabricProxyLiteConfig = pkgs.writeText "FabricProxy-Lite.toml" ''
     hackOnlineMode = true
     hackEarlySend = false
@@ -687,6 +698,9 @@ in
         }
         // lib.optionalAttrs (b ? fabricProxy) {
           "mods/zz-fabricproxy-lite.jar" = b.fabricProxy;
+        }
+        // lib.optionalAttrs (b ? crossStitch) {
+          "mods/zz-crossstitch.jar" = b.crossStitch;
         }
         // lib.optionalAttrs (b ? metricsMod) {
           "mods/zz-prometheus-exporter.jar" = b.metricsMod; # cpburnz mod
