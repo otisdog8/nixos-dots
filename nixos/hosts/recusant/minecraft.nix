@@ -333,6 +333,16 @@ let
     url = "https://cdn.modrinth.com/data/cOj6YqJM/versions/YeQbhgna/Ambassador-Velocity-1.4.5-all.jar";
     hash = "sha512-IUCBtJhkTFxkDhrqI97/BGnRyELhFCqudCFDyHOKlxpImOrXLaFgXxwsICxPG+i88orMJ4fLzt4qhtZCrkj4HQ==";
   };
+  # owo-lib runs a login-phase handshake to verify the client has matching
+  # owo-networked channels; it can't complete through Velocity, so every
+  # owo-lib pack (estrogen, create* addons, …) kicks proxied players with
+  # "oωo > handshake failure / incompatible client". This plugin relays the
+  # handshake packets so the backend's setting is authoritative and clients
+  # join unmodified. Fixes all owo-lib backends at once — no per-pack JVM flag.
+  owoVelocityJar = pkgs.fetchurl {
+    url = "https://cdn.modrinth.com/data/pYyGVpcC/versions/KjBi9LCR/OwoVelocityPlugin.jar";
+    hash = "sha512-3h/peUPB4XXtYzGOmmR5RqJcM9oyTMH8cbUzLVnuT8mNIY22FR9+70eU4bZtN1HO77Mk2aaFB69Eu+6tCjTIKA==";
+  };
 
   # ── Lobby plugins: ViaVersion stack so a client on ANY modpack's MC version
   # can sit in the lobby. Velocity already accepts the wide protocol range at the
@@ -726,6 +736,7 @@ in
       symlinks = {
         "plugins/autoserver.jar" = autoserverJar;
         "plugins/ambassador.jar" = ambassadorJar;
+        "plugins/owo-velocity.jar" = owoVelocityJar;
         "plugins/velocity-prometheus-exporter.jar" = bungeeExporterJar;
       };
       files = {
