@@ -309,6 +309,13 @@ let
       bungee-plugin-message-channel = true;
       failover-on-unexpected-server-disconnect = true;
       haproxy-protocol = true; # all incoming comes via the local HAProxy
+      # Keep the held connection alive while AutoServer boots a backend. The
+      # worst case is startupDelay (30s) + the poll window (10 retries × 5s =
+      # 50s) = 80s; the default 30000ms read-timeout fires mid-boot and forces a
+      # reconnect. 90s clears the full 80s window with margin so the player is
+      # handed over the moment the backend pings, no reconnect needed. (Also
+      # covers a heavy pack's slow config-phase handshake, e.g. atm10.)
+      read-timeout = 90000;
     };
     query.enabled = false;
   };
