@@ -393,12 +393,17 @@ let
   # Forge 1.20.1: Ambassador on the proxy only passes the Forge modloader
   # handshake through — it does NOT forward the player profile, so the backend
   # still needs PCF to apply Velocity modern forwarding (otherwise it generates
-  # an offline UUID and the whitelist rejects the player). 1.2.6 is universal
-  # (Forge+NeoForge, all versions); safe on plain Forge (no Sinytra Connector,
-  # so the Connector×PCF #1736 issue that pushed NeoForge to NeoVelocity is moot).
+  # an offline UUID and the whitelist rejects the player).
+  #
+  # Pinned to 1.1.7, NOT 1.2.x: PCF 1.2.0 rewrote platform detection (taterapi),
+  # which hard-crashes on packs that bundle Forgified Fabric API (Forge + Fabric
+  # present, no Connector/Kilt bridge) — `Platforms.detectPrimary: Both Forge and
+  # Fabric platforms detected …`. integratedmc (and other FFAPI packs) hit this.
+  # The 1.1.x line predates taterapi and just does the forwarding. 1.1.7 covers
+  # 1.14–1.21.4; same series as the NeoForge pin above.
   pcfForge_1_20_1 = pkgs.fetchurl {
-    url = "https://cdn.modrinth.com/data/vDyrHl8l/versions/iRclYdm8/proxy-compatible-forge-1.2.6.jar";
-    hash = "sha512-3kj0CcD3gCF6JX3Ftxlv716TBwO1E6yT9YZY8dsNPAArqO5ofq2QsWklV67jzWgJX4hgNwRg7dRG+vMHqN9IWw==";
+    url = "https://cdn.modrinth.com/data/vDyrHl8l/versions/jfiEc2mQ/proxy-compatible-forge-1.1.7.jar";
+    hash = "sha512-DVaRNpYbZa9jXsiKyEKYz3i8hSBa5cGCoW4BVa3UviQcSumS5rnKt9958GpI0LpJk0bMTGQ3czWfymYvpf73Vw==";
   };
   pcfConfig = pkgs.writeText "proxy-compatible-forge.toml" ''
     [forwarding]
