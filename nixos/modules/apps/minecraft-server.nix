@@ -393,6 +393,9 @@ in
         description = "Minecraft Server - ${name}";
         after = [ "network.target" ];
         wantedBy = lib.optional serverCfg.autoStart "multi-user.target";
+        # Don't let a nixos-rebuild restart a running server (kicking players /
+        # interrupting the world). New config applies on the next manual restart.
+        restartIfChanged = false;
 
         serviceConfig = {
           Type = "forking";

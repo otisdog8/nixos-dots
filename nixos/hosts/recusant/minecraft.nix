@@ -802,4 +802,18 @@ in
       };
     };
   };
+
+  # Like the custom-module backends: don't let a rebuild restart the running
+  # nix-minecraft servers (Velocity/lobby/sdfs) and kick everyone. nix-minecraft
+  # defaults to restartIfChanged = true, so force it off; restart manually.
+  systemd.services =
+    lib.genAttrs
+      [
+        "minecraft-server-velocity"
+        "minecraft-server-lobby"
+        "minecraft-server-sdfs"
+      ]
+      (_: {
+        restartIfChanged = lib.mkForce false;
+      });
 }
