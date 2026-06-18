@@ -729,7 +729,19 @@ in
       # the proxy during 1.20.5+ known-pack negotiation). Raise
       # -Dvelocity.max-plugin-message-payload-size too if a modded backend trips
       # a "Packet ... was too big" error on join.
-      jvmOpts = "-Xmx1G -Xms512M -Dvelocity.max-known-packs=4096 ${jmxOpts 25565}";
+      #
+      # increased-compression-cap + skip-uncompressed-packet-size-validation let
+      # mods send custom payloads over Velocity's vanilla 8 MiB cap. Without them
+      # a large config-sync (e.g. Fzzy Config's S2C sync on a big pack) decodes as
+      # "A packet did not decode successfully (invalid data)" and drops the player
+      # right after spawn. No Fzzy Config update fixes this — it's a proxy limit.
+      jvmOpts = lib.concatStringsSep " " [
+        "-Xmx1G -Xms512M"
+        "-Dvelocity.max-known-packs=4096"
+        "-Dvelocity.increased-compression-cap=true"
+        "-Dvelocity.skip-uncompressed-packet-size-validation=true"
+        (jmxOpts 25565)
+      ];
       stopCommand = "end";
       path = [ pkgs.systemd ]; # AutoServer shells out to systemctl
       serverProperties = { }; # Velocity has none; suppress server.properties
