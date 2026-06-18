@@ -98,7 +98,7 @@ let
       port = 25567;
       directory = "/mc/atm9-0.3.5";
       metricsMod = cpbForge_1_20_1;
-      pcf = pcfForge_1_20_1; # modern forwarding (Ambassador alone won't forward UUID)
+      pcf = pcfForge_1_2_6; # modern forwarding (Ambassador alone won't forward UUID)
       javaPackage = pkgs.jdk17;
       jvmOpts = modMem "6G" "10G";
       modLoaderLauncher = true;
@@ -219,7 +219,10 @@ let
       port = 25577;
       directory = "/mc/integratedmc";
       metricsMod = cpbForge_1_20_1;
-      pcf = pcfForge_1_20_1; # modern forwarding (Ambassador alone won't forward UUID)
+      # 1.1.7, not 1.2.x: integratedmc bundles Forgified Fabric API, which crashes
+      # 1.2.x's taterapi platform detector. 1.1.x predates it. (Forwarding works
+      # via the [modernForwarding] schema in pcf-common.toml.)
+      pcf = pcfForge_1_1_7;
       javaPackage = pkgs.jdk17;
       jvmOpts = modMem "4G" "8G";
       modLoaderLauncher = true;
@@ -231,7 +234,7 @@ let
       port = 25578;
       directory = "/mc/abyssalascent";
       metricsMod = cpbForge_1_20_1;
-      pcf = pcfForge_1_20_1; # modern forwarding (Ambassador alone won't forward UUID)
+      pcf = pcfForge_1_2_6; # modern forwarding (Ambassador alone won't forward UUID)
       javaPackage = pkgs.jdk17;
       jvmOpts = modMem "4G" "8G";
       modLoaderLauncher = true;
@@ -395,17 +398,29 @@ let
   # still needs PCF to apply Velocity modern forwarding (otherwise it generates
   # an offline UUID and the whitelist rejects the player).
   #
-  # Pinned to 1.1.7, NOT 1.2.x: PCF 1.2.0 rewrote platform detection (taterapi),
-  # which hard-crashes on packs that bundle Forgified Fabric API (Forge + Fabric
-  # present, no Connector/Kilt bridge) — `Platforms.detectPrimary: Both Forge and
-  # Fabric platforms detected …`. integratedmc (and other FFAPI packs) hit this.
-  # The 1.1.x line predates taterapi and just does the forwarding. 1.1.7 covers
-  # 1.14–1.21.4; same series as the NeoForge pin above.
-  pcfForge_1_20_1 = pkgs.fetchurl {
+  # Two PCF lines, selected per backend, because 1.2.0 rewrote platform detection
+  # (taterapi) and hard-crashes on packs bundling Forgified Fabric API (Forge +
+  # Fabric markers, no Connector/Kilt bridge → `Platforms.detectPrimary: Both
+  # Forge and Fabric platforms detected …`). integratedmc hits this; atm9 and
+  # abyssalascent don't, and 1.2.x carries the FFAPI/#1736 forwarding fixes, so
+  # they use it. The config SCHEMA differs between the two lines (verified against
+  # PCF source), so we render each filename in its own schema below.
+  pcfForge_1_2_6 = pkgs.fetchurl { # non-FFAPI Forge packs (atm9, abyssalascent)
+    url = "https://cdn.modrinth.com/data/vDyrHl8l/versions/iRclYdm8/proxy-compatible-forge-1.2.6.jar";
+    hash = "sha512-3kj0CcD3gCF6JX3Ftxlv716TBwO1E6yT9YZY8dsNPAArqO5ofq2QsWklV67jzWgJX4hgNwRg7dRG+vMHqN9IWw==";
+  };
+  pcfForge_1_1_7 = pkgs.fetchurl { # FFAPI packs that crash on taterapi (integratedmc)
     url = "https://cdn.modrinth.com/data/vDyrHl8l/versions/jfiEc2mQ/proxy-compatible-forge-1.1.7.jar";
     hash = "sha512-DVaRNpYbZa9jXsiKyEKYz3i8hSBa5cGCoW4BVa3UviQcSumS5rnKt9958GpI0LpJk0bMTGQ3czWfymYvpf73Vw==";
   };
+
+  # PCF config — two schemas, one per major line (a backend reads only its own
+  # filename; the other is inert). 1.2.x: config/proxy-compatible-forge.toml with
+  # a [forwarding] table (keys verified against PCF's EarlyConfig.java). 1.1.x:
+  # config/pcf-common.toml with a [modernForwarding] table (from the auto-
+  # generated file on the host). Both carry @FORWARDING_SECRET@ (sops env file).
   pcfConfig = pkgs.writeText "proxy-compatible-forge.toml" ''
+    version = 2.0
     [forwarding]
     enabled = true
     mode = "MODERN"
@@ -417,6 +432,10 @@ let
     enabled = false
     [advanced]
     modernForwardingVersion = "NO_OVERRIDE"
+  '';
+  pcfLegacyConfig = pkgs.writeText "pcf-common.toml" ''
+    [modernForwarding]
+    forwardingSecret = "@FORWARDING_SECRET@"
   '';
 
   fabricProxyLite_1_20_1 = pkgs.fetchurl {
@@ -732,11 +751,12 @@ in
         };
       files =
         lib.optionalAttrs (b ? pcf) {
-          # PCF renamed its config in 1.2.0 (pcf-common.toml -> proxy-compatible-
-          # forge.toml). We pin 1.1.7, which reads pcf-common.toml; write BOTH so
-          # the forwarding secret applies regardless of the PCF major version
-          # (Forge's TOML loader ignores keys it doesn't know).
-          "config/pcf-common.toml" = pcfConfig;
+          # PCF renamed AND restructured its config in 1.2.0. Write each filename
+          # in its own schema so the forwarding secret applies whichever line the
+          # backend runs: 1.1.x reads pcf-common.toml ([modernForwarding]); 1.2.x
+          # reads proxy-compatible-forge.toml ([forwarding]). The non-matching
+          # file is simply ignored by the running version.
+          "config/pcf-common.toml" = pcfLegacyConfig;
           "config/proxy-compatible-forge.toml" = pcfConfig;
         }
         // lib.optionalAttrs (b ? neoVelocity) {
