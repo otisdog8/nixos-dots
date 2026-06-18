@@ -732,6 +732,11 @@ in
         };
       files =
         lib.optionalAttrs (b ? pcf) {
+          # PCF renamed its config in 1.2.0 (pcf-common.toml -> proxy-compatible-
+          # forge.toml). We pin 1.1.7, which reads pcf-common.toml; write BOTH so
+          # the forwarding secret applies regardless of the PCF major version
+          # (Forge's TOML loader ignores keys it doesn't know).
+          "config/pcf-common.toml" = pcfConfig;
           "config/proxy-compatible-forge.toml" = pcfConfig;
         }
         // lib.optionalAttrs (b ? neoVelocity) {
