@@ -740,6 +740,9 @@ in
         "-Dvelocity.max-known-packs=4096"
         "-Dvelocity.increased-compression-cap=true"
         "-Dvelocity.skip-uncompressed-packet-size-validation=true"
+        # TEMP DIAGNOSTIC: names the exact packet/channel that fails to decode
+        # (e.g. atm10 ConfigSessionHandler "invalid data"). Remove once resolved.
+        "-Dvelocity.packet-decode-logging=true"
         (jmxOpts 25565)
       ];
       stopCommand = "end";
