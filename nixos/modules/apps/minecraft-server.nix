@@ -210,7 +210,24 @@ let
           default = "120s";
           description = ''
             systemd TimeoutStopSec=. Must exceed the world-save time of the
-            biggest modpack so the graceful stop completes before SIGKILL.
+            biggest modpack so the graceful stop completes before SIGKILL. When
+            <option>sigintDelay</option> is set, must also exceed it plus the
+            time the SIGINT-triggered save+stop needs.
+          '';
+        };
+
+        sigintDelay = lib.mkOption {
+          type = lib.types.nullOr lib.types.int;
+          default = null;
+          example = 120;
+          description = ''
+            Seconds to wait after the stop command before sending SIGINT (Ctrl-C)
+            to the server console as a fallback for heavy packs whose `stop` is
+            slow or hangs. The SIGINT trips the JVM shutdown hook (a second
+            save+stop attempt) rather than letting the world sit until systemd's
+            SIGKILL at <option>timeoutStop</option>. null disables it: the stop
+            waits indefinitely (up to timeoutStop). When set, lengthen
+            timeoutStop to exceed sigintDelay plus the post-SIGINT save time.
           '';
         };
 
@@ -419,15 +436,35 @@ in
 
           # Graceful shutdown: save the world, send the stop command, then wait
           # for the session to actually exit (no fixed sleep, no premature kill).
-          ExecStop = pkgs.writeShellScript "mc-stop-${name}" ''
-            if ! ${tmux} -S ${sock} has-session 2>/dev/null; then
-              exit 0
-            fi
-            ${tmux} -S ${sock} send-keys C-u save-all Enter
-            sleep 5
-            ${tmux} -S ${sock} send-keys C-u ${lib.escapeShellArg serverCfg.stopCommand} Enter
-            while ${tmux} -S ${sock} has-session 2>/dev/null; do sleep 1; done
-          '';
+          # With sigintDelay set, send SIGINT (Ctrl-C) after that wait as a
+          # fallback before the session is finally allowed to drain.
+          ExecStop =
+            let
+              sigintBlock = lib.optionalString (serverCfg.sigintDelay != null) ''
+                # SIGINT fallback: if the stop command hasn't ended the session
+                # within sigintDelay, send Ctrl-C to trip the JVM shutdown hook
+                # (a second save+stop) before systemd's SIGKILL at TimeoutStopSec.
+                waited=0
+                while ${tmux} -S ${sock} has-session 2>/dev/null; do
+                  if [ "$waited" -ge ${toString serverCfg.sigintDelay} ]; then
+                    ${tmux} -S ${sock} send-keys C-c
+                    break
+                  fi
+                  sleep 1
+                  waited=$((waited + 1))
+                done
+              '';
+            in
+            pkgs.writeShellScript "mc-stop-${name}" ''
+              if ! ${tmux} -S ${sock} has-session 2>/dev/null; then
+                exit 0
+              fi
+              ${tmux} -S ${sock} send-keys C-u save-all Enter
+              sleep 5
+              ${tmux} -S ${sock} send-keys C-u ${lib.escapeShellArg serverCfg.stopCommand} Enter
+              ${sigintBlock}
+              while ${tmux} -S ${sock} has-session 2>/dev/null; do sleep 1; done
+            '';
 
           User = "mc";
           Group = "mc";
