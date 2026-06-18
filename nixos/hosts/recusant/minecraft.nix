@@ -92,12 +92,13 @@ let
   # ~1.20.5+/NeoForge 1.21, Java 17 for 1.17–1.20.4). Memory taken from each
   # pack's user_jvm_args.txt where it set one; sb4 set none, so a sane default.
   backends = {
-    # All the Mods 9 — Forge 1.20.1 (Java 17). 1.20.1 forwarding rides the
-    # Ambassador plugin on Velocity; no backend mod required.
+    # All the Mods 9 — Forge 1.20.1 (Java 17). Ambassador on Velocity passes the
+    # Forge handshake; PCF on the backend applies modern forwarding (real UUID).
     atm9 = {
       port = 25567;
       directory = "/mc/atm9-0.3.5";
       metricsMod = cpbForge_1_20_1;
+      pcf = pcfForge_1_20_1; # modern forwarding (Ambassador alone won't forward UUID)
       javaPackage = pkgs.jdk17;
       jvmOpts = modMem "6G" "10G";
       modLoaderLauncher = true;
@@ -212,12 +213,13 @@ let
       autoShutdownDelay = 600;
     };
 
-    # Forge 1.20.1 (Java 17). Like atm9: forwarding via Ambassador on the proxy,
-    # so no backend mod.
+    # Forge 1.20.1 (Java 17). Like atm9: Ambassador on the proxy + PCF on the
+    # backend for modern forwarding.
     integratedmc = {
       port = 25577;
       directory = "/mc/integratedmc";
       metricsMod = cpbForge_1_20_1;
+      pcf = pcfForge_1_20_1; # modern forwarding (Ambassador alone won't forward UUID)
       javaPackage = pkgs.jdk17;
       jvmOpts = modMem "4G" "8G";
       modLoaderLauncher = true;
@@ -229,6 +231,7 @@ let
       port = 25578;
       directory = "/mc/abyssalascent";
       metricsMod = cpbForge_1_20_1;
+      pcf = pcfForge_1_20_1; # modern forwarding (Ambassador alone won't forward UUID)
       javaPackage = pkgs.jdk17;
       jvmOpts = modMem "4G" "8G";
       modLoaderLauncher = true;
@@ -379,6 +382,16 @@ let
   pcfNeoforge_1_21_1 = pkgs.fetchurl {
     url = "https://cdn.modrinth.com/data/vDyrHl8l/versions/9j2U3PgC/proxy-compatible-forge-1.1.5.jar";
     hash = "sha512-1o+HW/SPOqGLw3G7NfOD/Z+LlmbSRQBCXxyzUPiusewr2MYii8qw3ApnLlD1peNij5woc4bHKBR3DA3FDkAXyQ==";
+  };
+  # Forge 1.20.1: Ambassador on the proxy only passes the Forge modloader
+  # handshake through — it does NOT forward the player profile, so the backend
+  # still needs PCF to apply Velocity modern forwarding (otherwise it generates
+  # an offline UUID and the whitelist rejects the player). 1.2.6 is universal
+  # (Forge+NeoForge, all versions); safe on plain Forge (no Sinytra Connector,
+  # so the Connector×PCF #1736 issue that pushed NeoForge to NeoVelocity is moot).
+  pcfForge_1_20_1 = pkgs.fetchurl {
+    url = "https://cdn.modrinth.com/data/vDyrHl8l/versions/iRclYdm8/proxy-compatible-forge-1.2.6.jar";
+    hash = "sha512-3kj0CcD3gCF6JX3Ftxlv716TBwO1E6yT9YZY8dsNPAArqO5ofq2QsWklV67jzWgJX4hgNwRg7dRG+vMHqN9IWw==";
   };
   pcfConfig = pkgs.writeText "proxy-compatible-forge.toml" ''
     [forwarding]
