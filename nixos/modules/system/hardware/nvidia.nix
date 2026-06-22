@@ -23,10 +23,22 @@ in
       default = false;
       description = "Use beta NVIDIA drivers";
     };
+
+    forceVideoDrivers = lib.mkOption {
+      type = lib.types.bool;
+      default = false;
+      description = ''
+        When true, force services.xserver.videoDrivers to exactly [ "nvidia" ]
+        (single-GPU desktops). When false (default), only contribute "nvidia" and
+        let the NixOS module system merge it with any open drivers the host
+        declares (e.g. a roaming USB with modesetting + amdgpu + nvidia).
+      '';
+    };
   };
 
   config = lib.mkIf cfg.enable {
-    services.xserver.videoDrivers = [ "nvidia" ];
+    services.xserver.videoDrivers =
+      if cfg.forceVideoDrivers then lib.mkForce [ "nvidia" ] else [ "nvidia" ];
 
     hardware.nvidia = {
       open = cfg.openDrivers;

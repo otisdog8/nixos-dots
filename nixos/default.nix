@@ -69,6 +69,7 @@
       hardening.enable = lib.mkDefault false; # Opt-in per host
       laptop.enable = lib.mkDefault false; # Only enable on laptops
       pcr-verification.enable = lib.mkDefault false; # Opt-in per host
+      secureboot.enable = lib.mkDefault true; # Opt-out per host (liveusb disables)
       remote-access.enable = lib.mkDefault true;
       virt.enable = lib.mkDefault true;
       hardware.openrazer.enable = lib.mkDefault false;

@@ -61,7 +61,10 @@
     # Enable NVIDIA drivers (beta)
     system.hardware.nvidia = {
       enable = true;
-      useBeta = true;
+      useBeta = false;
+      # Single-GPU host: keep videoDrivers exactly ["nvidia"] (the module now
+      # merges by default to support multi-GPU/roaming hosts).
+      forceVideoDrivers = true;
     };
   };
 }

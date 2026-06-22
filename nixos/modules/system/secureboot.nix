@@ -14,46 +14,53 @@
   username,
   ...
 }:
-
+let
+  cfg = config.modules.system.secureboot;
+in
 {
-  # TPM2 configuration
-  security.tpm2 = {
-    enable = true;
-    pkcs11.enable = true; # expose /run/current-system/sw/lib/libtpm2_pkcs11.so
-    tctiEnvironment.enable = true; # TPM2TOOLS_TCTI and TPM2_PKCS11_TCTI env variables
-  };
+  options.modules.system.secureboot.enable =
+    lib.mkEnableOption "lanzaboote secure boot + TPM2";
 
-  systemd.tpm2.enable = true;
-
-  # Boot configuration
-  # boot.kernelPackages = pkgs.linuxPackages_latest;
-  boot = {
-    initrd.systemd = {
+  config = lib.mkIf cfg.enable {
+    # TPM2 configuration
+    security.tpm2 = {
       enable = true;
-      tpm2.enable = true;
+      pkcs11.enable = true; # expose /run/current-system/sw/lib/libtpm2_pkcs11.so
+      tctiEnvironment.enable = true; # TPM2TOOLS_TCTI and TPM2_PKCS11_TCTI env variables
     };
 
-    # Use the systemd-boot EFI boot loader.
-    loader = {
-      systemd-boot.enable = lib.mkForce false;
-      efi.canTouchEfiVariables = true;
-    };
+    systemd.tpm2.enable = true;
 
-    lanzaboote = {
-      enable = true;
-      pkiBundle = "/var/lib/sbctl";
-    };
-  };
-  environment.systemPackages = with pkgs; [
-    sbctl
-    tpm2-tss
-  ];
+    # Boot configuration
+    # boot.kernelPackages = pkgs.linuxPackages_latest;
+    boot = {
+      initrd.systemd = {
+        enable = true;
+        tpm2.enable = true;
+      };
 
-  # Persistence for secureboot
-  environment.persistence."/persist" = {
-    directories = [
-      "/etc/secureboot"
-      "/var/lib/sbctl"
+      # Use the systemd-boot EFI boot loader.
+      loader = {
+        systemd-boot.enable = lib.mkForce false;
+        efi.canTouchEfiVariables = true;
+      };
+
+      lanzaboote = {
+        enable = true;
+        pkiBundle = "/var/lib/sbctl";
+      };
+    };
+    environment.systemPackages = with pkgs; [
+      sbctl
+      tpm2-tss
     ];
+
+    # Persistence for secureboot
+    environment.persistence."/persist" = {
+      directories = [
+        "/etc/secureboot"
+        "/var/lib/sbctl"
+      ];
+    };
   };
 }

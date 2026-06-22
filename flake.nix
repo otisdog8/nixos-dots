@@ -37,6 +37,10 @@
       inputs.nixpkgs.follows = "nixpkgs";
     };
     chaotic.url = "github:chaotic-cx/nyx/nyxpkgs-unstable";
+    disko = {
+      url = "github:nix-community/disko";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
     impermanence = {
       url = "github:nix-community/impermanence";
     };
@@ -54,7 +58,7 @@
       inputs.home-manager.follows = "home-manager";
     };
     hyprland = {
-      url = "github:hyprwm/Hyprland/v0.55.3?submodules=1";
+      url = "github:hyprwm/Hyprland/v0.55.4?submodules=1";
       inputs.nixpkgs.follows = "nixpkgs";
     };
     nixvim = {
@@ -146,7 +150,78 @@
           hostname = "galaxy";
           stateVersion = "25.05";
         };
+        # Portable, encrypted, roaming USB workstation. Mint with
+        # `nix run .#mint-usb -- /dev/sdX`.
+        liveusb = helper.mkNixos {
+          hostname = "liveusb";
+          stateVersion = "25.05";
+        };
       };
+
+      # USB minting / upgrading helpers (run from the workstation).
+      apps.x86_64-linux =
+        let
+          pkgs = import nixpkgs {
+            system = "x86_64-linux";
+            config.allowUnfree = true;
+          };
+          mkApp = pkg: {
+            type = "app";
+            program = "${pkg}/bin/${pkg.name}";
+          };
+
+          mint-usb = pkgs.writeShellApplication {
+            name = "mint-usb";
+            runtimeInputs = [
+              inputs.disko.packages.x86_64-linux.disko-install
+              pkgs.util-linux
+            ];
+            text = ''
+              if [ "$#" -ne 1 ]; then
+                echo "usage: nix run .#mint-usb -- /dev/sdX" >&2
+                echo "WARNING: ERASES the target disk. Prompts for a LUKS passphrase." >&2
+                exit 1
+              fi
+              dev="$1"
+              echo "About to mint the liveusb onto $dev — ALL DATA ON IT WILL BE LOST."
+              lsblk "$dev"
+              read -r -p "Re-type the device path to confirm: " confirm
+              [ "$confirm" = "$dev" ] || { echo "mismatch, aborting" >&2; exit 1; }
+              exec disko-install --flake "${self}#liveusb" --disk main "$dev"
+            '';
+          };
+
+          upgrade-usb = pkgs.writeShellApplication {
+            name = "upgrade-usb";
+            runtimeInputs = [
+              pkgs.util-linux
+              pkgs.cryptsetup
+              pkgs.nixos-install-tools
+            ];
+            text = ''
+              if [ "$#" -ne 1 ]; then
+                echo "usage: nix run .#upgrade-usb -- /dev/sdX" >&2
+                echo "Reinstalls the system closure on an already-minted stick, keeping /persist." >&2
+                echo "(Day-to-day, booting the stick and 'nixos-rebuild switch --flake .#liveusb' is simpler.)" >&2
+                exit 1
+              fi
+              mnt="$(mktemp -d)"
+              cleanup() { umount -R "$mnt" 2>/dev/null || true; cryptsetup close luks-upgrade 2>/dev/null || true; rmdir "$mnt" 2>/dev/null || true; }
+              trap cleanup EXIT
+              cryptsetup open /dev/disk/by-partlabel/disk-main-luks luks-upgrade
+              mount -o subvol=root,compress=zstd,noatime /dev/mapper/luks-upgrade "$mnt"
+              mkdir -p "$mnt"/{nix,persist,boot}
+              mount -o subvol=nix,compress=zstd,noatime /dev/mapper/luks-upgrade "$mnt/nix"
+              mount -o subvol=persist,compress=zstd,noatime /dev/mapper/luks-upgrade "$mnt/persist"
+              mount /dev/disk/by-partlabel/disk-main-ESP "$mnt/boot"
+              nixos-install --root "$mnt" --flake "${self}#liveusb" --no-root-passwd
+            '';
+          };
+        in
+        {
+          mint-usb = mkApp mint-usb;
+          upgrade-usb = mkApp upgrade-usb;
+        };
 
       devShells.x86_64-linux.default =
         let
