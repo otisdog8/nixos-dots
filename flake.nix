@@ -213,6 +213,12 @@
                 echo "(Day-to-day, booting the stick and 'nixos-rebuild switch --flake .#liveusb' is simpler.)" >&2
                 exit 1
               fi
+              # /tmp is a world-writable tmpfs (rejected by nix's temp-dir
+              # security check, and nobody-owned inside bwrap sandboxes). Use
+              # the root-owned nix build dir for mktemp and the nested
+              # nixos-install build instead.
+              export TMPDIR=/nix/var/nix/build
+              mkdir -p "$TMPDIR"
               mnt="$(mktemp -d)"
               cleanup() { umount -R "$mnt" 2>/dev/null || true; cryptsetup close luks-upgrade 2>/dev/null || true; rmdir "$mnt" 2>/dev/null || true; }
               trap cleanup EXIT
