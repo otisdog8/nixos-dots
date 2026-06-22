@@ -175,6 +175,7 @@
             runtimeInputs = [
               inputs.disko.packages.x86_64-linux.disko-install
               pkgs.util-linux
+              pkgs.cryptsetup
             ];
             text = ''
               if [ "$#" -ne 1 ]; then
@@ -187,6 +188,13 @@
               lsblk "$dev"
               read -r -p "Re-type the device path to confirm: " confirm
               [ "$confirm" = "$dev" ] || { echo "mismatch, aborting" >&2; exit 1; }
+              # Clean up leftovers from any previous failed run so disko-install
+              # starts from a clean slate (a dangling mapper makes `cryptsetup
+              # open` fail with "already exists", and a stale install root makes
+              # the store copy go to the host instead of the stick).
+              umount -R /mnt/disko-install-root 2>/dev/null || true
+              cryptsetup close cryptliveusb 2>/dev/null || true
+              rm -rf /mnt/disko-install-root 2>/dev/null || true
               exec disko-install --flake "${self}#liveusb" --disk main "$dev"
             '';
           };

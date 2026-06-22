@@ -107,6 +107,22 @@
   # ---- LTS kernel: keep the whole-stick build off the NVIDIA-vs-_latest cliff ----
   boot.kernelPackages = lib.mkForce pkgs.linuxPackages;
 
+  # A roaming USB must carry its own USB host-controller + mass-storage + input
+  # drivers in the initrd, or it can't even see the stick to unlock LUKS and
+  # mount root (kernel.nix leaves usb_storage out because the other hosts boot
+  # from NVMe). Without these the initrd hangs on disk-main-luks → emergency mode.
+  boot.initrd.availableKernelModules = [
+    "xhci_pci" # USB3 controllers
+    "ehci_pci" # USB2 controllers
+    "ohci_pci" # USB1 controllers
+    "uhci_hcd"
+    "usb_storage" # USB mass storage
+    "uas" # USB Attached SCSI (most USB3 sticks)
+    "usbhid" # USB keyboard for the LUKS passphrase prompt
+    "hid_generic"
+    "sd_mod"
+  ];
+
   # ---- Swap: zram first tier, random-key encrypted partition (disko) second ----
   zramSwap = {
     enable = true;
