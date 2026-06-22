@@ -14,8 +14,22 @@
   username,
   ...
 }:
-
+let
+  cfg = config.modules.system.impermanence;
+in
 {
+  options.modules.system.impermanence.rollbackDevice = lib.mkOption {
+    type = lib.types.str;
+    default = "/dev/mapper/luks";
+    description = ''
+      Block device of the btrfs pool whose `root` subvolume the initrd rollback
+      service wipes on every boot. Override on hosts whose LUKS mapper is not
+      named "luks" (e.g. the roaming liveusb, which uses cryptliveusb to avoid
+      colliding with the minting host's own /dev/mapper/luks).
+    '';
+  };
+
+  config = {
   boot.initrd.systemd.services.rollback = {
     description = "Rollback BTRFS root subvolume to a pristine state";
     wantedBy = [
@@ -33,7 +47,7 @@
     serviceConfig.Type = "oneshot";
     script = ''
       mkdir /btrfs_tmp
-      mount -t btrfs /dev/mapper/luks /btrfs_tmp
+      mount -t btrfs ${cfg.rollbackDevice} /btrfs_tmp
       if [[ -e /btrfs_tmp/root ]]; then
           mkdir -p /btrfs_tmp/old_roots
           timestamp=$(date --date="@$(stat -c %Y /btrfs_tmp/root)" "+%Y-%m-%-d_%H:%M:%S")
@@ -134,5 +148,6 @@
         ];
       };
     };
+  };
   };
 }

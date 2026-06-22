@@ -64,7 +64,11 @@ in
           size = "100%";
           content = {
             type = "luks";
-            name = "luks"; # -> /dev/mapper/luks (matches every other host)
+            # Unique mapper name: must NOT be "luks", or `cryptsetup open` collides
+            # with the host's own /dev/mapper/luks while minting from a running
+            # NixOS box. The rollback service is pointed here via
+            # modules.system.impermanence.rollbackDevice in default.nix.
+            name = "cryptliveusb"; # -> /dev/mapper/cryptliveusb
             settings.allowDiscards = true;
             # No passwordFile/keyFile -> disko prompts for the passphrase at mint.
             content = {

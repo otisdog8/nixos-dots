@@ -50,6 +50,10 @@
   modules = {
     desktop.full.enable = true;
 
+    # The USB's LUKS mapper is "cryptliveusb" (see disko.nix) to avoid colliding
+    # with a minting host's own /dev/mapper/luks. Point the rollback service at it.
+    system.impermanence.rollbackDevice = "/dev/mapper/cryptliveusb";
+
     system.hardening = {
       enable = true;
       profile = "workstation";
