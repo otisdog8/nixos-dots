@@ -125,6 +125,7 @@ let
       port = 25574;
       directory = "/mc/bettermc";
       whitelist = bmcWhitelist;
+      operators = bmcWhitelist; # op the whole bettermc whitelist (bare UUID = level 4)
       metricsMod = cpbNeoforge_1_21_1;
       javaPackage = pkgs.jdk21;
       jvmOpts = modMem "6G" "10G";
@@ -732,6 +733,7 @@ in
       jar = b.jar or null;
       serverProperties = proxyProps;
       whitelist = b.whitelist or backendWhitelist; # per-pack override (e.g. bettermc)
+      operators = b.operators or globalOperators; # per-pack override (e.g. bettermc ops = its whitelist)
       # Forwarding mod + config wired per loader; the backend carries the version-
       # specific jar in `pcf`/`fabricProxy` (the modpack jars are staged manually).
       #   pcf         → Proxy Compatible Forge (Forge/NeoForge)

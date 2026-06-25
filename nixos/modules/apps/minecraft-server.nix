@@ -44,16 +44,20 @@ let
     }
   );
 
-  # Generated once and installed (writable) into every server's directory, so
-  # ops/whitelist are a single declarative source of truth across all backends.
-  opsFile = pkgs.writeText "ops.json" (
-    builtins.toJSON (
-      lib.mapAttrsToList (name: o: {
-        inherit name;
-        inherit (o) uuid level bypassesPlayerLimit;
-      }) cfg.operators
-    )
-  );
+  # Generated and installed (writable) into each server's directory, so
+  # ops/whitelist are a declarative source of truth. ops defaults to the
+  # module-level set but a server may override it (e.g. bettermc ops = its
+  # whitelist).
+  mkOpsFile =
+    ops:
+    pkgs.writeText "ops.json" (
+      builtins.toJSON (
+        lib.mapAttrsToList (name: o: {
+          inherit name;
+          inherit (o) uuid level bypassesPlayerLimit;
+        }) ops
+      )
+    );
   mkWhitelistFile =
     wl:
     pkgs.writeText "whitelist.json" (
@@ -101,8 +105,8 @@ let
         rm -f .mc-managed
       fi
       ${lib.optionalString (
-        cfg.operators != { }
-      ) "${pkgs.coreutils}/bin/install -m640 ${opsFile} ops.json"}
+        serverCfg.operators != { }
+      ) "${pkgs.coreutils}/bin/install -m640 ${mkOpsFile serverCfg.operators} ops.json"}
       ${lib.optionalString (
         serverCfg.whitelist != { }
       ) "${pkgs.coreutils}/bin/install -m640 ${mkWhitelistFile serverCfg.whitelist} whitelist.json"}
@@ -190,6 +194,18 @@ let
             Whitelisted players (whitelist.json) for THIS server. Defaults to the
             module-level `whitelist`; set per-server to restrict or extend it
             (e.g. a wider roster on one pack).
+          '';
+        };
+
+        operators = lib.mkOption {
+          type = lib.types.attrsOf operatorType;
+          default = cfg.operators;
+          defaultText = lib.literalExpression "config.modules.apps.minecraft-server.operators";
+          example = lib.literalExpression ''{ player = "uuid"; }'';
+          description = ''
+            Operators (ops.json) for THIS server. Defaults to the module-level
+            `operators`; set per-server to override it (e.g. op the whole
+            whitelist on one pack). A bare UUID string is a level-4 operator.
           '';
         };
 
