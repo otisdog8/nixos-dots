@@ -42,6 +42,107 @@ let
     dns-rooty-dev-origin = "sdns://AgAAAAAAAAAAETc0LjIwOC40NS4xODE6NDQzAA1kbnMucm9vdHkuZGV2Ci9kbnMtcXVlcnk";
   };
 
+  # Runtime DNS control — no nixos-rebuild needed, and no full restart.
+  # `resolvectl` can't help: it only configures *per-link* scopes, but our
+  # resolver is the *global* DNS=127.0.0.1, for which only the global DNSSEC
+  # setting applies (systemd #23227) and which is settable only via
+  # resolved.conf. resolved.conf is Nix-managed (read-only), so each mode
+  # drops a /run override (which beats /etc) and SIGHUPs resolved via
+  # `reload`: it re-reads config + flushes caches *without* tearing the unit
+  # down, so Tailscale's bus-pushed MagicDNS survives. All overrides revert
+  # on reboot or `dns-mode encrypted`.
+  #
+  #   dns-mode encrypted       dnscrypt + DNSSEC=yes (the configured default)
+  #   dns-mode plain <ip>      global DNS -> <ip> plaintext, bypass dnscrypt, DNSSEC=no
+  #   dns-mode validated <ip>  like plain but keeps local DNSSEC validation on
+  #   dns-mode dhcp            clear global DNS -> DHCP/VPN-pushed resolver, DNSSEC=no
+  #   dns-mode dnssec-off      keep dnscrypt, DNSSEC=no
+  #   dns-mode status          show effective resolver + any active override
+  dnsMode = pkgs.writeShellApplication {
+    name = "dns-mode";
+    runtimeInputs = [
+      pkgs.systemd
+      pkgs.coreutils
+    ];
+    text = ''
+      dropin=/run/systemd/resolved.conf.d/zz-dns-override.conf
+      # Mutating modes write /run and reload resolved (root); re-exec under
+      # the setuid sudo wrapper so e.g. `dns-mode dhcp` just works (one
+      # prompt). `status` stays password-free.
+      need_root() {
+        if [ "$(id -u)" -ne 0 ]; then
+          exec /run/wrappers/bin/sudo "$0" "$@"
+        fi
+      }
+      remove_override() {
+        rm -f "$dropin"
+        systemctl reload-or-restart systemd-resolved
+      }
+      # write_override <dns-line> <dnssec> — <dns-line> is a full "DNS=..."
+      # line to include ("DNS=9.9.9.9", or "DNS=" to reset the inherited
+      # 127.0.0.1), or "" to omit it. <dnssec> is the DNSSEC= value.
+      write_override() {
+        mkdir -p /run/systemd/resolved.conf.d
+        {
+          printf '[Resolve]\n'
+          if [ -n "$1" ]; then printf '%s\n' "$1"; fi
+          printf 'DNSSEC=%s\n' "$2"
+        } > "$dropin"
+        systemctl reload-or-restart systemd-resolved
+      }
+      case "''${1:-status}" in
+        encrypted)
+          need_root "$@"
+          remove_override
+          echo "encrypted: dnscrypt-proxy (127.0.0.1) + DNSSEC=yes (configured default)."
+          ;;
+        plain)
+          need_root "$@"
+          server="''${2:-}"
+          if [ -z "$server" ]; then
+            echo "usage: dns-mode plain <server-ip>" >&2
+            exit 1
+          fi
+          write_override "DNS=$server" "no"
+          echo "plain: global DNS -> $server (plaintext, bypasses dnscrypt), DNSSEC=no."
+          ;;
+        validated)
+          need_root "$@"
+          server="''${2:-}"
+          if [ -z "$server" ]; then
+            echo "usage: dns-mode validated <server-ip>" >&2
+            exit 1
+          fi
+          write_override "DNS=$server" "yes"
+          echo "validated: global DNS -> $server (plaintext, bypasses dnscrypt), DNSSEC=yes."
+          ;;
+        dhcp)
+          need_root "$@"
+          write_override "DNS=" "no"
+          echo "dhcp: cleared global DNS -> uses DHCP/VPN-pushed resolver, DNSSEC=no."
+          ;;
+        dnssec-off)
+          need_root "$@"
+          write_override "" "no"
+          echo "dnssec-off: dnscrypt kept, DNSSEC=no."
+          ;;
+        status)
+          resolvectl status 2>/dev/null | head -n 14 || true
+          if [ -f "$dropin" ]; then
+            echo "--- runtime override ACTIVE ---"
+            cat "$dropin"
+          else
+            echo "(no override: encrypted dnscrypt + DNSSEC=yes)"
+          fi
+          ;;
+        *)
+          echo "usage: dns-mode [encrypted|plain <ip>|validated <ip>|dhcp|dnssec-off|status]" >&2
+          exit 1
+          ;;
+      esac
+    '';
+  };
+
   customResolverType = lib.types.submodule {
     options.stamp = lib.mkOption {
       type = lib.types.str;
@@ -75,17 +176,6 @@ in
         to the public-resolvers source list, so names from there won't
         resolve without an accompanying stamp.
       '';
-    };
-
-    fallbackDns = lib.mkOption {
-      type = lib.types.listOf lib.types.str;
-      # Diverse providers/jurisdictions; not all likely blocked at once.
-      default = [
-        "208.67.222.222" # OpenDNS
-        "101.101.101.101" # Quad101 (Taiwan)
-        "94.140.14.140" # AdGuard unfiltered
-      ];
-      description = "Last-resort plain-DNS for systemd-resolved if dnscrypt-proxy is down.";
     };
 
     bootstrapResolvers = lib.mkOption {
@@ -122,6 +212,10 @@ in
   };
 
   config = lib.mkIf cfg.enable {
+    # `dns-mode [encrypted|plain <ip>|validated <ip>|dhcp|dnssec-off|status]`
+    # — runtime resolver/DNSSEC control via /run drop-in (self-elevates).
+    environment.systemPackages = [ dnsMode ];
+
     services.resolved = {
       enable = true;
       # Encryption happens at dnscrypt-proxy upstream of resolved, so
@@ -135,10 +229,21 @@ in
         # leak. Tailscale's "~ts.net" is more specific so MagicDNS
         # split-DNS still wins for *.ts.net.
         Domains = "~.";
-        FallbackDNS = lib.concatStringsSep " " cfg.fallbackDns;
+        # No FallbackDNS: it only arms when *no* DNS server is configured at
+        # all, but DNS=127.0.0.1 is always set, so it could never fire — it
+        # was dead config. (If a `dns-mode dhcp`/`plain` override ever clears
+        # the global DNS, resolved's compiled-in fallbacks cover that gap.)
         DNSStubListener = "yes";
         DNSOverTLS = "no";
-        DNSSEC = "allow-downgrade";
+        # Strict: resolved validates locally (with the CD bit set upstream,
+        # so it checks the chain itself against the root anchor) instead of
+        # trusting whatever the upstream's per-zone DNSSEC policy happens to
+        # be. "allow-downgrade" was silently caching feature-level downgrades
+        # on transient network blips and getting stuck non-validating until a
+        # manual `resolvectl reset-server-features`. Strict never downgrades;
+        # the escape hatch for hostile/DNS-mangling networks is the runtime
+        # `dns-mode` tool (plain/dhcp/dnssec-off; /run drop-in, no rebuild).
+        DNSSEC = "yes";
         Cache = "yes";
         CacheFromLocalhost = "yes";
         ReadEtcHosts = "yes";
