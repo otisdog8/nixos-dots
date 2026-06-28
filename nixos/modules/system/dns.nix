@@ -229,10 +229,17 @@ in
         # leak. Tailscale's "~ts.net" is more specific so MagicDNS
         # split-DNS still wins for *.ts.net.
         Domains = "~.";
-        # No FallbackDNS: it only arms when *no* DNS server is configured at
-        # all, but DNS=127.0.0.1 is always set, so it could never fire — it
-        # was dead config. (If a `dns-mode dhcp`/`plain` override ever clears
-        # the global DNS, resolved's compiled-in fallbacks cover that gap.)
+        # Fallback DNS disabled. By design FallbackDNS only arms when *no*
+        # server is known, and DNS=127.0.0.1 is always set, so it shouldn't
+        # fire — but two gotchas make "just leave it unset" wrong: (1) there
+        # are reports of it firing despite a configured server (systemd
+        # #40183), and (2) *omitting* it does NOT disable it — resolved then
+        # uses a COMPILED-IN list incl. Google/Cloudflare, queried plaintext
+        # and bypassing dnscrypt. The empty list renders `FallbackDNS=`, the
+        # documented way to actually turn it off, so a dnscrypt outage fails
+        # closed instead of silently leaking. (dns-mode dhcp/plain rely on
+        # DHCP / the chosen server, not on this.)
+        FallbackDNS = [ ];
         DNSStubListener = "yes";
         DNSOverTLS = "no";
         # Strict: resolved validates locally (with the CD bit set upstream,
