@@ -223,23 +223,32 @@ in
       settings.Resolve = {
         DNS = "127.0.0.1";
         # "~." makes the global DNS the catch-all for any query that
-        # doesn't match a more specific routing domain. Without it,
-        # per-link DNS pushed by NetworkManager from DHCP (i.e. the
-        # ISP's resolver) would catch arbitrary queries — that's a
-        # leak. Tailscale's "~ts.net" is more specific so MagicDNS
-        # split-DNS still wins for *.ts.net.
+        # doesn't match a more specific routing domain. Tailscale's
+        # "~ts.net" is more specific so MagicDNS split-DNS still wins
+        # for *.ts.net.
+        #
+        # NOTE: "~." here is NOT sufficient to stop per-link DNS leaks.
+        # resolved treats any +DefaultRoute link (DHCP interface with a
+        # default route) as a co-equal default-route scope and queries its
+        # DHCP-pushed servers in PARALLEL with 127.0.0.1. That's closed
+        # separately below via `ipv4.ignore-auto-dns` — don't rely on this.
         Domains = "~.";
         # Fallback DNS disabled. By design FallbackDNS only arms when *no*
         # server is known, and DNS=127.0.0.1 is always set, so it shouldn't
         # fire — but two gotchas make "just leave it unset" wrong: (1) there
         # are reports of it firing despite a configured server (systemd
-        # #40183), and (2) *omitting* it does NOT disable it — resolved then
-        # uses a COMPILED-IN list incl. Google/Cloudflare, queried plaintext
-        # and bypassing dnscrypt. The empty list renders `FallbackDNS=`, the
-        # documented way to actually turn it off, so a dnscrypt outage fails
-        # closed instead of silently leaking. (dns-mode dhcp/plain rely on
-        # DHCP / the chosen server, not on this.)
-        FallbackDNS = [ ];
+        # #40183, still present on systemd 260), and (2) *omitting* it does
+        # NOT disable it — resolved then uses a COMPILED-IN list incl.
+        # Google/Cloudflare, queried plaintext and bypassing dnscrypt.
+        #
+        # It MUST be an empty STRING, not an empty list. FallbackDNS lives
+        # inside the [Resolve] SECTION, and NixOS renders section keys with
+        # one `key=elem` line PER list element — so `[ ]` emits ZERO lines
+        # (key omitted → compiled-in list active, the exact bug this guards
+        # against). `""` renders the literal `FallbackDNS=` that actually
+        # turns it off. (transformSettings only list-joins TOP-LEVEL keys,
+        # i.e. section names, so it never reaches this nested one.)
+        FallbackDNS = "";
         DNSStubListener = "yes";
         DNSOverTLS = "no";
         # Strict: resolved validates locally (with the CD bit set upstream,
@@ -262,6 +271,24 @@ in
     # NM hands DNS to resolved instead of fighting over resolv.conf.
     networking.networkmanager.dns = "systemd-resolved";
     networking.nameservers = lib.mkForce [ ];
+
+    # Drop DHCP-pushed per-link DNS so 127.0.0.1 (dnscrypt) is the ONLY
+    # resolver. Without this, resolved queries the DHCP servers (LAN gateway
+    # + whatever public resolver the router advertises, e.g. 8.8.8.8) in
+    # parallel with dnscrypt — plaintext, bypassing encryption — because a
+    # +DefaultRoute link is a co-equal default-route scope (a global "~."
+    # does not override it). 8.8.8.8 also returns proof-less DS answers that
+    # trip our strict DNSSEC (`no-signature` on unsigned names like a CNAME
+    # to *.up.railway.app). Tailscale MagicDNS is unaffected: tailscaled
+    # registers its DNS via resolved's D-Bus, not NM. Trade-off: no LAN
+    # name resolution via the gateway — if you need it, add a specific
+    # `~lan-domain` split rule pointing at the gateway rather than leaning
+    # on the default route. Verify post-rebuild: `resolvectl status` should
+    # show the ethernet link with "Current Scopes: none" (no DNS servers).
+    networking.networkmanager.connectionConfig = {
+      "ipv4.ignore-auto-dns" = true;
+      "ipv6.ignore-auto-dns" = true;
+    };
 
     # Boot-time race fix: dnscrypt-proxy ships with Type=simple, so a plain
     # After= on it only blocks until fork() — not until 127.0.0.1:53 is

@@ -50,6 +50,16 @@
           }
         )
       ];
+
+      # Gamescope — micro-compositor for running games in an isolated Wayland
+      # session (upscaling, frame limiting, HDR). Enabling it here installs the
+      # binary with the CAP_SYS_NICE capability needed for realtime scheduling.
+      # Use via Steam per-game launch options: `gamescope -- %command%`.
+      customConfig =
+        { ... }:
+        {
+          programs.gamescope.enable = true;
+        };
     };
   }
 )

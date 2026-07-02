@@ -23,6 +23,9 @@
       flake = false;
     };
     nixpkgs-older.url = "github:NixOS/nixpkgs?rev=3e042434c17eff8ed5528faa4c4503facc2bdf6c";
+    # nixpkgs-unstable branch: carries fixes ahead of the nixos-* channels
+    # (e.g. the cantarell-fonts 0.311 rebuild). Used for isolated package pins.
+    nixpkgs-unstable.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
     nixpkgs-otisdog8.url = "github:otisdog8/nixpkgs/marvin";
     # Fresher, still cache-built channel for fast-moving packages (e.g. claude-code).
     # Tracks more closely than nixos-unstable without master's source-build risk.

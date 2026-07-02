@@ -1,4 +1,4 @@
-# Hyprland window manager configuration
+# Hyprland window manager codfiguration
 {
   config,
   lib,
@@ -9,6 +9,142 @@
 }:
 let
   cfg = config.modules.desktop.full.hyprland;
+  system = pkgs.stdenv.hostPlatform.system;
+
+  # Screencopy permission allow-list targets. Exact store paths double as
+  # regexes for hl.permission — they re-interpolate on every rebuild.
+  portalExe = "${
+    inputs.hyprland.packages.${system}.xdg-desktop-portal-hyprland
+  }/libexec/xdg-desktop-portal-hyprland";
+  grimExe = lib.getExe pkgs.grim;
+
+  # hyprsplit is now a Lua library (the C++ plugin is deprecated on `legacy`).
+  # The `hyprsplitlua` output just ships init.lua; we symlink + require it.
+  hyprsplitInit = "${inputs.hyprsplit.packages.${system}.hyprsplitlua}/share/hyprsplit/init.lua";
+
+  # Binds, env, autostart and the hyprsplit require live in one readable Lua
+  # file. Dispatchers are Lua calls (hl.dsp.*), so they cannot go through the
+  # home-manager settings->lua converter without mkLuaInline noise; raw Lua
+  # here keeps them legible and lets us reuse Lua loops for the repetitive binds.
+  hyprlandLua = ''
+    local hs = require("hyprsplit")
+    hs.config({ num_workspaces = 10 })
+
+    local mod = "SUPER"
+    local home = os.getenv("HOME")
+
+    -----------------------------------------------------------------
+    -- Environment
+    -----------------------------------------------------------------
+    hl.env("XDG_SCREENSHOTS_DIR", home .. "/Pictures/Screenshots/")
+    hl.env("XDG_PICTURES_DIR", home .. "/Pictures/")
+    hl.env("GDK_BACKEND", "wayland,x11,*")
+    hl.env("QT_QPA_PLATFORM", "wayland;xcb")
+    hl.env("SDL_VIDEODRIVER", "wayland")
+    hl.env("CLUTTER_BACKEND", "wayland")
+    hl.env("HYPRCURSOR_THEME", "rose-pine-hyprcursor")
+    hl.env("XDG_CURRENT_DESKTOP", "Hyprland")
+    hl.env("XDG_SESSION_TYPE", "wayland")
+    hl.env("XDG_SESSION_DESKTOP", "Hyprland")
+    hl.env("QT_AUTO_SCREEN_SCALE_FACTOR", "1")
+    hl.env("XCURSOR_SIZE", "20")
+    hl.env("QT_WAYLAND_DISABLE_WINDOWDECORATION", "1")
+
+    -----------------------------------------------------------------
+    -- Autostart
+    -----------------------------------------------------------------
+    hl.on("hyprland.start", function()
+      hl.exec_cmd("1password --silent")
+      hl.exec_cmd("op-fuzzel-daemon")
+      hl.exec_cmd("kwalletd6")
+      hl.exec_cmd("systemctl --user start hyprpolkitagent")
+      hl.exec_cmd("polkit-agent-helper-1")
+      hl.exec_cmd("${pkgs.kdePackages.kwallet-pam}/libexec/pam_kwallet_init")
+      hl.exec_cmd("waybar")
+      hl.exec_cmd("nm-applet")
+      hl.exec_cmd("blueman-applet")
+      hl.exec_cmd("mako")
+      hl.exec_cmd("wl-paste --watch cliphist store")
+    end)
+
+    -----------------------------------------------------------------
+    -- Keybindings
+    -----------------------------------------------------------------
+    hl.bind(mod .. " + V", hl.dsp.exec_cmd("cliphist list | fuzzel --dmenu | cliphist decode | wl-copy"))
+    hl.bind(mod .. " + o", hl.dsp.exec_cmd("op-fuzzel"))
+    hl.bind(mod .. " + SHIFT + o", hl.dsp.exec_cmd("op-fuzzel-browser"))
+    hl.bind(mod .. " + ALT + o", hl.dsp.exec_cmd("op-auth me@rooty.dev"))
+    hl.bind(mod .. " + n", hl.dsp.exec_cmd("nix-search-fuzzel"))
+    hl.bind(mod .. " + SHIFT + n", hl.dsp.exec_cmd("nix-search-clipboard"))
+    hl.bind("CTRL + ALT + l", hl.dsp.exec_cmd("loginctl lock-session"))
+    hl.bind("CTRL + ALT + t", hl.dsp.exec_cmd("kitty"))
+    hl.bind("CTRL + Space", hl.dsp.exec_cmd("rofi -show drun"))
+    hl.bind("CTRL + SHIFT + q", hl.dsp.exec_cmd("wlogout -b 2 -c 0 -r 0 -m 0 --protocol layer-shell"))
+    hl.bind("ALT + tab", hl.dsp.window.cycle_next())
+    hl.bind("ALT + F4", hl.dsp.window.close())
+    hl.bind("ALT + SHIFT + F4", hl.dsp.exec_cmd("hyprctl kill"))
+    hl.bind(mod .. " + q", hl.dsp.exec_cmd("kitty"))
+    hl.bind(mod .. " + m", hl.dsp.window.fullscreen())
+    -- fullscreenstate <internal> <client>; typed spec fields are unverified for
+    -- this build, so use the raw-dispatcher passthrough to preserve behavior.
+    hl.bind(mod .. " + SHIFT + m", hl.dsp.exec_raw("fullscreenstate -1 2"))
+    hl.bind(mod .. " + p", hl.dsp.window.pseudo())
+    hl.bind(mod .. " + s", hl.dsp.window.float({ action = "toggle" }))
+    hl.bind(mod .. " + d", hs.dsp.workspace.swap_monitors({ monitor1 = "current", monitor2 = "+1" }))
+    hl.bind(mod .. " + g", hs.dsp.grab_rogue_windows())
+    hl.bind(mod .. " + SHIFT + g", hl.dsp.exec_cmd("hyprshade toggle grayscale"))
+    hl.bind(mod .. " + SHIFT + b", hl.dsp.exec_cmd("hyprshade toggle blue-light-filter"))
+    hl.bind(mod .. " + r", hl.dsp.layout("togglesplit"))
+    hl.bind(mod .. " + w", hl.dsp.exec_cmd("killall -SIGUSR1 waybar"))
+    hl.bind("CTRL + SHIFT + Space", hl.dsp.exec_cmd("grimblast --freeze copysave area"))
+    hl.bind("XF86PowerOff", hl.dsp.exec_cmd("wlogout -b 2 -c 0 -r 0 -m 0 --protocol layer-shell"))
+    hl.bind("XF86MonBrightnessUp", hl.dsp.exec_cmd("brightnessctl s +5%"))
+    hl.bind("XF86MonBrightnessDown", hl.dsp.exec_cmd("brightnessctl s 5%-"))
+    hl.bind("XF86AudioStop", hl.dsp.exec_cmd("playerctl stop"))
+    hl.bind("XF86AudioMedia", hl.dsp.exec_cmd("playerctl play-pause"))
+    hl.bind("XF86AudioPlay", hl.dsp.exec_cmd("playerctl play-pause"))
+    hl.bind("XF86AudioPrev", hl.dsp.exec_cmd("playerctl previous"))
+    hl.bind("XF86AudioNext", hl.dsp.exec_cmd("playerctl next"))
+    hl.bind("SHIFT + XF86AudioNext", hl.dsp.exec_cmd("playerctl previous"))
+    hl.bind("XF86AudioMute", hl.dsp.exec_cmd("wpctl set-mute @DEFAULT_AUDIO_SINK@ toggle"))
+
+    -- Volume (repeat while held)
+    hl.bind("XF86AudioRaiseVolume", hl.dsp.exec_cmd("wpctl set-volume -l 1.4 @DEFAULT_AUDIO_SINK@ 5%+"), { repeating = true })
+    hl.bind("XF86AudioLowerVolume", hl.dsp.exec_cmd("wpctl set-volume -l 1.4 @DEFAULT_AUDIO_SINK@ 5%-"), { repeating = true })
+
+    -- Mouse move/resize
+    hl.bind(mod .. " + mouse:272", hl.dsp.window.drag(), { mouse = true })
+    hl.bind(mod .. " + mouse:273", hl.dsp.window.resize(), { mouse = true })
+
+    -- Lid switch: lock + conditionally suspend on battery
+    hl.bind("switch:on:Lid Switch", hl.dsp.exec_cmd(
+      "loginctl lock-session && touch /tmp/10midle && test $(cat /sys/class/power_supply/AC0/online) = 0 && sleep 1 && systemctl suspend"
+    ), { locked = true })
+
+    -- Workspaces 1..10 (per-monitor via hyprsplit)
+    for i = 1, 10 do
+      local key = i % 10 -- 10 maps to key 0
+      hl.bind(mod .. " + " .. key, hs.dsp.focus({ workspace = i }))
+      hl.bind(mod .. " + SHIFT + " .. key, hs.dsp.window.move({ workspace = i, follow = false }))
+    end
+
+    -- Directional focus/move/resize/workspace, on both arrow keys and vim keys
+    local dirs = {
+      { key = "left",  vim = "h", dir = "left",  rx = -20, ry = 0,   ws = "r-1" },
+      { key = "right", vim = "l", dir = "right", rx = 20,  ry = 0,   ws = "r+1" },
+      { key = "up",    vim = "k", dir = "up",    rx = 0,   ry = -20, ws = "emptynm" },
+      { key = "down",  vim = "j", dir = "down",  rx = 0,   ry = 20,  ws = "previous_per_monitor" },
+    }
+    for _, x in ipairs(dirs) do
+      for _, k in ipairs({ x.key, x.vim }) do
+        hl.bind(mod .. " + " .. k, hl.dsp.focus({ direction = x.dir }))
+        hl.bind(mod .. " + SHIFT + " .. k, hl.dsp.window.move({ direction = x.dir }))
+        hl.bind(mod .. " + CTRL + " .. k, hl.dsp.window.resize({ x = x.rx, y = x.ry, relative = true }))
+        hl.bind(mod .. " + ALT + " .. k, hl.dsp.focus({ workspace = x.ws }))
+        hl.bind(mod .. " + ALT + SHIFT + " .. k, hl.dsp.window.move({ workspace = x.ws }))
+      end
+    end
+  '';
 in
 {
   imports = [
@@ -36,6 +172,7 @@ in
     environment.systemPackages = with pkgs; [
       grim
       slurp
+      hyprland-qtutils # renders the permission (ask) dialogs
       cliphist
       libnotify
       grimblast
@@ -85,208 +222,134 @@ in
 
       wayland.windowManager.hyprland = {
         enable = true;
-        plugins = [
-          inputs.hyprsplit.packages.${pkgs.stdenv.hostPlatform.system}.hyprsplit
-        ];
-        package = inputs.hyprland.packages.${pkgs.stdenv.hostPlatform.system}.hyprland;
-        portalPackage =
-          inputs.hyprland.packages.${pkgs.stdenv.hostPlatform.system}.xdg-desktop-portal-hyprland;
+        # Lua config (hyprlang is deprecated since 0.55). Required to use the
+        # permission system, which is Lua-only and read once at startup.
+        configType = "lua";
+        package = inputs.hyprland.packages.${system}.hyprland;
+        portalPackage = inputs.hyprland.packages.${system}.xdg-desktop-portal-hyprland;
         systemd.variables = [ "--all" ];
+
+        # Table-shaped keywords stay declarative: home-manager renders each as
+        # hl.<name>(<lua table>). Call-shaped keywords (bind/env/exec) live in
+        # extraLuaFiles below as raw Lua to avoid mkLuaInline everywhere.
         settings = {
-          debug = {
-            disable_logs = false;
+          config = {
+            # Permission system on. Rules below are enforced from startup;
+            # changes need a full Hyprland restart, not `hyprctl reload`.
+            ecosystem = {
+              enforce_permissions = true;
+            };
+            debug = {
+              disable_logs = false;
+            };
+            animations = {
+              enabled = false;
+            };
+            gestures = {
+              workspace_swipe_invert = false;
+            };
+            input = {
+              kb_layout = "us";
+              follow_mouse = 1;
+              kb_options = "caps:escape";
+              touchpad = {
+                clickfinger_behavior = true;
+              };
+            };
+            general = {
+              gaps_in = 3;
+              gaps_out = 3;
+            };
+            decoration = {
+              rounding = 0;
+              active_opacity = 0.97;
+              inactive_opacity = 0.9;
+            };
+            dwindle = {
+              preserve_split = true;
+              force_split = 0;
+              smart_split = true;
+            };
+            binds = {
+              allow_workspace_cycles = true;
+              movefocus_cycles_fullscreen = false;
+            };
+            misc = {
+              disable_hyprland_logo = true;
+              disable_splash_rendering = true;
+              vrr = 2;
+              mouse_move_enables_dpms = true;
+              key_press_enables_dpms = true;
+              middle_click_paste = false;
+              focus_on_activate = true;
+              force_default_wallpaper = 0;
+            };
           };
-          gesture = [
-            "3, horizontal, workspace"
-          ];
-          gestures = {
-            workspace_swipe_invert = false;
-          };
-          animation = [
-            "global, 0"
-          ];
-          "$mod" = "SUPER";
-          "$home" = "/home/${username}";
-          binde = [
-            ", XF86AudioRaiseVolume, exec, wpctl set-volume -l 1.4 @DEFAULT_AUDIO_SINK@ 5%+"
-            ", XF86AudioLowerVolume, exec, wpctl set-volume -l 1.4 @DEFAULT_AUDIO_SINK@ 5%-"
-          ];
-          bind = [
-            "SUPER, V, exec, cliphist list | fuzzel --dmenu | cliphist decode | wl-copy"
-            "SUPER, o, exec, op-fuzzel"
-            "SUPER_SHIFT, o, exec, op-fuzzel-browser"
-            "SUPER_ALT, o, exec, op-auth me@rooty.dev"
-            "SUPER, n, exec, nix-search-fuzzel"
-            "SUPER_SHIFT, n, exec, nix-search-clipboard"
-            "CTRL_ALT, l, exec, loginctl lock-session"
-            "CTRL_ALT, t, exec, kitty"
-            "CTRL, Space, exec, rofi -show drun"
-            "CTRL_SHIFT, q, exec, wlogout -b 2 -c 0 -r 0 -m 0 --protocol layer-shell"
-            "ALT, tab, cyclenext"
-            "ALT, F4, killactive"
-            "ALT_SHIFT, F4, exec, hyprctl kill"
-            "$mod, q, exec, kitty"
-            "$mod, m, fullscreen"
-            "$mod_SHIFT, m, fullscreenstate, -1, 2"
-            "$mod, p, pseudo"
-            "$mod, s, togglefloating"
-            "$mod, d, split:swapactiveworkspaces, current + 1"
-            "$mod, g, split:grabroguewindows"
-            "$mod_SHIFT, g, exec, hyprshade toggle grayscale"
-            "$mod_SHIFT, b, exec, hyprshade toggle blue-light-filter"
-            "$mod, r, layoutmsg, togglesplit"
-            "$mod, w, exec, killall -SIGUSR1 waybar"
-            "CTRL_SHIFT, Space, exec, grimblast --freeze copysave area"
-            ",XF86PowerOff, exec, wlogout -b 2 -c 0 -r 0 -m 0 --protocol layer-shell"
-            ",XF86MonBrightnessUp, exec, brightnessctl s +5%"
-            ",XF86MonBrightnessDown, exec, brightnessctl s 5%-"
-            ",XF86AudioStop, exec, playerctl stop"
-            ",XF86AudioMedia, exec, playerctl play-pause"
-            ",XF86AudioPlay, exec, playerctl play-pause"
-            ",XF86AudioPrev, exec, playerctl previous"
-            ",XF86AudioNext, exec, playerctl next"
-            "SHIFT, XF86AudioNext, exec, playerctl previous"
-            ",XF86AudioMute, exec, wpctl set-mute @DEFAULT_AUDIO_SINK@ toggle"
-          ]
-          ++ (builtins.concatLists (
-            builtins.genList (
-              i:
-              let
-                ws = i + 1;
-                key = ws - ws / 10 * 10;
-              in
-              [
-                "$mod, ${toString key}, split:workspace, ${toString ws}"
-                "$mod SHIFT, ${toString key}, split:movetoworkspacesilent, ${toString ws}"
-              ]
-            ) 10
-          ))
-          ++ (builtins.concatLists (
-            map
-              (x: [
-                "$mod, ${x.a}, movefocus, ${x.b}"
-                "$mod_SHIFT, ${x.a}, movewindow, ${x.b}"
-                "$mod, ${x.c}, movefocus, ${x.b}"
-                "$mod_SHIFT, ${x.c}, movewindow, ${x.b}"
-                "$mod_CTRL, ${x.c}, resizeactive, ${x.d}"
-                "$mod_CTRL, ${x.a}, resizeactive, ${x.d}"
-                "$mod_ALT, ${x.c}, workspace, ${x.e}"
-                "$mod_ALT, ${x.a}, workspace, ${x.e}"
-                "$mod_ALT_SHIFT, ${x.c}, movetoworkspace, ${x.e}"
-                "$mod_ALT_SHIFT, ${x.a}, movetoworkspace, ${x.e}"
-              ])
-              [
-                {
-                  a = "left";
-                  b = "l";
-                  c = "h";
-                  d = "-20 0";
-                  e = "r-1";
-                }
-                {
-                  a = "right";
-                  b = "r";
-                  c = "l";
-                  d = "20 0";
-                  e = "r+1";
-                }
-                {
-                  a = "up";
-                  b = "u";
-                  c = "k";
-                  d = "0 -20";
-                  e = "emptynm";
-                }
-                {
-                  a = "down";
-                  b = "d";
-                  c = "j";
-                  d = "0 20";
-                  e = "previous_per_monitor";
-                }
-              ]
-          ));
-          bindm = [
-            "$mod, mouse:272, movewindow"
-            "$mod, mouse:273, resizewindow"
-          ];
-          bindl = [
-            ",switch:on:Lid Switch,exec,loginctl lock-session && touch /tmp/10midle && test $(cat /sys/class/power_supply/AC0/online) = 0 && sleep 1 && systemctl suspend"
-          ];
+
           monitor = [
-            ",highres,auto,1,bitdepth,8"
+            {
+              output = "";
+              mode = "highres";
+              position = "auto";
+              scale = 1;
+              bitdepth = 8;
+            }
           ];
-          exec-once = [
-            "1password --silent"
-            "op-fuzzel-daemon"
-            "kwalletd6"
-            "systemctl --user start hyprpolkitagent"
-            "polkit-agent-helper-1"
-            "${pkgs.kdePackages.kwallet-pam}/libexec/pam_kwallet_init"
-            "waybar"
-            "nm-applet"
-            "blueman-applet"
-            "mako"
-            "wl-paste --watch cliphist store"
+
+          gesture = [
+            {
+              fingers = 3;
+              direction = "horizontal";
+              action = "workspace";
+            }
           ];
-          windowrule = [
-            "float on, match:title Hello World"
+
+          # Permission rules (first match wins, so catch-alls come last).
+          # screencopy default is `ask`; allow the portal (consented sharing)
+          # and grim (screenshots), prompt for anything else. cursorpos prompts.
+          # keyboard default is `allow`; allow the internal keyboard and prompt
+          # for any other keyboard (blocks silent virtual-kbd injection without
+          # a hard lockout). Add device names from `hyprctl devices` per host.
+          permission = [
+            {
+              binary = portalExe;
+              type = "screencopy";
+              mode = "allow";
+            }
+            {
+              binary = grimExe;
+              type = "screencopy";
+              mode = "allow";
+            }
+            {
+              binary = ".*";
+              type = "screencopy";
+              mode = "ask";
+            }
+            {
+              binary = ".*";
+              type = "cursorpos";
+              mode = "ask";
+            }
+            {
+              binary = ".*";
+              type = "keyboard";
+              mode = "allow";
+            }
           ];
-          env = [
-            "XDG_SCREENSHOTS_DIR,$home/Pictures/Screenshots/"
-            "XDG_PICTURES_DIR,$home/Pictures/"
-            "GDK_BACKEND,wayland,x11,*"
-            "QT_QPA_PLATFORM,wayland;xcb"
-            "SDL_VIDEODRIVER,wayland"
-            "CLUTTER_BACKEND,wayland"
-            "HYPRCURSOR_THEME,rose-pine-hyprcursor"
-            "XDG_CURRENT_DESKTOP,Hyprland"
-            "XDG_SESSION_TYPE,wayland"
-            "XDG_SESSION_DESKTOP,Hyprland"
-            "QT_AUTO_SCREEN_SCALE_FACTOR,1"
-            "XCURSOR_SIZE,20"
-            "QT_WAYLAND_DISABLE_WINDOWDECORATION,1"
-          ];
-          plugin = {
-            hyprsplit = {
-              num_workspaces = 10;
-            };
+        };
+
+        # hyprsplit (Lua library) + the call-shaped config, in raw Lua.
+        extraLuaFiles = {
+          # Symlink the library so `require("hyprsplit")` resolves; not
+          # auto-run — hyprlandLua requires it explicitly.
+          "hyprsplit/init" = {
+            autoLoad = false;
+            content = builtins.readFile hyprsplitInit;
           };
-          input = {
-            kb_layout = "us";
-            follow_mouse = 1;
-            touchpad = {
-              clickfinger_behavior = true;
-            };
-            kb_options = "caps:escape";
-          };
-          general = {
-            gaps_in = 3;
-            gaps_out = 3;
-          };
-          decoration = {
-            rounding = 0;
-            active_opacity = 0.97;
-            inactive_opacity = 0.9;
-          };
-          dwindle = {
-            preserve_split = true;
-            force_split = 0;
-            smart_split = true;
-          };
-          binds = {
-            allow_workspace_cycles = true;
-            movefocus_cycles_fullscreen = false;
-          };
-          misc = {
-            disable_hyprland_logo = true;
-            disable_splash_rendering = true;
-            vrr = 2;
-            mouse_move_enables_dpms = true;
-            key_press_enables_dpms = true;
-            middle_click_paste = false;
-            focus_on_activate = true;
-            force_default_wallpaper = 0;
+          "hm-hyprland" = {
+            autoLoad = true;
+            content = hyprlandLua;
           };
         };
       };

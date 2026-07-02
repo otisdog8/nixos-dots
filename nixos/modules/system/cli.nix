@@ -74,6 +74,9 @@ in
         nfs-utils
         bcachefs-tools
         clevis
+        gocryptfs
+        e2fsprogs
+        fuse2fs
 
         # xterm-kitty terminfo so SSHing in from a kitty terminal (TERM=xterm-kitty)
         # doesn't break tmux/ncurses apps. Split output — does not pull in kitty.
