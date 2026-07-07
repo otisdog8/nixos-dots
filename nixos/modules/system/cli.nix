@@ -77,6 +77,7 @@ in
         gocryptfs
         e2fsprogs
         fuse2fs
+        fuse
 
         # xterm-kitty terminfo so SSHing in from a kitty terminal (TERM=xterm-kitty)
         # doesn't break tmux/ncurses apps. Split output — does not pull in kitty.
@@ -95,6 +96,8 @@ in
         };
       };
     };
+
+    programs.fuse.enable = true;
 
     programs.zsh = {
       syntaxHighlighting = {
