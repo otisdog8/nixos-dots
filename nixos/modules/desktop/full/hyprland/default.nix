@@ -17,6 +17,7 @@ let
     inputs.hyprland.packages.${system}.xdg-desktop-portal-hyprland
   }/libexec/xdg-desktop-portal-hyprland";
   grimExe = lib.getExe pkgs.grim;
+  hyprlockExe = lib.getExe pkgs.hyprlock;
 
   # hyprsplit is now a Lua library (the C++ plugin is deprecated on `legacy`).
   # The `hyprsplitlua` output just ships init.lua; we symlink + require it.
@@ -85,9 +86,10 @@ let
     hl.bind("ALT + SHIFT + F4", hl.dsp.exec_cmd("hyprctl kill"))
     hl.bind(mod .. " + q", hl.dsp.exec_cmd("kitty"))
     hl.bind(mod .. " + m", hl.dsp.window.fullscreen())
-    -- fullscreenstate <internal> <client>; typed spec fields are unverified for
-    -- this build, so use the raw-dispatcher passthrough to preserve behavior.
-    hl.bind(mod .. " + SHIFT + m", hl.dsp.exec_raw("fullscreenstate -1 2"))
+    -- exec_raw is exec-without-sh (execr), not a dispatcher passthrough, so the
+    -- old `exec_raw("fullscreenstate -1 2")` spawned a nonexistent program.
+    -- action = "toggle" dispatches unconditionally like hyprlang fullscreenstate.
+    hl.bind(mod .. " + SHIFT + m", hl.dsp.window.fullscreen_state({ internal = -1, client = 2, action = "toggle" }))
     hl.bind(mod .. " + p", hl.dsp.window.pseudo())
     hl.bind(mod .. " + s", hl.dsp.window.float({ action = "toggle" }))
     hl.bind(mod .. " + d", hs.dsp.workspace.swap_monitors({ monitor1 = "current", monitor2 = "+1" }))
@@ -318,6 +320,11 @@ in
             }
             {
               binary = grimExe;
+              type = "screencopy";
+              mode = "allow";
+            }
+            {
+              binary = hyprlockExe;
               type = "screencopy";
               mode = "allow";
             }
