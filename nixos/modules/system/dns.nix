@@ -52,11 +52,12 @@ let
   # down, so Tailscale's bus-pushed MagicDNS survives. All overrides revert
   # on reboot or `dns-mode encrypted`.
   #
-  #   dns-mode encrypted       dnscrypt + DNSSEC=yes (the configured default)
+  #   dns-mode encrypted       dnscrypt + DNSSEC=no (the configured default)
   #   dns-mode plain <ip>      global DNS -> <ip> plaintext, bypass dnscrypt, DNSSEC=no
-  #   dns-mode validated <ip>  like plain but keeps local DNSSEC validation on
+  #   dns-mode validated <ip>  like plain but turns local DNSSEC validation on
   #   dns-mode dhcp            clear global DNS -> DHCP/VPN-pushed resolver, DNSSEC=no
-  #   dns-mode dnssec-off      keep dnscrypt, DNSSEC=no
+  #   dns-mode dnssec-on       keep dnscrypt, DNSSEC=yes (strict local validation)
+  #   dns-mode dnssec-off      keep dnscrypt, DNSSEC=no (same as the default; clears dnssec-on)
   #   dns-mode status          show effective resolver + any active override
   dnsMode = pkgs.writeShellApplication {
     name = "dns-mode";
@@ -94,7 +95,7 @@ let
         encrypted)
           need_root "$@"
           remove_override
-          echo "encrypted: dnscrypt-proxy (127.0.0.1) + DNSSEC=yes (configured default)."
+          echo "encrypted: dnscrypt-proxy (127.0.0.1) + DNSSEC=no (configured default)."
           ;;
         plain)
           need_root "$@"
@@ -121,10 +122,15 @@ let
           write_override "DNS=" "no"
           echo "dhcp: cleared global DNS -> uses DHCP/VPN-pushed resolver, DNSSEC=no."
           ;;
+        dnssec-on)
+          need_root "$@"
+          write_override "" "yes"
+          echo "dnssec-on: dnscrypt kept, DNSSEC=yes (strict local validation)."
+          ;;
         dnssec-off)
           need_root "$@"
           write_override "" "no"
-          echo "dnssec-off: dnscrypt kept, DNSSEC=no."
+          echo "dnssec-off: dnscrypt kept, DNSSEC=no (same as the configured default)."
           ;;
         status)
           resolvectl status 2>/dev/null | head -n 14 || true
@@ -132,11 +138,11 @@ let
             echo "--- runtime override ACTIVE ---"
             cat "$dropin"
           else
-            echo "(no override: encrypted dnscrypt + DNSSEC=yes)"
+            echo "(no override: encrypted dnscrypt + DNSSEC=no)"
           fi
           ;;
         *)
-          echo "usage: dns-mode [encrypted|plain <ip>|validated <ip>|dhcp|dnssec-off|status]" >&2
+          echo "usage: dns-mode [encrypted|plain <ip>|validated <ip>|dhcp|dnssec-on|dnssec-off|status]" >&2
           exit 1
           ;;
       esac
@@ -251,15 +257,17 @@ in
         FallbackDNS = "";
         DNSStubListener = "yes";
         DNSOverTLS = "no";
-        # Strict: resolved validates locally (with the CD bit set upstream,
-        # so it checks the chain itself against the root anchor) instead of
-        # trusting whatever the upstream's per-zone DNSSEC policy happens to
-        # be. "allow-downgrade" was silently caching feature-level downgrades
-        # on transient network blips and getting stuck non-validating until a
-        # manual `resolvectl reset-server-features`. Strict never downgrades;
-        # the escape hatch for hostile/DNS-mangling networks is the runtime
-        # `dns-mode` tool (plain/dhcp/dnssec-off; /run drop-in, no rebuild).
-        DNSSEC = "yes";
+        # Off by default (for now): strict local validation caused too many
+        # real-world breakages (proof-less answers from middleboxes/CDNs,
+        # networks that mangle DNS) to be worth it as the default. We
+        # deliberately skip "allow-downgrade" as a middle ground — it was
+        # silently caching feature-level downgrades on transient network
+        # blips and getting stuck non-validating until a manual
+        # `resolvectl reset-server-features`, i.e. the worst of both.
+        # Upstreams still validate (the stamps advertise DNSSEC); re-enable
+        # local validation at runtime with `dns-mode dnssec-on` (/run
+        # drop-in, no rebuild).
+        DNSSEC = "no";
         Cache = "yes";
         CacheFromLocalhost = "yes";
         ReadEtcHosts = "yes";
@@ -278,8 +286,8 @@ in
     # parallel with dnscrypt — plaintext, bypassing encryption — because a
     # +DefaultRoute link is a co-equal default-route scope (a global "~."
     # does not override it). 8.8.8.8 also returns proof-less DS answers that
-    # trip our strict DNSSEC (`no-signature` on unsigned names like a CNAME
-    # to *.up.railway.app). Tailscale MagicDNS is unaffected: tailscaled
+    # trip strict DNSSEC when it's enabled via `dns-mode dnssec-on`
+    # (`no-signature` on unsigned names like a CNAME to *.up.railway.app). Tailscale MagicDNS is unaffected: tailscaled
     # registers its DNS via resolved's D-Bus, not NM. Trade-off: no LAN
     # name resolution via the gateway — if you need it, add a specific
     # `~lan-domain` split rule pointing at the gateway rather than leaning
