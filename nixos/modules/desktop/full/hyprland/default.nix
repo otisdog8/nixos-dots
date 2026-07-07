@@ -18,6 +18,7 @@ let
   }/libexec/xdg-desktop-portal-hyprland";
   grimExe = lib.getExe pkgs.grim;
   hyprlockExe = lib.getExe pkgs.hyprlock;
+  hyprpickerExe = lib.getExe pkgs.hyprpicker;
 
   # hyprsplit is now a Lua library (the C++ plugin is deprecated on `legacy`).
   # The `hyprsplitlua` output just ships init.lua; we symlink + require it.
@@ -174,6 +175,7 @@ in
     environment.systemPackages = with pkgs; [
       grim
       slurp
+      hyprpicker
       hyprland-qtutils # renders the permission (ask) dialogs
       cliphist
       libnotify
@@ -325,6 +327,11 @@ in
             }
             {
               binary = hyprlockExe;
+              type = "screencopy";
+              mode = "allow";
+            }
+            {
+              binary = hyprpickerExe;
               type = "screencopy";
               mode = "allow";
             }
