@@ -147,6 +147,14 @@ in
         extract_backend = "firecrawl";
       };
 
+      # Allow the Alertmanager cron triage job to open the known-good local
+      # homelab endpoint without blocking on Tirith's generic .dev lookalike-TLD
+      # warning. Keep this narrow: only the local browser command for this host,
+      # not all .dev URLs or all cron approvals.
+      command_allowlist = [
+        "agent-browser open https://alertmanager.rooty.dev*"
+      ];
+
       memory.provider = "hindsight";
 
       # The authority users actually see (Cloudflare → k8s ingress). With
