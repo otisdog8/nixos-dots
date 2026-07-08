@@ -31,6 +31,9 @@
 #        sops nixos/hosts/recusant/secrets/hermes-homelab-recusant.env
 #          DISCORD_BOT_TOKEN=...
 #          DISCORD_ALLOWED_CHANNELS=<ops channel id>
+#          DISCORD_ALLOWED_USERS=<your discord user id>  # comma-separated;
+#            user authz is default-DENY — without this every sender gets
+#            "Unauthorized user", even in an allowed channel
 #          OPENROUTER_API_KEY=...          # aux/fallback models
 #          FIRECRAWL_API_KEY=...           # web_search / web_extract
 #          SCRAPFLY_API_KEY=...            # scrapfly MCP (anti-bot scraping)
