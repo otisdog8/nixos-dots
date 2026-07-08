@@ -109,6 +109,11 @@
   services.nginx.virtualHosts."agent-auth.recusant.rooty.dev" = {
     useACMEHost = "recusant.rooty.dev";
     forceSSL = true;
+    # agent-auth.recusant.rooty.dev resolves to the tailscale IP, and other
+    # vhosts (hermes/sab/jellyfin) listen on it exactly — nginx only
+    # server_name-matches within the exact-address socket, so this vhost must
+    # join it or the hermes dashboard answers instead (see media.nix).
+    listenAddresses = [ "100.110.239.45" ];
     locations."/" = {
       proxyPass = "http://127.0.0.1:${toString config.services.agent-auth.port}";
       extraConfig = ''
