@@ -138,6 +138,8 @@ in
       discord = {
         require_mention = true;
         thread_require_mention = false;
+        # Ping allowed Discord users when command-approval prompts are posted.
+        approval_mentions = true;
       };
 
       web = {
