@@ -46,6 +46,8 @@
     ./backups.nix
     ./ddns.nix
     ./agent-auth.nix
+    ./hindsight.nix
+    ./homelab-agent.nix
 
     # Hardware
     inputs.nixos-hardware.nixosModules.common-cpu-amd

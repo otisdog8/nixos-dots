@@ -46,6 +46,14 @@ platforms:
       organization_secrets: write
       organization_variables: write
       organization_self_hosted_runners: read
+    # Always forced to human review, even if a future rule or the LLM would
+    # approve — justification text can't LLM-talk its way into a secrets
+    # grant. Explicit (not schema defaults) because org secrets are in the
+    # ceiling above but NOT in upstream's default sensitive list.
+    sensitive_permissions:
+      - secrets
+      - administration
+      - organization_secrets
   homelab:
     # LLDAP groups the broker may join an agent into. Authelia rules per group
     # do the actual enforcement. Deliberately excluded: `admin`, plus
@@ -115,6 +123,11 @@ platforms:
       logs-reader: "read pod logs (get + list on pods and pods/log)"
       traefik-patcher: "get + patch the traefik Deployment only — nothing else"
       edit: "full read-write in the namespace (broad: can run pods as any SA)"
+    # Always human-reviewed, even if the commented auto-approve rules below
+    # are ever adopted — `edit` never rides an auto-approval.
+    sensitive_roles:
+      - edit
+      - admin
 
 # No routing rules: everything falls through to defaults.action: surface, and
 # the nixos-dots ban lives in repo_denylist above (validator layer, stronger

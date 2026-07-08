@@ -54,6 +54,8 @@
     modules/apps/opencode.nix
     modules/apps/claude-code.nix
     modules/apps/ccusage.nix
+    modules/apps/agent-auth-client.nix
+    modules/apps/hermes-agents.nix
     modules/apps/sandbox-shell.nix
     modules/apps/nixvim.nix
     modules/apps/jellyfin.nix
@@ -77,6 +79,7 @@
     apps = {
       jellyfin.enable = lib.mkDefault false;
       sabnzbd.enable = lib.mkDefault false;
+      agent-auth-client.enable = lib.mkDefault true;
     };
   };
 

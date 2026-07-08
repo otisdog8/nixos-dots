@@ -47,6 +47,21 @@
       # rather build with agent-auth's own pinned nixpkgs.
       inputs.nixpkgs.follows = "nixpkgs";
     };
+    # hermes-agent: the runtime behind the AI agent instances on recusant
+    # (nixos/modules/apps/hermes-agents.nix). Nix support is upstream-Tier-2 —
+    # keep it pinned and bump deliberately, never with a blanket flake update.
+    hermes-agent = {
+      url = "github:NousResearch/hermes-agent";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
+    # hindsight: shared agent-memory service on recusant (hosts/recusant/
+    # hindsight.nix). Not a flake — we build hindsight-api-slim from its
+    # uv.lock with hermes-agent's uv2nix inputs. Keep roughly in step with
+    # the hindsight-client pinned by hermes-agent's pyproject.
+    hindsight = {
+      url = "github:vectorize-io/hindsight";
+      flake = false;
+    };
     chaotic.url = "github:chaotic-cx/nyx/nyxpkgs-unstable";
     disko = {
       url = "github:nix-community/disko";

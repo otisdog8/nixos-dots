@@ -17,3 +17,10 @@ creation_rules:
       - *recusant_host
       - *galaxy_host
       - *constitution_host
+  # Hermes agent zones (per-agent dotenv env files) + the shared hindsight
+  # memory service.
+  - path_regex: .*recusant/secrets/(homelab-agent|hindsight).*
+    age:
+      - *recusant_host
+      - *galaxy_host
+      - *constitution_host
