@@ -1,0 +1,133 @@
+# agent-auth policy — evaluation order per request:
+#   1. platform validator (hard ceilings below under `platforms:`) — fail = deny
+#   2. saved rules in the DB (created from Discord's Edit modal), newest first
+#   3. the `rules:` list below, first match wins
+#   4. `defaults.action`
+#
+# Durations: approved = min(requested, matched rule's max_duration, defaults.max_duration)
+
+defaults:
+  action: surface          # deny | approve | llm | surface
+  max_duration: 24h
+
+llm:
+  model: deepseek/deepseek-v4-flash    # OpenRouter model id; per-rule override via constraints.llm_model
+  retry_budget: 2          # LLM denials the agent may retry before human escalation
+  timeout_secs: 60
+
+platforms:
+  github:
+    # GitHub account owners whose repos are brokered (the app must be
+    # installed on each)
+    repo_allowlist:
+      - "otisdog8/*"
+      - "uorux/*"
+      - "rooty-dev/*"
+      - "rootyorg/*"
+    # Checked before the allowlist, at the validator layer — no rule (DB or
+    # YAML) can override it. nixos-dots configures this broker's host, so a
+    # grant there is policy self-escalation; the glob covers forks anywhere.
+    repo_denylist:
+      - "*/nixos-dots"
+    # Hard ceiling — requests above this are denied before any policy rule runs.
+    # Must be a subset of what the GitHub App itself was granted (keep this list
+    # and the App's permissions in sync; keys are the API permission names).
+    permission_ceiling:
+      contents: write
+      workflows: write      # pushing .github/workflows/* needs this + contents
+      secrets: write
+      variables: write
+      actions: read
+      pull_requests: write
+      issues: write
+      checks: read
+      # org-level — NOT repo-scoped: they apply org-wide on any token that
+      # requests them, so nothing below routes them past `surface`
+      organization_secrets: write
+      organization_variables: write
+      organization_self_hosted_runners: read
+  homelab:
+    # LLDAP groups the broker may join an agent into. Authelia rules per group
+    # do the actual enforcement. Deliberately excluded: `admin`, plus
+    # `lldap_admin` and `lldap_password_manager` — either of those is the keys
+    # to the directory the broker itself provisions through (an agent holding
+    # them could join itself to any group / reset any password, bypassing every
+    # ceiling here).
+    allowed_groups:
+      - alertmanager-users
+      - bazarr-anime-users
+      - bazarr-users
+      - bin-users
+      - calibre-admins
+      - calibre-users
+      - cyberchef-users
+      - enclosed-users
+      - gitea-admins
+      - gitea-users
+      - grafana-admins
+      - grafana-users
+      - homepage-users
+      - hubble-users
+      - immich-admins
+      - immich-users
+      - jellyfin-admins
+      - jellyfin-users
+      - kubedash-users
+      - lazylibrarian-users
+      - librechat-users
+      - lidarr-users
+      - linkwarden-users
+      - lldap_strict_readonly
+      - paperless-users
+      - prowlarr-users
+      - radarr-anime-users
+      - radarr-users
+      - rook-users
+      - sonarr-anime-users
+      - sonarr-users
+      - spotify-dashboard-users
+      - stirling-pdf-users
+      - suwayomi-users
+      - thelounge-users
+      - traefik-users
+    # Optional per-group blurbs surfaced to agents via GET /v1/catalog; add
+    # entries (group: "what it grants") as agents start using the catalog.
+    group_descriptions: {}
+  kubernetes:
+    # Any namespace is brokerable — containment comes from narrow roles and
+    # human review, not from walling namespaces off (an agent with gitops
+    # access can reach them regardless).
+    namespace_allowlist:
+      - "*"
+    # The capability IS the role. This list must match the `bind`
+    # resourceNames of the agent-auth-provisioner ClusterRole in the
+    # agent-auth repo's deploy/k8s.yaml (re-apply it on the cluster when this
+    # changes) — the broker can only hand out roles it can bind, and widening
+    # this list widens the broker's own standing credential.
+    role_allowlist:
+      - view
+      - logs-reader       # get+list pods and pod logs
+      - traefik-patcher   # get+patch on deployments/traefik only
+      - edit
+    # Shown to agents via GET /v1/catalog so they pick the right narrow role.
+    role_descriptions:
+      view: "read-only access to all resources in the namespace"
+      logs-reader: "read pod logs (get + list on pods and pods/log)"
+      traefik-patcher: "get + patch the traefik Deployment only — nothing else"
+      edit: "full read-write in the namespace (broad: can run pods as any SA)"
+
+# No routing rules: everything falls through to defaults.action: surface, and
+# the nixos-dots ban lives in repo_denylist above (validator layer, stronger
+# than any rule). Upstream's example auto-approves the narrow k8s roles so
+# friction scales with blast radius — uncomment to adopt:
+rules: []
+#rules:
+#  - match: {platform: kubernetes, capability: view}
+#    action: approve
+#    constraints: {max_duration: 8h}
+#  - match: {platform: kubernetes, capability: logs-reader}
+#    action: approve
+#    constraints: {max_duration: 8h}
+#  - match: {platform: kubernetes, capability: traefik-patcher}
+#    action: approve
+#    constraints: {max_duration: 1h}   # narrow verb on one named resource

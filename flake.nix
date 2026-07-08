@@ -39,6 +39,14 @@
       url = "github:Mic92/sops-nix";
       inputs.nixpkgs.follows = "nixpkgs";
     };
+    # agent-auth: credential broker for AI agents; runs on recusant as a native
+    # NixOS service (nixos/hosts/recusant/agent-auth.nix).
+    agent-auth = {
+      url = "github:uorux/agent-auth";
+      # Drop the follows if the package fails against nixos-unstable and you'd
+      # rather build with agent-auth's own pinned nixpkgs.
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
     chaotic.url = "github:chaotic-cx/nyx/nyxpkgs-unstable";
     disko = {
       url = "github:nix-community/disko";

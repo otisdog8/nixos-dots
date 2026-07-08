@@ -10,3 +10,10 @@ creation_rules:
       - *recusant_host
       - *galaxy_host
       - *constitution_host
+  # agent-auth secrets (dotenv env file + binary credentials like the GitHub
+  # App PEM and the k8s provisioner token).
+  - path_regex: .*recusant/secrets/agent-auth.*
+    age:
+      - *recusant_host
+      - *galaxy_host
+      - *constitution_host

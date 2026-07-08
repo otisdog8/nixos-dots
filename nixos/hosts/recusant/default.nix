@@ -45,6 +45,7 @@
     ./secrets.nix
     ./backups.nix
     ./ddns.nix
+    ./agent-auth.nix
 
     # Hardware
     inputs.nixos-hardware.nixosModules.common-cpu-amd

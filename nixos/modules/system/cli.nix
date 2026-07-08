@@ -47,6 +47,11 @@ in
         git
         git-crypt
 
+        # Secrets management
+        sops
+        age
+        ssh-to-age
+
         # General utilities
         wget
         imagemagick
