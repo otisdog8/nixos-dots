@@ -225,6 +225,10 @@ in
       createHome = true;
       # Real shell: codex/hermes login flows and admin `sudo -u <agent>` need it.
       shell = pkgs.bashInteractive;
+      # Per-user profile puts hermes + the zone's tools on login-shell PATH,
+      # so bootstrap flows are just `sudo -u <name> -i hermes auth add
+      # codex-oauth` (HOME is the stateDir, so ~/.hermes is the right store).
+      packages = [ inst.package ] ++ inst.extraPackages;
     }) instances;
 
     systemd.tmpfiles.rules = lib.concatLists (

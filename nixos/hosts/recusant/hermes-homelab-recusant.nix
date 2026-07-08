@@ -34,14 +34,19 @@
 #          DISCORD_ALLOWED_USERS=<your discord user id>  # comma-separated;
 #            user authz is default-DENY — without this every sender gets
 #            "Unauthorized user", even in an allowed channel
+#          DISCORD_HOME_CHANNEL=<ops channel id>  # proactive output (cron,
+#            reminders). The gateway tries to self-persist this on first
+#            contact and managed mode refuses — set it here instead.
 #          OPENROUTER_API_KEY=...          # aux/fallback models
 #          FIRECRAWL_API_KEY=...           # web_search / web_extract
 #          SCRAPFLY_API_KEY=...            # scrapfly MCP (anti-bot scraping)
 #          HINDSIGHT_API_KEY=...           # = tenant key from hindsight.env
 #          AGENT_AUTH_API_KEY=aa_...       # from step 2
 #          GH_TOKEN=github_pat_...         # from step 3
-#   5. Rebuild, then Codex OAuth (device-code; hermes imports ~/.codex/auth.json):
-#        sudo -u hermes-homelab-recusant env HOME=/var/lib/hermes-homelab-recusant codex auth login
+#   5. Rebuild, then Codex OAuth into HERMES' OWN auth store (device-code —
+#      a plain `codex login` is NOT enough, the gateway logs "No Codex
+#      credentials stored" until this runs):
+#        sudo -u hermes-homelab-recusant -i hermes auth add codex-oauth
 #        systemctl restart hermes-homelab-recusant
 #   6. Verify: @mention the bot in the ops channel; first tool call against
 #      agent-auth should be list_capabilities. Dashboard: public name is
