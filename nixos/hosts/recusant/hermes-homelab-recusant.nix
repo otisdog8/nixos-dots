@@ -108,6 +108,10 @@ in
     dashboard = {
       enable = true;
       port = dashboardPort;
+      # Non-loopback bind engages the dashboard's auth gate (fails closed
+      # without a provider) — auth comes from the Authelia OIDC block in
+      # settings below, so even direct tailnet access gets a login page.
+      host = tailscaleIp;
     };
 
     settings = {
@@ -135,10 +139,24 @@ in
 
       memory.provider = "hindsight";
 
-      # The authority users actually see (k8s ingress). With two proxy hops,
-      # header reconstruction is fragile — pin it so the dashboard builds
-      # links/redirects against the public name, not the internal origin.
-      dashboard.public_url = "https://homelab-agent-recusant.rooty.dev";
+      # The authority users actually see (Cloudflare → k8s ingress). With
+      # multiple proxy hops, header reconstruction is fragile — pin it so the
+      # dashboard builds links/redirects (incl. the OIDC redirect_uri
+      # <public_url>/auth/callback) against the public name.
+      dashboard.public_url = "https://hermes-homelab-recusant.rooty.dev";
+
+      # Auth gate: Authelia via the bundled self-hosted OIDC plugin. Public
+      # PKCE client — no client secret (confidential clients unsupported).
+      # The Authelia side (k8s) must register the matching client; see the
+      # OIDC handoff notes in this file's history / k8s repo.
+      dashboard.oauth = {
+        provider = "self-hosted";
+        self_hosted = {
+          issuer = "https://auth.rooty.dev"; # Authelia root — must match its discovery document
+          client_id = "hermes-homelab-recusant";
+          scopes = "openid profile email";
+        };
+      };
 
       # Skills are the agent's persistence layer — exactly where a prompt
       # injection would try to survive a restart. Stage writes for review
@@ -182,8 +200,22 @@ in
     forceSSL = true;
     listenAddresses = [ tailscaleIp ];
     locations."/" = {
-      proxyPass = "http://127.0.0.1:${toString dashboardPort}";
+      proxyPass = "http://${tailscaleIp}:${toString dashboardPort}";
       proxyWebsockets = true; # /api/ws chat + /api/pty terminal
+      # The dashboard's Host-header (DNS-rebinding) guard on a non-loopback
+      # bind requires Host == the bind address; the recommended settings
+      # would forward the public hostname (proxy_set_header Host $host) and
+      # draw a 400 "Invalid Host header". With them off, nginx's default
+      # Host is $proxy_host (the tailscale IP:port), which the guard
+      # accepts. The public authority still reaches the app via
+      # X-Forwarded-* below and the pinned dashboard.public_url.
+      recommendedProxySettings = false;
+      extraConfig = ''
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Forwarded-Host $host;
+      '';
     };
   };
 

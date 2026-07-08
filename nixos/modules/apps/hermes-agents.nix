@@ -124,7 +124,19 @@ let
           port = mkOption {
             type = types.port;
             example = 9119;
-            description = "Dashboard port, bound to 127.0.0.1 (reverse-proxy it; never expose raw).";
+            description = "Dashboard port (reverse-proxy it; never expose raw).";
+          };
+          host = mkOption {
+            type = types.str;
+            default = "127.0.0.1";
+            description = ''
+              Dashboard bind address. Loopback = no auth gate (operator-owned).
+              Any non-loopback bind engages the auth gate and FAILS CLOSED
+              unless an auth provider (settings.dashboard.oauth / basic_auth)
+              is configured. The Host-header guard then requires requests to
+              carry exactly this host — point the reverse proxy at it directly
+              so nginx's default Host ($proxy_host) matches.
+            '';
           };
         };
 
@@ -304,7 +316,7 @@ in
                   "${inst.package}/bin/hermes"
                   "dashboard"
                   "--host"
-                  "127.0.0.1"
+                  inst.dashboard.host
                   "--port"
                   (toString inst.dashboard.port)
                   "--no-open"
