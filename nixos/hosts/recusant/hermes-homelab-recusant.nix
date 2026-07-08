@@ -114,9 +114,11 @@ in
       # ChatGPT subscription via Codex OAuth (manual login, bootstrap step 5).
       # Auxiliary tasks stay on "auto": they pick codex/openrouter from
       # whatever auth is present, so the OpenRouter key doubles as fallback.
+      # Codex-backend slugs at the pinned rev: gpt-5.5, gpt-5.4[-mini],
+      # gpt-5.3-codex, gpt-5.3-codex-spark (Pro-only preview; /model to try).
       model = {
         provider = "codex";
-        default = "gpt-5.3-codex";
+        default = "gpt-5.5";
       };
 
       # One server channel, @mention-gated; channel allowlist comes from
