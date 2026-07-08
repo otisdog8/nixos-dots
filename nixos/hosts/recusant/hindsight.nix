@@ -105,9 +105,10 @@ in
     script = ''
       psql=${config.services.postgresql.package}/bin/psql
       $psql -d hindsight -c 'CREATE EXTENSION IF NOT EXISTS vector;'
-      # :'var' interpolation quotes the value as a SQL literal.
-      $psql -v ON_ERROR_STOP=1 -v pw="$HINDSIGHT_DB_PASSWORD" \
-        -c "ALTER ROLE hindsight WITH PASSWORD :'pw';"
+      # :'var' interpolation (SQL-literal quoting) only applies to stdin
+      # input — psql -c deliberately skips it — so feed the statement in.
+      echo "ALTER ROLE hindsight WITH PASSWORD :'pw';" \
+        | $psql -v ON_ERROR_STOP=1 -v pw="$HINDSIGHT_DB_PASSWORD"
     '';
   };
 
