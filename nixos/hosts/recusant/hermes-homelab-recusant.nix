@@ -222,4 +222,14 @@ in
   # Let nginx bind the tailscale IP before tailscaled has brought the
   # interface up at boot (otherwise nginx fails and needs a restart).
   boot.kernel.sysctl."net.ipv4.ip_nonlocal_bind" = 1;
+
+  # The dashboard verifies OIDC logins server-side (discovery, JWKS, token
+  # exchange) against https://auth.rooty.dev — which Cloudflare fronts, and
+  # Cloudflare 403s PyJWT's Python-urllib user agent. Pin the name to the
+  # k8s ingress on arquitens so those fetches ride the tailnet instead:
+  # same hostname (issuer/iss validation unchanged), valid LE cert
+  # (*.rooty.dev SAN), no Cloudflare in the path. Verified 2026-07-08:
+  # python TLS handshake + jwks.json 200 via this route. If the ingress
+  # ever moves off arquitens, update this IP.
+  networking.hosts."100.126.30.73" = [ "auth.rooty.dev" ];
 }
