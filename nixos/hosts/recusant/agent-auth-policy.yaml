@@ -33,6 +33,8 @@ platforms:
     # Must be a subset of what the GitHub App itself was granted (keep this list
     # and the App's permissions in sync; keys are the API permission names).
     permission_ceiling:
+      metadata: read        # mandatory App baseline (repo listing/basic info);
+                            # listed so a request naming it isn't ceiling-denied
       contents: write
       workflows: write      # pushing .github/workflows/* needs this + contents
       secrets: write
@@ -98,9 +100,46 @@ platforms:
       - suwayomi-users
       - thelounge-users
       - traefik-users
-    # Optional per-group blurbs surfaced to agents via GET /v1/catalog; add
-    # entries (group: "what it grants") as agents start using the catalog.
-    group_descriptions: {}
+    # Per-group blurbs surfaced to agents via GET /v1/catalog so they request
+    # the narrowest group that fits. Inferred from group names — correct any
+    # that are wrong.
+    group_descriptions:
+      alertmanager-users: "Alertmanager UI — view and silence alerts"
+      bazarr-anime-users: "Bazarr (anime library) — subtitle management"
+      bazarr-users: "Bazarr — subtitle management"
+      bin-users: "bin — pastebin"
+      calibre-admins: "Calibre-Web admin — manage the ebook library"
+      calibre-users: "Calibre-Web — read/download ebooks"
+      cyberchef-users: "CyberChef — data transformation toolbox"
+      enclosed-users: "Enclosed — encrypted note sharing"
+      gitea-admins: "Gitea admin — full forge administration (broad)"
+      gitea-users: "Gitea — git hosting, per-repo permissions apply"
+      grafana-admins: "Grafana admin — manage dashboards and datasources (broad)"
+      grafana-users: "Grafana — view dashboards (the right pick for metrics questions)"
+      homepage-users: "Homepage — service directory/links"
+      hubble-users: "Hubble UI — Cilium network flow observability"
+      immich-admins: "Immich admin — photo library administration (broad)"
+      immich-users: "Immich — photo library"
+      jellyfin-admins: "Jellyfin admin — server administration (broad)"
+      jellyfin-users: "Jellyfin — media streaming"
+      kubedash-users: "Kubernetes dashboard — cluster resource view"
+      lazylibrarian-users: "LazyLibrarian — book download automation"
+      librechat-users: "LibreChat — LLM chat UI"
+      lidarr-users: "Lidarr — music download automation"
+      linkwarden-users: "Linkwarden — bookmark manager"
+      lldap_strict_readonly: "LLDAP directory — strict read-only view of users/groups"
+      paperless-users: "Paperless-ngx — document archive"
+      prowlarr-users: "Prowlarr — indexer management"
+      radarr-anime-users: "Radarr (anime library) — movie download automation"
+      radarr-users: "Radarr — movie download automation"
+      rook-users: "Rook/Ceph dashboard — storage cluster status"
+      sonarr-anime-users: "Sonarr (anime library) — TV download automation"
+      sonarr-users: "Sonarr — TV download automation"
+      spotify-dashboard-users: "Spotify dashboard — listening stats"
+      stirling-pdf-users: "Stirling-PDF — PDF manipulation tools"
+      suwayomi-users: "Suwayomi — manga server"
+      thelounge-users: "The Lounge — IRC web client"
+      traefik-users: "Traefik dashboard — ingress/router status"
   kubernetes:
     # Any namespace is brokerable — containment comes from narrow roles and
     # human review, not from walling namespaces off (an agent with gitops

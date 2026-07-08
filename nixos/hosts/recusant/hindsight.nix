@@ -12,7 +12,7 @@
 # Every LLM-ish call rides the ChatGPT subscription via the native
 # `openai-codex` provider (extraction LLM *and* embeddings), reading rotating
 # OAuth tokens from ~/.codex/auth.json under this service's persisted home.
-# Reranker is `none`: recall still fuses semantic/BM25/graph/temporal results
+# Reranker is `rrf`: recall still fuses semantic/BM25/graph/temporal results
 # with RRF, we just skip the extra rerank pass instead of paying for it.
 # If subscription quota (weekly caps!) or OpenAI tolerance of the codex-auth
 # pattern becomes a problem, flip the three *_PROVIDER vars to `openrouter`
@@ -131,7 +131,9 @@ in
       # Subscription-backed brains (see header for the openrouter fallback).
       HINDSIGHT_API_LLM_PROVIDER = "openai-codex";
       HINDSIGHT_API_EMBEDDINGS_PROVIDER = "openai-codex";
-      HINDSIGHT_API_RERANKER_PROVIDER = "none";
+      # RRF passthrough: retrieval fusion only, neural reranking disabled —
+      # no local model, no API calls. ("none" is not an accepted value.)
+      HINDSIGHT_API_RERANKER_PROVIDER = "rrf";
     };
 
     serviceConfig = {
