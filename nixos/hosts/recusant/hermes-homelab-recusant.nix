@@ -1,7 +1,7 @@
-# homelab-agent — Hermes instance #1: homelab ops agent.
+# hermes-homelab-recusant — Hermes instance #1: homelab ops agent.
 #
 # One zone per agent (see modules/apps/hermes-agents.nix): user/group
-# homelab-agent, /var/lib/homelab-agent, its own Hindsight bank, its own
+# hermes-homelab-recusant, /var/lib/hermes-homelab-recusant, its own Hindsight bank, its own
 # Discord channel, its own agent-auth identity. Adding the next agent is a new
 # `instances.<name>` block + sops env + bank + channel, not a new deployment.
 #
@@ -22,13 +22,13 @@
 #      one channel only (DISCORD_ALLOWED_CHANNELS); exec/skill approvals
 #      appear there too.
 #   2. agent-auth identity (broker runs on this host — see agent-auth.nix):
-#        agent-auth admin agent-create homelab-agent \
-#          --lldap-username svc-homelab-agent --description "Hermes homelab ops"
+#        agent-auth admin agent-create hermes-homelab-recusant \
+#          --lldap-username svc-hermes-homelab-recusant --description "Hermes homelab ops"
 #      → copy the aa_... key ONCE into AGENT_AUTH_API_KEY below.
 #   3. GitHub: mint a fine-grained PAT for the agent's machine account,
 #      repo = nixos-dots only, permissions = contents:read + pull_requests:write.
 #   4. Fill the env secrets:
-#        sops nixos/hosts/recusant/secrets/homelab-agent.env
+#        sops nixos/hosts/recusant/secrets/hermes-homelab-recusant.env
 #          DISCORD_BOT_TOKEN=...
 #          DISCORD_ALLOWED_CHANNELS=<ops channel id>
 #          OPENROUTER_API_KEY=...          # aux/fallback models
@@ -38,12 +38,12 @@
 #          AGENT_AUTH_API_KEY=aa_...       # from step 2
 #          GH_TOKEN=github_pat_...         # from step 3
 #   5. Rebuild, then Codex OAuth (device-code; hermes imports ~/.codex/auth.json):
-#        sudo -u homelab-agent env HOME=/var/lib/homelab-agent codex auth login
-#        systemctl restart hermes-homelab-agent
+#        sudo -u hermes-homelab-recusant env HOME=/var/lib/hermes-homelab-recusant codex auth login
+#        systemctl restart hermes-homelab-recusant
 #   6. Verify: @mention the bot in the ops channel; first tool call against
-#      agent-auth should be list_capabilities. Dashboard rides
-#      https://homelab-agent.recusant.rooty.dev (tailnet; public path gets
-#      forward-auth at the k8s ingress before it ever reaches nginx here).
+#      agent-auth should be list_capabilities. Dashboard: public name is
+#      https://homelab-agent-recusant.rooty.dev (k8s ingress, forward-auth);
+#      the vhost here is only the stable internal origin k8s forwards to.
 {
   config,
   inputs,
@@ -69,26 +69,26 @@ let
 in
 {
   # ── Secrets ────────────────────────────────────────────────────────────────
-  sops.secrets."homelab-agent/env" = {
+  sops.secrets."hermes-homelab-recusant/env" = {
     format = "dotenv";
-    sopsFile = ./secrets/homelab-agent.env;
+    sopsFile = ./secrets/hermes-homelab-recusant.env;
     key = "";
     restartUnits = [
-      "hermes-homelab-agent.service"
-      "hermes-homelab-agent-dashboard.service"
+      "hermes-homelab-recusant.service"
+      "hermes-homelab-recusant-dashboard.service"
     ];
   };
 
   # ── The agent ──────────────────────────────────────────────────────────────
-  modules.apps.hermes-agents.instances.homelab-agent = {
-    environmentFiles = [ config.sops.secrets."homelab-agent/env".path ];
+  modules.apps.hermes-agents.instances.hermes-homelab-recusant = {
+    environmentFiles = [ config.sops.secrets."hermes-homelab-recusant/env".path ];
 
     # Non-secret env. Hindsight is the shared service in ./hindsight.nix;
     # the bank is this agent's private memory namespace.
     environment = {
       HINDSIGHT_MODE = "local_external";
       HINDSIGHT_API_URL = "http://127.0.0.1:8888";
-      HINDSIGHT_BANK_ID = "homelab-agent";
+      HINDSIGHT_BANK_ID = "hermes-homelab-recusant";
     };
 
     # On the shell-tool PATH: local headless-Chromium browser automation
@@ -96,7 +96,7 @@ in
     # gh for the PR escape valve, agent-auth-mcp for the broker. chromium
     # rides along for agent-browser to drive; if it refuses the system
     # chromium, the one-time imperative fallback is
-    # `sudo -u homelab-agent env HOME=/var/lib/homelab-agent agent-browser install`
+    # `sudo -u hermes-homelab-recusant env HOME=/var/lib/hermes-homelab-recusant agent-browser install`
     # (lands in the persisted home, like the codex login).
     extraPackages = [
       agentAuthMcp
@@ -133,6 +133,11 @@ in
 
       memory.provider = "hindsight";
 
+      # The authority users actually see (k8s ingress). With two proxy hops,
+      # header reconstruction is fragile — pin it so the dashboard builds
+      # links/redirects against the public name, not the internal origin.
+      dashboard.public_url = "https://homelab-agent-recusant.rooty.dev";
+
       # Skills are the agent's persistence layer — exactly where a prompt
       # injection would try to survive a restart. Stage writes for review
       # (/skills pending|diff|approve from the ops channel). Memory writes
@@ -161,12 +166,16 @@ in
     };
   };
 
-  # ── Dashboard vhost ────────────────────────────────────────────────────────
-  # Serving chain (jellyfin/sab pattern): public DNS → k8s ingress (forward
-  # auth, arquitens) → tailnet → this nginx → 127.0.0.1:9119. The dashboard
-  # has no auth gate on a loopback bind, so nginx listens ONLY on the
-  # tailscale IP — LAN gets connection-refused, not a login page.
-  services.nginx.virtualHosts."homelab-agent.recusant.rooty.dev" = {
+  # ── Dashboard vhost (internal origin) ──────────────────────────────────────
+  # Serving chain (jellyfin/sab pattern):
+  #   homelab-agent-recusant.rooty.dev            — public, k8s ingress + forward-auth
+  #     → hermes-homelab-recusant.recusant.rooty.dev — THIS vhost: stable internal
+  #       DNS for k8s to forward to over the tailnet (*.recusant.rooty.dev is
+  #       internal-only naming)
+  #       → 127.0.0.1:9119
+  # The dashboard has no auth gate on a loopback bind, so nginx listens ONLY
+  # on the tailscale IP — LAN gets connection-refused, not a login page.
+  services.nginx.virtualHosts."hermes-homelab-recusant.recusant.rooty.dev" = {
     useACMEHost = "recusant.rooty.dev";
     forceSSL = true;
     listenAddresses = [ tailscaleIp ];

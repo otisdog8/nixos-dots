@@ -12,8 +12,8 @@
 #
 # Per instance this creates:
 #   - user/group <name> with home = stateDir (default /var/lib/<name>)
-#   - hermes-<name>.service      — the gateway (messaging channels, cron, agent)
-#   - hermes-<name>-dashboard.service — optional web dashboard on 127.0.0.1
+#   - <name>.service           — the gateway (messaging channels, cron, agent)
+#   - <name>-dashboard.service — optional web dashboard on 127.0.0.1
 #   - config.yaml deep-merged from `settings` on activation (Nix keys win,
 #     agent-added keys survive), .managed marker (HERMES_MANAGED drift guard)
 #   - $HERMES_HOME/.env seeded from `environment` + `environmentFiles` (sops)
@@ -48,7 +48,10 @@ let
 
   instances = lib.filterAttrs (_: i: i.enable) cfg.instances;
 
-  serviceName = name: "hermes-${name}";
+  # Units are named exactly after the instance — the zone name IS the agent
+  # name (e.g. hermes-homelab-recusant.service). Put the runtime in the
+  # instance name if you want it visible; the module adds no prefix.
+  serviceName = name: name;
 
   instanceModule = lib.types.submodule (
     { name, config, ... }:
@@ -117,7 +120,7 @@ let
         };
 
         dashboard = {
-          enable = mkEnableOption "the web dashboard for this instance (hermes-<name>-dashboard.service)";
+          enable = mkEnableOption "the web dashboard for this instance (<name>-dashboard.service)";
           port = mkOption {
             type = types.port;
             example = 9119;
@@ -142,7 +145,7 @@ let
 
   # ── Per-instance generated artifacts ─────────────────────────────────────
   generatedConfigFile =
-    name: inst: pkgs.writeText "hermes-${name}-config.yaml" (builtins.toJSON inst.settings);
+    name: inst: pkgs.writeText "${name}-config.yaml" (builtins.toJSON inst.settings);
 
   envFileContent =
     inst: lib.concatStringsSep "\n" (lib.mapAttrsToList (k: v: "${k}=${v}") inst.environment);
