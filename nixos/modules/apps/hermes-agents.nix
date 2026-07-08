@@ -289,6 +289,11 @@ in
             {
               description = "Hermes agent gateway (${name})";
               wantedBy = [ "multi-user.target" ];
+              # Hermes reads config.yaml/.env at startup; the activation
+              # script re-renders them, but nothing else ties the unit to
+              # `settings` — without this trigger a settings-only change
+              # would deploy silently without taking effect.
+              restartTriggers = [ (generatedConfigFile name inst) ];
               serviceConfig = {
                 ExecStart = lib.concatStringsSep " " (
                   [
@@ -310,6 +315,9 @@ in
             {
               description = "Hermes dashboard (${name})";
               wantedBy = [ "multi-user.target" ];
+              # Config (incl. dashboard auth) is read at startup — same
+              # settings-change restart trigger as the gateway.
+              restartTriggers = [ (generatedConfigFile name inst) ];
               # Same HERMES_HOME as the gateway: sessions, skills, approvals.
               serviceConfig = {
                 ExecStart = lib.concatStringsSep " " [

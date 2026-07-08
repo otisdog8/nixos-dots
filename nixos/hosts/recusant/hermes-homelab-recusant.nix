@@ -181,9 +181,14 @@ in
           };
         };
         # Hosted anti-bot scraping — heavy/public scraping goes here instead
-        # of the local browser.
+        # of the local browser. Bearer-header auth per Scrapfly's MCP docs
+        # (query-param auth is their local-dev path and doesn't reliably
+        # work against the hosted server).
         scrapfly = {
-          url = "https://mcp.scrapfly.io/mcp?apiKey=\${SCRAPFLY_API_KEY}";
+          url = "https://mcp.scrapfly.io/mcp";
+          headers = {
+            Authorization = "Bearer \${SCRAPFLY_API_KEY}";
+          };
         };
       };
     };
