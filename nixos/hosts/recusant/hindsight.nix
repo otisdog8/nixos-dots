@@ -19,10 +19,16 @@
 # and add HINDSIGHT_API_OPENROUTER_API_KEY to the sops env.
 #
 # ── One-time bootstrap ────────────────────────────────────────────────────────
-#   1. Fill the env secrets (tenant key gates the whole API — mint something
-#      long, e.g. `openssl rand -base64 33`):
+#   1. Fill the env secrets (tenant key gates the whole API; DB password must
+#      be %-free and URL-safe — mint both with `openssl rand -hex 24`):
 #        sops nixos/hosts/recusant/secrets/hindsight.env
 #          HINDSIGHT_API_TENANT_API_KEY=...
+#          HINDSIGHT_DB_PASSWORD=<hex>          # consumed by hindsight-db-init
+#          HINDSIGHT_API_DATABASE_URL=postgresql://hindsight:<same hex>@127.0.0.1:5432/hindsight
+#      (TCP + password, NOT the unix socket: upstream's alembic wrapper chokes
+#      on the %2F a socket path picks up in URL normalization — configparser
+#      interpolation. And NOT pg_hba `trust`: any local user could then
+#      impersonate the DB role and bypass the tenant key.)
 #   2. Codex OAuth (writes ~/.codex/auth.json, then auto-refreshes forever):
 #        sudo -u hindsight env HOME=/var/lib/hindsight codex auth login
 #      (headless: it prints the device-code URL; finish in any browser)
@@ -60,7 +66,10 @@ in
     format = "dotenv";
     sopsFile = ./secrets/hindsight.env;
     key = "";
-    restartUnits = [ "hindsight-api.service" ];
+    restartUnits = [
+      "hindsight-db-init.service" # re-applies the role password on rotation
+      "hindsight-api.service"
+    ];
   };
 
   # ── PostgreSQL + pgvector ──────────────────────────────────────────────────
@@ -76,11 +85,14 @@ in
     extensions = ps: [ ps.pgvector ];
   };
 
-  # Hindsight's migrations run CREATE EXTENSION IF NOT EXISTS, but only a
-  # superuser may create pgvector — pre-create it so the service user can't
-  # get stuck.
+  # Two things the service user can't do for itself: pgvector needs a
+  # superuser to CREATE EXTENSION, and the hindsight role needs a password
+  # for TCP auth (see the bootstrap header for why not socket/trust). The
+  # password comes from the sops env file — systemd (pid 1) reads
+  # EnvironmentFile before dropping to User=postgres, so the unit sees it
+  # without the postgres user needing read access to the secret.
   systemd.services.hindsight-db-init = {
-    description = "Create pgvector extension for hindsight";
+    description = "Provision pgvector extension + role password for hindsight";
     after = [ "postgresql.service" ];
     requires = [ "postgresql.service" ];
     wantedBy = [ "multi-user.target" ];
@@ -88,10 +100,14 @@ in
       Type = "oneshot";
       User = "postgres";
       RemainAfterExit = true;
+      EnvironmentFile = config.sops.secrets."hindsight/env".path;
     };
     script = ''
-      ${config.services.postgresql.package}/bin/psql -d hindsight \
-        -c 'CREATE EXTENSION IF NOT EXISTS vector;'
+      psql=${config.services.postgresql.package}/bin/psql
+      $psql -d hindsight -c 'CREATE EXTENSION IF NOT EXISTS vector;'
+      # :'var' interpolation quotes the value as a SQL literal.
+      $psql -v ON_ERROR_STOP=1 -v pw="$HINDSIGHT_DB_PASSWORD" \
+        -c "ALTER ROLE hindsight WITH PASSWORD :'pw';"
     '';
   };
 
@@ -126,8 +142,8 @@ in
       HOME = stateDir; # → ~/.codex/auth.json
       HINDSIGHT_API_HOST = "127.0.0.1";
       HINDSIGHT_API_PORT = toString port;
-      # Peer auth over the local socket — no password to manage.
-      HINDSIGHT_API_DATABASE_URL = "postgresql://hindsight@/hindsight?host=/run/postgresql";
+      # HINDSIGHT_API_DATABASE_URL deliberately NOT set here: it embeds the
+      # role password, so it lives in the sops env file (bootstrap step 1).
       # Subscription-backed brains (see header for the openrouter fallback).
       HINDSIGHT_API_LLM_PROVIDER = "openai-codex";
       HINDSIGHT_API_EMBEDDINGS_PROVIDER = "openai-codex";
