@@ -30,3 +30,9 @@ creation_rules:
       - *recusant_host
       - *galaxy_host
       - *constitution_host
+  # Garage S3: inter-node RPC secret (GARAGE_RPC_SECRET).
+  - path_regex: .*recusant/secrets/garage.*
+    age:
+      - *recusant_host
+      - *galaxy_host
+      - *constitution_host

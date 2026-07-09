@@ -17,17 +17,20 @@
 # regenerable nix-cache; when k8s-backups is wired, add off-host replication —
 # recusant is a single point of failure for anything stored here.
 #
+# The GARAGE_RPC_SECRET is sops-managed (secrets/garage.env) and read via
+# systemd EnvironmentFile — no manual /persist file, so a rebuild alone brings
+# Garage up. (EnvironmentFile is loaded by root before the DynamicUser drop, so
+# the 0400 root secret is fine.)
+#
 # ── One-time bootstrap on recusant (after first rebuild with enable = true) ───
-#   1. RPC secret (if /persist/garage.env is empty):
-#        echo "GARAGE_RPC_SECRET=$(openssl rand -hex 32)" > /persist/garage.env
-#   2. Layout (single node claims all capacity):
+#   1. Layout (single node claims all capacity):
 #        garage layout assign -z dc1 -c 1T <node-id-from `garage status`>
 #        garage layout apply --version 1
-#   3. nix-cache bucket + scoped key (feed the key into secrets/atticd.env):
+#   2. nix-cache bucket + scoped key (feed the key into secrets/atticd.env):
 #        garage bucket create nix-cache
 #        garage key create attic-rw          # note the Key ID + Secret
 #        garage bucket allow --read --write nix-cache --key attic-rw
-#   4. k8s-backups: create the bucket + its own key ONLY when wiring backups:
+#   3. k8s-backups: create the bucket + its own key ONLY when wiring backups:
 #        garage bucket create k8s-backups
 #        garage key create k8s-backup-rw
 #        garage bucket allow --read --write k8s-backups --key k8s-backup-rw
@@ -42,11 +45,19 @@ let
   tailscaleIp = "100.110.239.45";
 in
 {
+  # RPC secret via sops → systemd EnvironmentFile (whole-file dotenv).
+  sops.secrets."garage/env" = {
+    format = "dotenv";
+    sopsFile = ./secrets/garage.env;
+    key = "";
+    restartUnits = [ "garage.service" ];
+  };
+
   services.garage = {
     enable = true;
     package = pkgs.garage;
 
-    environmentFile = "/persist/garage.env";
+    environmentFile = config.sops.secrets."garage/env".path;
 
     settings = {
       # Single-node setup
@@ -85,12 +96,15 @@ in
   # is a globally trusted interface, so the tailnet reaches 3900 without opening
   # it on any other interface. RPC/admin are loopback-only.
 
-  # Persistence for metadata directory
+  # Persist the metadata dir. The module runs with DynamicUser, so state lives
+  # at /var/lib/private/garage (systemd symlinks /var/lib/garage → it). Persist
+  # the private path — NOT /var/lib/garage — or systemd can't create the symlink
+  # over the bind mount ("Device or resource busy"). Same pattern as agent-auth.
+  # metadata_dir = /var/lib/garage/meta resolves through the symlink into here.
+  # (No user/group: the DynamicUser uid isn't known ahead of time.)
   environment.persistence."/persist".directories = [
     {
-      directory = "/var/lib/garage";
-      user = "garage";
-      group = "garage";
+      directory = "/var/lib/private/garage";
       mode = "0700";
     }
   ];
