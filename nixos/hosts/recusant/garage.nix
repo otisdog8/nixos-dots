@@ -116,15 +116,20 @@ in
   # group-writable so the dynamic user can write blocks (metadata stays under the
   # StateDirectory, which systemd handles). tmpfiles needs the mount present, and
   # so does garage.
-  users.groups.garage = { };
+  #
+  # NB the group must NOT be named "garage": DynamicUser mints a transient
+  # user AND group both called "garage", and a static "garage" group collides
+  # with it (systemd fails at step USER, "name already exists"). Hence
+  # "garage-data".
+  users.groups.garage-data = { };
 
   systemd.tmpfiles.rules = [
-    "d /mnt/bcachefs/garage      0755 root root   - -"
-    "d /mnt/bcachefs/garage/data 2770 root garage - -"
+    "d /mnt/bcachefs/garage      0755 root root        - -"
+    "d /mnt/bcachefs/garage/data 2770 root garage-data - -"
   ];
 
   systemd.services.garage = {
     unitConfig.RequiresMountsFor = [ "/mnt/bcachefs/garage/data" ];
-    serviceConfig.SupplementaryGroups = [ "garage" ];
+    serviceConfig.SupplementaryGroups = [ "garage-data" ];
   };
 }
