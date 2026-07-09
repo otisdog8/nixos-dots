@@ -125,6 +125,10 @@ in
           # No per-route `secret`: inherits the global secret the env→config bridge sets
           # from WEBHOOK_SECRET (sops). serve signs with the SAME value
           # (--hmac-env WEBHOOK_SECRET) under X-Hub-Signature-256 → Hermes GitHub verifier.
+          # NB: the Hermes config merge PRESERVES stale keys — if a `secret:` line was
+          # ever written into the live config.yaml route, it survives and shadows the
+          # global. It must be removed from ~/.hermes/config.yaml once (a rebuild won't
+          # delete a key that nix no longer sets).
           prompt = workerPrompt;
           # Observability mirror only — the real result goes to the a2a thread. Literal
           # (a Discord channel id is not a secret, and the webhook route gets no ${VAR}

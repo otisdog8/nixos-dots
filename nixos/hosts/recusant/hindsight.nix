@@ -9,14 +9,20 @@
 # for on-box embeddings/reranking, which we don't want: LLM, embeddings, and
 # reranking are all remote here.
 #
-# Every LLM-ish call rides the ChatGPT subscription via the native
-# `openai-codex` provider (extraction LLM *and* embeddings), reading rotating
-# OAuth tokens from ~/.codex/auth.json under this service's persisted home.
-# Reranker is `rrf`: recall still fuses semantic/BM25/graph/temporal results
-# with RRF, we just skip the extra rerank pass instead of paying for it.
-# If subscription quota (weekly caps!) or OpenAI tolerance of the codex-auth
-# pattern becomes a problem, flip the three *_PROVIDER vars to `openrouter`
-# and add HINDSIGHT_API_OPENROUTER_API_KEY to the sops env.
+# The extraction LLM rides the ChatGPT subscription via the native
+# `openai-codex` provider, reading rotating OAuth tokens from
+# ~/.codex/auth.json under this service's persisted home. That path is the
+# Responses API and it works.
+#
+# Embeddings and reranking do NOT ride Codex. The ChatGPT subscription carries
+# no platform quota for OpenAI's /v1/embeddings, so a codex-OAuth bearer to
+# that endpoint authenticates but 429s with `insufficient_quota` (hindsight's
+# CodexOAuthEmbeddings assumed the subscription token could bill embeddings —
+# it can't). Both therefore go to OpenRouter instead: embeddings via its
+# OpenAI-compatible /embeddings, reranking via its Cohere-format /rerank,
+# behind one shared HINDSIGHT_API_OPENROUTER_API_KEY (see the sops env). RRF
+# fusion of semantic/BM25/graph/temporal recall still runs first; the reranker
+# just adds a neural pass on top of it.
 #
 # ── One-time bootstrap ────────────────────────────────────────────────────────
 #   1. Fill the env secrets (tenant key gates the whole API; DB password must
@@ -25,6 +31,9 @@
 #          HINDSIGHT_API_TENANT_API_KEY=...
 #          HINDSIGHT_DB_PASSWORD=<hex>          # consumed by hindsight-db-init
 #          HINDSIGHT_API_DATABASE_URL=postgresql://hindsight:<same hex>@127.0.0.1:5432/hindsight
+#          HINDSIGHT_API_OPENROUTER_API_KEY=... # embeddings + reranker (one
+#                                               # key serves both; reuse the
+#                                               # hermes instance's OpenRouter key)
 #      (TCP + password, NOT the unix socket: upstream's alembic wrapper chokes
 #      on the %2F a socket path picks up in URL normalization — configparser
 #      interpolation. And NOT pg_hba `trust`: any local user could then
@@ -145,12 +154,20 @@ in
       HINDSIGHT_API_PORT = toString port;
       # HINDSIGHT_API_DATABASE_URL deliberately NOT set here: it embeds the
       # role password, so it lives in the sops env file (bootstrap step 1).
-      # Subscription-backed brains (see header for the openrouter fallback).
+      #
+      # Extraction LLM on the ChatGPT subscription via Codex OAuth (works).
       HINDSIGHT_API_LLM_PROVIDER = "openai-codex";
-      HINDSIGHT_API_EMBEDDINGS_PROVIDER = "openai-codex";
-      # RRF passthrough: retrieval fusion only, neural reranking disabled —
-      # no local model, no API calls. ("none" is not an accepted value.)
-      HINDSIGHT_API_RERANKER_PROVIDER = "rrf";
+
+      # Embeddings + reranking on OpenRouter (Codex can't bill either — see
+      # header). Models are pinned rather than left to upstream's defaults:
+      # the vector dimension is a function of the embeddings model, so an input
+      # bump that shifted the default would silently break similarity against
+      # already-stored vectors. Both endpoints/base-URLs are hardcoded in
+      # hindsight's provider factory, so only the model IDs need setting.
+      HINDSIGHT_API_EMBEDDINGS_PROVIDER = "openrouter";
+      HINDSIGHT_API_EMBEDDINGS_OPENROUTER_MODEL = "perplexity/pplx-embed-v1-0.6b";
+      HINDSIGHT_API_RERANKER_PROVIDER = "openrouter";
+      HINDSIGHT_API_RERANKER_OPENROUTER_MODEL = "cohere/rerank-v3.5";
     };
 
     serviceConfig = {
