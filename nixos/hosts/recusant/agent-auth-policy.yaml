@@ -156,17 +156,32 @@ platforms:
       - logs-reader       # get+list pods and pod logs
       - traefik-patcher   # get+patch on deployments/traefik only
       - edit
+      - workload-manager  # patch/scale deployments + statefulsets
+      - cm-editor         # update/patch existing configmaps
+      - port-forwarder    # pods/portforward
+      - job-runner        # create/delete batch jobs (arbitrary code in namespace)
+      - pod-exec          # pods/exec — sensitive
+      - secret-reader     # get/list secrets — sensitive
     # Shown to agents via GET /v1/catalog so they pick the right narrow role.
     role_descriptions:
-      view: "read-only access to all resources in the namespace"
+      view: "read-only access to all resources in the namespace — already includes pod logs and events (no need to also request logs-reader)"
       logs-reader: "read pod logs (get + list on pods and pods/log)"
       traefik-patcher: "get + patch the traefik Deployment only — nothing else"
       edit: "full read-write in the namespace (broad: can run pods as any SA)"
+      workload-manager: "restart/scale/patch deployments and statefulsets (get/list/watch/patch + scale subresource; read replicasets and pods for rollout status) — note: patch can also change images/env"
+      cm-editor: "edit existing configmaps (get/list/watch/update/patch — no create/delete)"
+      port-forwarder: "port-forward into pods (get/list pods + create pods/portforward)"
+      job-runner: "create/watch/delete batch Jobs and read their pod logs — runs arbitrary code in the namespace"
+      pod-exec: "exec into running pods (get/list pods + create pods/exec)"
+      secret-reader: "read secrets in the namespace (get/list)"
     # Always human-reviewed, even if the commented auto-approve rules below
-    # are ever adopted — `edit` never rides an auto-approval.
+    # are ever adopted — none of these ever ride an auto-approval or LLM
+    # verdict.
     sensitive_roles:
       - edit
       - admin
+      - pod-exec
+      - secret-reader
 
 # No routing rules: everything falls through to defaults.action: surface, and
 # the nixos-dots ban lives in repo_denylist above (validator layer, stronger
