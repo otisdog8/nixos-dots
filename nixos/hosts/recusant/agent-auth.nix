@@ -117,8 +117,11 @@
     locations."/" = {
       proxyPass = "http://127.0.0.1:${toString config.services.agent-auth.port}";
       extraConfig = ''
-        # /v1/requests/{id}/wait long-polls; don't cut it off at the 60s default.
-        proxy_read_timeout 300s;
+        # Long-polls clamp to 300s server-side: /v1/requests/{id}/wait and the
+        # a2a reads (/v1/a2a/threads/{id}/messages?wait, /v1/a2a/events?wait).
+        # Keep nginx above that ceiling so a full-length park returns cleanly
+        # instead of racing the read timeout into a 504.
+        proxy_read_timeout 330s;
       '';
     };
   };
