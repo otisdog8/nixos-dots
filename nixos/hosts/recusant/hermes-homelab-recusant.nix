@@ -145,6 +145,25 @@ in
         extract_backend = "firecrawl";
       };
 
+      # Webhooks default to Hermes' constrained `hermes-webhook` toolset
+      # (web/vision/clarify only) because arbitrary third-party webhook payloads
+      # are untrusted. This instance exposes only the HMAC-protected agent-auth
+      # a2a-dispatch route, so opt that platform into the local operational
+      # tools homelab delegates need: terminal for `agent-browser`, file for
+      # temporary browser probe snippets, skills for cold-session runbook loads,
+      # and the usual state/context helpers. MCP servers such as agent-auth are
+      # still included by default.
+      platform_toolsets.webhook = [
+        "web"
+        "terminal"
+        "file"
+        "skills"
+        "memory"
+        "session_search"
+        "todo"
+        "clarify"
+      ];
+
       memory.provider = "hindsight";
 
       # The authority users actually see (Cloudflare → k8s ingress). With
