@@ -162,6 +162,21 @@ platforms:
       - job-runner        # create/delete batch jobs (arbitrary code in namespace)
       - pod-exec          # pods/exec — sensitive
       - secret-reader     # get/list secrets — sensitive
+    # Cluster-wide grants: an agent requests namespace "*" and the broker binds
+    # the role via a ClusterRoleBinding across every namespace. Only `view`
+    # (read-only) is opted in — a cluster-wide `edit` ≈ cluster-admin. Every
+    # cluster-wide grant is force-surfaced to Discord regardless of any rule.
+    # REQUIRES the broker's own RBAC to hold create/delete on clusterrolebindings:
+    # uncomment that rule in the agent-auth-provisioner ClusterRole (upstream
+    # deploy/k8s.yaml) and re-apply on the cluster, or cluster-wide requests 403
+    # at grant time.
+    cluster_role_allowlist:
+      - view
+    # The per-grant backing ServiceAccount lives here (the ClusterRoleBinding is
+    # what makes it cluster-scoped). `default` always exists and the provisioner
+    # is bound cluster-wide, so it can create/delete SAs there; the SAs are
+    # ephemeral (created per grant, deleted at expiry).
+    cluster_grant_namespace: default
     # Shown to agents via GET /v1/catalog so they pick the right narrow role.
     role_descriptions:
       view: "read-only access to all resources in the namespace — already includes pod logs and events (no need to also request logs-reader)"
@@ -198,3 +213,12 @@ rules: []
 #  - match: {platform: kubernetes, capability: traefik-patcher}
 #    action: approve
 #    constraints: {max_duration: 1h}   # narrow verb on one named resource
+#  # Delegated auth ("on behalf of"): a request anchored to an OPEN a2a thread
+#  # carries the thread's other participant as `delegator` (broker-derived, never
+#  # client-asserted). Only a rule that spells out `delegator:` can auto-approve
+#  # such a request — rules above never do, so nothing here is laundered through
+#  # delegation. Example: let hermes run homelab jobs when a claude folder asked:
+#  #  - match: {agent: "hermes-homelab-*", platform: kubernetes, capability: job-runner,
+#  #            delegator: "claude-*"}
+#  #    action: approve
+#  #    constraints: {max_duration: 2h}   # capped further by the backing a2a grant

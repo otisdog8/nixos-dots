@@ -48,6 +48,7 @@
     ./agent-auth.nix
     ./hindsight.nix
     ./hermes-homelab-recusant.nix
+    ./hermes-a2a.nix
 
     # Hardware
     inputs.nixos-hardware.nixosModules.common-cpu-amd
