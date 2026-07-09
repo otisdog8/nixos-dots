@@ -30,10 +30,11 @@
 #
 # ── One-time bootstrap ────────────────────────────────────────────────────────
 #   - Add to the sops env (nixos/hosts/recusant/secrets/hermes-homelab-recusant.env):
-#       AGENT_AUTH_WEBHOOK_SECRET=<random 32+ char secret>   # shared: serve signs,
-#                                                            #   Hermes route verifies
-#       A2A_DELIVER_CHANNEL=1524682829999636571              # a2a observability channel
-#   - Ensure the Hermes Discord bot can post to A2A_DELIVER_CHANNEL.
+#       WEBHOOK_SECRET=<random hex secret, e.g. openssl rand -hex 32>
+#     Shared: serve signs with it (--hmac-env WEBHOOK_SECRET), and Hermes verifies with
+#     it via the WEBHOOK_SECRET env→config bridge. Must be the SAME value on both sides;
+#     plain hex avoids any env-file parsing ambiguity.
+#   - Ensure the Hermes Discord bot can post to the deliver channel (1524682829999636571).
 #   - Peers open threads with their own a2a `talk` grant to hermes-homelab-recusant;
 #     with policy rules:[] every open surfaces to Discord for approval (deliberate).
 #   - After rebuild, verify the agent-auth a2a tools are available inside a
@@ -101,20 +102,36 @@ let
   '';
 in
 {
-  # ── Receiver: Hermes webhook adapter + a2a route (deep-merged into the instance) ──
-  modules.apps.hermes-agents.instances.${instance}.settings.platforms.webhook = {
-    enabled = true;
-    extra = {
-      host = "127.0.0.1"; # loopback: only the local dispatcher can reach it
-      port = webhookPort;
-      routes.a2a-dispatch = {
-        # Shared HMAC secret (resolved from the sops .env at runtime; never in the
-        # store). serve signs under X-Hub-Signature-256 → Hermes's GitHub verifier.
-        secret = "\${AGENT_AUTH_WEBHOOK_SECRET}";
-        prompt = workerPrompt;
-        # Observability mirror only — the real result goes to the a2a thread.
-        deliver = "discord";
-        deliver_extra.chat_id = "\${A2A_DELIVER_CHANNEL}";
+  # Contributions to the Hermes instance (deep-merged with hermes-homelab-recusant.nix).
+  modules.apps.hermes-agents.instances.${instance} = {
+    # The webhook route's HMAC secret comes from WEBHOOK_SECRET via Hermes's env→config
+    # bridge (gateway/config.py _apply_env_overrides), which reads it DIRECTLY by name —
+    # the same by-name env read Hermes uses for DISCORD_BOT_TOKEN. This is deliberate:
+    # config-level ${VAR} templates are NOT expanded into the webhook route, so a
+    # `secret: ${...}` would be HMAC-verified as the literal string. The bridge only
+    # runs when WEBHOOK_ENABLED is truthy, so set it here (non-secret env).
+    environment = {
+      WEBHOOK_ENABLED = "true";
+      WEBHOOK_PORT = toString webhookPort;
+    };
+
+    # Receiver: Hermes webhook adapter + a2a route.
+    settings.platforms.webhook = {
+      enabled = true;
+      extra = {
+        host = "127.0.0.1"; # loopback: only the local dispatcher can reach it
+        port = webhookPort;
+        routes.a2a-dispatch = {
+          # No per-route `secret`: inherits the global secret the env→config bridge sets
+          # from WEBHOOK_SECRET (sops). serve signs with the SAME value
+          # (--hmac-env WEBHOOK_SECRET) under X-Hub-Signature-256 → Hermes GitHub verifier.
+          prompt = workerPrompt;
+          # Observability mirror only — the real result goes to the a2a thread. Literal
+          # (a Discord channel id is not a secret, and the webhook route gets no ${VAR}
+          # expansion anyway).
+          deliver = "discord";
+          deliver_extra.chat_id = "1524682829999636571";
+        };
       };
     };
   };
@@ -150,6 +167,7 @@ in
         "${agentAuth}/bin/agent-auth a2a serve"
         "--on-open-url ${onOpenUrl}"
         "--sig-header X-Hub-Signature-256"
+        "--hmac-env WEBHOOK_SECRET" # same var the Hermes route verifies against
         "--state ${stateFile}"
       ];
       Restart = "always";
