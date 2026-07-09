@@ -108,4 +108,23 @@ in
       mode = "0700";
     }
   ];
+
+  # data_dir lives on bcachefs, OUTSIDE systemd's StateDirectory. The module runs
+  # garage as a DynamicUser and only adds the path to ReadWritePaths — systemd
+  # won't create or chown it, and there's no static garage uid to own it. So:
+  # give garage a stable supplementary group, and make the data dir setgid +
+  # group-writable so the dynamic user can write blocks (metadata stays under the
+  # StateDirectory, which systemd handles). tmpfiles needs the mount present, and
+  # so does garage.
+  users.groups.garage = { };
+
+  systemd.tmpfiles.rules = [
+    "d /mnt/bcachefs/garage      0755 root root   - -"
+    "d /mnt/bcachefs/garage/data 2770 root garage - -"
+  ];
+
+  systemd.services.garage = {
+    unitConfig.RequiresMountsFor = [ "/mnt/bcachefs/garage/data" ];
+    serviceConfig.SupplementaryGroups = [ "garage" ];
+  };
 }
