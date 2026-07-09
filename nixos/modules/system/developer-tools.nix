@@ -63,6 +63,9 @@ in
         prettierd
         eslint
 
+        # Crypto/TLS tools
+        openssl
+
         # Environment management
         direnv
 
