@@ -40,6 +40,7 @@
   imports = [
     ./disks.nix
     ./garage.nix
+    ./attic.nix
     ./minecraft.nix
     ./media.nix
     ./secrets.nix

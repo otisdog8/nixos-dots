@@ -89,8 +89,20 @@
       "nix-command"
       "flakes"
     ];
-    substituters = [ "https://hyprland.cachix.org" ];
-    trusted-public-keys = [ "hyprland.cachix.org-1:a7pgxzMz7+chwVL3/pzj6jIBMioiJM7ypFP8PwtkuGc=" ];
+    substituters = [
+      "https://hyprland.cachix.org"
+      # Self-hosted Attic cache on recusant (tailnet-only). TODO: uncomment
+      # after the bootstrap in nixos/hosts/recusant/attic.nix — the pull only
+      # works once the matching public key below is filled in.
+      # "https://attic.recusant.rooty.dev/nix-cache"
+    ];
+    trusted-public-keys = [
+      "hyprland.cachix.org-1:a7pgxzMz7+chwVL3/pzj6jIBMioiJM7ypFP8PwtkuGc="
+      # TODO: paste the key from `attic cache info nix-cache` and uncomment the
+      # substituter above. Until then, leave commented — a wrong/placeholder key
+      # would just make every fetch from the cache fail signature verification.
+      # "nix-cache:REPLACE_ME_AFTER_BOOTSTRAP"
+    ];
   };
 
   nix.gc = {

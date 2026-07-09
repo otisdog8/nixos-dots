@@ -24,3 +24,9 @@ creation_rules:
       - *recusant_host
       - *galaxy_host
       - *constitution_host
+  # Attic binary cache: RS256 JWT signing secret + the Garage S3 access key.
+  - path_regex: .*recusant/secrets/atticd.*
+    age:
+      - *recusant_host
+      - *galaxy_host
+      - *constitution_host
