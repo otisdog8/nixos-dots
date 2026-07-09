@@ -171,6 +171,82 @@ in
       # approval round-trip for every update. Secrets still stay out of skills.
       skills.write_approval = false;
 
+      # agent-auth a2a dispatch: the broker POSTs thread-open events here, then
+      # Hermes accepts the a2a thread and replies over agent-auth. Seed the
+      # homelab ops runbook as this agent's baseline, and make the prompt tell
+      # cold webhook sessions to load any additional task-specific skills.
+      platforms.webhook = {
+        enabled = true;
+        extra = {
+          host = "127.0.0.1";
+          port = 8644;
+          routes.a2a-dispatch = {
+            deliver = "discord";
+            deliver_extra.chat_id = "1524682829999636571";
+            skills = [ "homelab-ops" ];
+            prompt = ''
+              You are a Hermes worker serving ONE agent-to-agent (a2a) request routed through
+              the agent-auth broker. You have the agent-auth MCP tools.
+
+              Peer agent: {peer}
+              a2a thread id: {thread_id}
+              Topic: {topic}
+              The peer's opening request (JSON): {payload}
+
+              Skill and memory preflight — do before substantive work:
+
+              - This is a cold webhook session. Do not assume it inherited skills or chat
+                history from Discord or any previous a2a run.
+              - Read the peer request and topic, then explicitly load relevant runbooks with
+                skill_view before planning or acting. If unsure which skill applies, call
+                skills_list and then skill_view for the best matches.
+              - The homelab-ops skill is preloaded as a baseline for this agent, but still
+                load additional task-specific skills when useful. Common mappings:
+                  * Hermes configuration/webhooks/gateway/tools/skills → hermes-agent
+                  * GitHub PR/repo work → github-pr-workflow and/or github-auth
+                  * Kubernetes/GitOps/Authelia/LLDAP/Gitea/homelab apps → homelab-ops
+                  * debugging code/tests → systematic-debugging or test-driven-development
+              - Use persistent memory as background facts, not as a substitute for skills:
+                memory is compact and may not contain full procedures. Prefer skill_view for
+                operational steps, commands, and pitfalls.
+              - If the loaded skills say a credential, human approval, password, 2FA, secret
+                material, or risky side effect is needed, pause and communicate that blocker
+                over the a2a thread rather than guessing.
+
+              Protocol — follow exactly, using the agent-auth MCP tools:
+
+              1. Call create_session (label "a2a-{peer}"). Remember the returned session_id;
+                 call it S, and pass session_key=S on EVERY agent-auth call below.
+
+              2. Call a2a_accept with thread_id "{thread_id}" and session_key=S to claim the
+                 thread. If it fails because the thread is already accepted or closed, another
+                 worker already took it: call close_session (session_key=S) and STOP.
+
+              3. Do what {peer} asked. If you need a credential or capability, call
+                 request_access with on_behalf_of_thread="{thread_id}" and session_key=S,
+                 citing ONLY this thread. Wait for approval as the tool instructs.
+
+              4. Talk to {peer} ONLY over the a2a thread:
+                   send:    a2a_send  thread_id="{thread_id}", payload=<json>, session_key=S
+                   receive: a2a_poll  thread_id="{thread_id}", wait=300, session_key=S
+                 A parked a2a_poll also keeps your session alive — keep polling while you
+                 await replies.
+
+              5. When finished, do these IN ORDER (a send after close fails):
+                   a. a2a_send a final result:
+                      {"type":"result","status":"done"|"failed"|"declined","summary":"<one paragraph>","detail":{}}
+                      (thread_id="{thread_id}", session_key=S)
+                   b. a2a_close thread_id="{thread_id}", reason matching the status, session_key=S
+                   c. close_session (session_key=S)
+
+              The a2a thread is the ONLY channel {peer} sees. This Discord post is human
+              observability only — never rely on it to reach {peer}; the authoritative result
+              goes to the thread via a2a_send.
+            '';
+          };
+        };
+      };
+
       # ${VAR} placeholders resolve from $HERMES_HOME/.env at runtime, so the
       # store-side config.yaml never contains a secret.
       mcp_servers = {
