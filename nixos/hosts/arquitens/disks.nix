@@ -141,6 +141,19 @@ in
         ceph = {
           size = "768G";
         };
+
+        # zswap backing device. Already encrypted (it's inside cryptarquitens),
+        # so no randomEncryption. resumeDevice=false — these are servers, no
+        # hibernation. discardPolicy=both so freed swap slots are TRIMed (fstrim
+        # can't reach swap). See modules/system/zswap.nix for the RAM-side tuning.
+        swap = {
+          size = "16G";
+          content = {
+            type = "swap";
+            resumeDevice = false;
+            discardPolicy = "both";
+          };
+        };
       };
     };
   };

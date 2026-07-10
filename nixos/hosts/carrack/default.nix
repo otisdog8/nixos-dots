@@ -56,6 +56,11 @@
       ];
     };
 
+    # Compressed swap (zswap). Backing LV lives in vg (see disks.nix), already
+    # encrypted. writeback disabled on system.slice keeps the k3s/etcd cold pages
+    # off the encrypted backing swap. Defaults: 20% pool, swappiness 30.
+    system.zswap.enable = true;
+
     # System hardening baseline (k3s-node profile leaves /tmp on disk for kubelet).
     system.hardening = {
       enable = true;

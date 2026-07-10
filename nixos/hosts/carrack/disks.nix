@@ -106,6 +106,17 @@ in
         ceph = {
           size = "768G";
         };
+
+        # zswap backing device — already encrypted (inside cryptcarrack), no
+        # hibernation, TRIM freed slots. See modules/system/zswap.nix.
+        swap = {
+          size = "16G";
+          content = {
+            type = "swap";
+            resumeDevice = false;
+            discardPolicy = "both";
+          };
+        };
       };
     };
   };

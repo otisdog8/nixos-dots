@@ -45,6 +45,7 @@
     modules/system/pcr-verification.nix
     modules/system/remote-access.nix
     modules/system/virt.nix
+    modules/system/zswap.nix
     modules/system/hardware/openrazer.nix
 
     # Optional apps
