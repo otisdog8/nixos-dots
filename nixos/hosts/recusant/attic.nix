@@ -90,13 +90,16 @@ in
     };
   };
 
-  # SQLite server.db lives in /var/lib/atticd; root is ephemeral on this host,
-  # so persist it (cache metadata / GC state must survive reboots).
+  # SQLite server.db lives in the StateDirectory; root is ephemeral on this host,
+  # so persist it (cache metadata / GC state must survive reboots). atticd runs
+  # as a DynamicUser, so the real path is /var/lib/private/atticd (systemd
+  # symlinks /var/lib/atticd → it). Persist the private path — NOT
+  # /var/lib/atticd — or systemd can't create the symlink over the bind mount
+  # ("Device or resource busy"). Same pattern as agent-auth / garage. No
+  # user/group: the DynamicUser uid isn't known ahead of time.
   environment.persistence."/persist".directories = [
     {
-      directory = "/var/lib/atticd";
-      user = config.services.atticd.user;
-      group = config.services.atticd.group;
+      directory = "/var/lib/private/atticd";
       mode = "0700";
     }
   ];
