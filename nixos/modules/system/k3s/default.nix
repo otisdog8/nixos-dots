@@ -101,11 +101,20 @@ in
       extraFlags = [
         "--flannel-backend=none"
         "--disable-network-policy"
-        "--tls-san=100.126.30.73"
-        "--tls-san=100.65.16.13"
-        "--tls-san=100.80.37.112"
+        # SANs for the API server serving cert: all three server node IPs, so a
+        # kubeconfig/join can validate against any of them. k3s auto-adds each
+        # server's own node-ip too, but list them explicitly to keep this honest.
+        "--tls-san=100.103.225.29" # carrack
+        "--tls-san=100.126.30.73" # arquitens
+        "--tls-san=100.65.16.13" # munificent
+        # Fast failover: shorten how long a dead node stays Ready before its pods
+        # are evicted. node-monitor-grace-period (~20s detection) must accompany
+        # the low status-update-frequency — the frequency alone doesn't move
+        # detection, which is lease-driven on the controller side. Detection
+        # (~20s) + toleration (60s) ≈ 80s to reschedule off a lost node.
         "--kube-apiserver-arg default-not-ready-toleration-seconds=60"
         "--kube-apiserver-arg default-unreachable-toleration-seconds=60"
+        "--kube-controller-manager-arg node-monitor-grace-period=20s"
         "--kubelet-arg node-status-update-frequency=2s"
         # Image GC: age-based eviction (unused images dropped after a week) plus
         # tighter disk-pressure thresholds so a sweep starts well before the XFS
