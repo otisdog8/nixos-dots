@@ -50,10 +50,14 @@ in
     # systemd that stderr is a backpressuring socket to journald; when journald
     # blocks writing its persistent journal to the same contended disk it stops
     # draining the socket and the echo write() blocks, freezing the daemon.
-    # There is no app-level knob to disable the echo (StderrLevel is fixed at 0
-    # and SetVerbosityLevel only raises it), so redirect the unit's stderr to a
-    # tmpfs file: still greppable for the current boot, but off journald and off
-    # the slow disk. file: truncates on each start, bounding its size.
+    # There is no app-level knob to disable the echo (StderrLevel is fixed at 0),
+    # so send the unit's stdout/stderr to null to take journald off the path.
+    # Nothing is lost: filch already keeps a superset on tmpfs — logtail writes
+    # every line to a self-rotating ~50MB ring buffer (TS_LOGS_DIR below) and
+    # dup2's fd 2 into that same buffer, so panics land there too; read it live
+    # with `tailscale debug daemon-logs`. (A file: redirect would instead grow
+    # unbounded on tmpfs — a RAM leak on these swapless nodes. Only the few
+    # pre-logtail-init startup lines are lost to null.)
     #
     # Also keep it resident and unkillable under memory pressure: a reclaimed
     # page re-faulted from the saturated disk is its own multi-second stall.
@@ -62,8 +66,8 @@ in
     # throttling or a btrfs commit, which is the actual failure mode here.)
     systemd.services.tailscaled.serviceConfig = {
       Environment = [ "TS_LOGS_DIR=%t/tailscale" ]; # %t = /run (tmpfs)
-      StandardOutput = "file:/run/tailscaled.log";
-      StandardError = "file:/run/tailscaled.log";
+      StandardOutput = "null";
+      StandardError = "null";
       OOMScoreAdjust = -900;
       MemoryLow = "128M";
     };
