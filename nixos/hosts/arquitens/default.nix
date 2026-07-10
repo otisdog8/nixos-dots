@@ -20,6 +20,7 @@
   };
 
   imports = [
+    inputs.disko.nixosModules.disko
     ./disks.nix
 
     # Hardware
@@ -43,10 +44,18 @@
     # Enable AMD GPU
     system.hardware.amd.enable = true;
 
-    # K3s cluster init node (primary)
+    # K3s server node. Post-disk-swap this REJOINS the existing cluster rather
+    # than bootstrapping it: with a fresh (empty) etcd datadir, clusterInit=true
+    # would spin up a brand-new single-member cluster with a new CA and split the
+    # brain, so it joins via serverAddr instead. carrack + munificent hold quorum
+    # (2/3) while arquitens is out; its tailscale IP (100.126.30.73) is preserved
+    # via the restored /var/lib/tailscale, so their serverAddr/tls-san stay valid.
+    # etcd + DB land on the XFS /data volume; Ceph uses the raw partition (no loop).
     system.k3s = {
       enable = true;
-      clusterInit = true;
+      serverAddr = "https://100.103.225.29:6443"; # carrack
+      persistDir = "/data";
+      cephLoopback = false;
       extraFlags = [
         "--bind-address=100.126.30.73"
         "--node-ip=100.126.30.73"
@@ -68,7 +77,9 @@
     # into expectedPcr15, rebuild, and reboot.
     system.pcr-verification = {
       enable = true;
-      expectedPcr15 = "6ba225e9fc4ae2686ca24282c82ad1c9c1a07a82b3d8b73e527a6b116cdfc3ea";
+      # disko names this host's LUKS "cryptarquitens" (mint-collision avoidance).
+      deviceName = "cryptarquitens";
+      expectedPcr15 = "ea66c8b7ae01bb530fb964abebd4ec43441229e3beeb1941f5a7a157743ddc19";
     };
   };
 

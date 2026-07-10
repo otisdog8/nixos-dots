@@ -16,6 +16,17 @@ in
   options.modules.system.pcr-verification = {
     enable = lib.mkEnableOption "PCR 15 verification for TPM2 LUKS unlock";
 
+    deviceName = lib.mkOption {
+      type = lib.types.str;
+      default = "luks";
+      description = ''
+        Name of the boot.initrd.luks.devices entry to attach TPM2 measurement to.
+        Defaults to the repo-wide "luks" convention; override on hosts that use a
+        unique mapper name to avoid a mint-time /dev/mapper collision (e.g.
+        arquitens uses "cryptarquitens").
+      '';
+    };
+
     expectedPcr15 = lib.mkOption {
       type = lib.types.nullOr lib.types.str;
       default = null;
@@ -31,16 +42,18 @@ in
   };
 
   config = lib.mkIf cfg.enable {
-    # Every host in this repo names its LUKS device "luks" by convention.
-    # We can't `mapAttrs` over `config.boot.initrd.luks.devices` here -
-    # that's an infinite recursion (reading the attr we're writing). If
-    # a host ever uses a different name, the assertion below will trip,
-    # and the right fix is to either rename the device or generalize
-    # this module via a submodule type extension.
+    # Most hosts name their LUKS device "luks" (cfg.deviceName default); hosts
+    # minted from a running box use a unique name to dodge the /dev/mapper/luks
+    # collision and set cfg.deviceName accordingly. We can't `mapAttrs` over
+    # `config.boot.initrd.luks.devices` here - that's infinite recursion (reading
+    # the attr we're writing) - so the name is threaded through explicitly.
     assertions = [
       {
-        assertion = config.boot.initrd.luks.devices ? "luks";
-        message = "modules.system.pcr-verification expects a LUKS device named \"luks\".";
+        assertion = builtins.hasAttr cfg.deviceName config.boot.initrd.luks.devices;
+        message = ''
+          modules.system.pcr-verification.deviceName = "${cfg.deviceName}" but no
+          such LUKS device is defined (check the host's disko `name`).
+        '';
       }
     ];
     boot.initrd = {
@@ -51,7 +64,7 @@ in
       # attempted if tpm2-device is also declared - without it the
       # service silently falls back to passphrase, even with a valid
       # TPM2 token in the LUKS header. See systemd issue #37072.
-      luks.devices."luks".crypttabExtraOpts = [
+      luks.devices.${cfg.deviceName}.crypttabExtraOpts = [
         "tpm2-device=auto"
         "tpm2-measure-pcr=yes"
       ];

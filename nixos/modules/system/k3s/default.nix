@@ -33,6 +33,27 @@ in
       default = [ ];
       description = "Extra flags to pass to k3s (e.g. bind-address, node-ip)";
     };
+
+    persistDir = lib.mkOption {
+      type = lib.types.str;
+      default = "/large";
+      description = ''
+        Persistence root (impermanence) for k3s/rook/etcd state. Nodes refactored
+        onto the dedicated XFS data volume set this to "/data" so etcd's fsync
+        stream lands on XFS instead of the btrfs pool; un-refactored nodes keep
+        the historical "/large" btrfs subvolume.
+      '';
+    };
+
+    cephLoopback = lib.mkOption {
+      type = lib.types.bool;
+      default = true;
+      description = ''
+        Back the rook OSD with the /large/disk.img loopback device (old layout).
+        Set false on nodes where Ceph has its own raw partition — rook consumes
+        the partition directly and the k3sloop losetup service is dropped.
+      '';
+    };
   };
 
   config = lib.mkIf cfg.enable {
@@ -96,7 +117,9 @@ in
       "ceph"
     ];
 
-    systemd.services.k3sloop = {
+    # Old layout only: nodes with a dedicated raw Ceph partition (cephLoopback =
+    # false) let rook claim the partition directly and drop this entirely.
+    systemd.services.k3sloop = lib.mkIf cfg.cephLoopback {
       wantedBy = [ "local-fs.target" ];
       after = [ "large.mount" ];
       description = "loopback device that k3s rook uses";
@@ -124,8 +147,9 @@ in
     # arm the hardware watchdog so the box reboots without needing SysRq.
     systemd.settings.Manager.RebootWatchdogSec = "3min";
 
-    # Persistence for k3s
-    environment.persistence."/large" = {
+    # Persistence for k3s. On refactored nodes cfg.persistDir = "/data" (XFS);
+    # elsewhere it stays "/large" (btrfs).
+    environment.persistence.${cfg.persistDir} = {
       directories = [
         "/var/lib/rancher"
         "/var/lib/rook"
