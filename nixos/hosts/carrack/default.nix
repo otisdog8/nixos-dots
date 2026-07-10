@@ -20,6 +20,7 @@
   };
 
   imports = [
+    inputs.disko.nixosModules.disko
     ./disks.nix
 
     # Hardware
@@ -40,9 +41,14 @@
   modules = {
     desktop.full.enable = true;
     system.hardware.amd.enable = true;
+    # Rejoins via serverAddr (arquitens) with a fresh etcd datadir after the disk
+    # swap — carrack was never clusterInit, so no split-brain risk. etcd + DB land
+    # on the XFS /data volume; Ceph uses a raw LV (no loopback).
     system.k3s = {
       enable = true;
       serverAddr = "https://100.126.30.73:6443";
+      persistDir = "/data";
+      cephLoopback = false;
       extraFlags = [
         "--bind-address=100.103.225.29"
         "--node-ip=100.103.225.29"
@@ -63,7 +69,12 @@
     # into expectedPcr15, rebuild, and reboot.
     system.pcr-verification = {
       enable = true;
-      expectedPcr15 = "c64d3433ee08a9cca976ce57ed4e32a646f4dd22cb3005021dd23dbca8d7f019";
+      # disko names this host's LUKS "cryptcarrack" (mint-collision avoidance).
+      deviceName = "cryptcarrack";
+      # null = bootstrap/measure-only. The fresh LUKS volume has a new master key,
+      # so the OLD hash would drop you into the initrd emergency shell (as happened
+      # on arquitens). Boot first, then capture the new value and set it.
+      expectedPcr15 = "b353292a4797f1c859ea4bf77b0e327b0eb5045e9e6804d1fc1fc2fff39ef3a8";
     };
   };
 
