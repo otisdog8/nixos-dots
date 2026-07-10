@@ -7,6 +7,21 @@
 }:
 let
   cfg = config.modules.system.k3s;
+
+  # Kubelet image GC. imageMaximumGCAge is a KubeletConfiguration-only field —
+  # it was never registered as a --kubelet-arg CLI flag, so it must come from a
+  # config file (passed via --kubelet-arg config=). The disk-pressure thresholds
+  # and min age could still be flags, but keeping all four here avoids mixing
+  # mechanisms and dodges the deprecated-flag warnings. No featureGates entry:
+  # ImageMaximumGCAge is GA and on by default as of k8s 1.34 (we run 1.35).
+  kubeletConfig = pkgs.writeText "k3s-kubelet-config.yaml" ''
+    apiVersion: kubelet.config.k8s.io/v1beta1
+    kind: KubeletConfiguration
+    imageMinimumGCAge: "24h"
+    imageMaximumGCAge: "168h"
+    imageGCHighThresholdPercent: 70
+    imageGCLowThresholdPercent: 60
+  '';
 in
 {
   imports = [
@@ -116,13 +131,11 @@ in
         "--kube-apiserver-arg default-unreachable-toleration-seconds=60"
         "--kube-controller-manager-arg node-monitor-grace-period=20s"
         "--kubelet-arg node-status-update-frequency=2s"
-        # Image GC: age-based eviction (unused images dropped after a week) plus
-        # tighter disk-pressure thresholds so a sweep starts well before the XFS
-        # data volume (shared with etcd/rook) gets crowded.
-        "--kubelet-arg image-minimum-gc-age=24h"
-        "--kubelet-arg image-maximum-gc-age=168h"
-        "--kubelet-arg image-gc-low-threshold=60"
-        "--kubelet-arg image-gc-high-threshold=70"
+        # Image GC (thresholds + age-based eviction) lives in kubeletConfig above,
+        # because imageMaximumGCAge is config-file-only. k3s ships no kubelet
+        # config of its own, so pointing --config here is safe (flags still win
+        # for any overlapping field).
+        "--kubelet-arg config=${kubeletConfig}"
       ]
       ++ cfg.extraFlags;
     };
