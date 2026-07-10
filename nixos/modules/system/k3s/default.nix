@@ -107,6 +107,13 @@ in
         "--kube-apiserver-arg default-not-ready-toleration-seconds=60"
         "--kube-apiserver-arg default-unreachable-toleration-seconds=60"
         "--kubelet-arg node-status-update-frequency=2s"
+        # Image GC: age-based eviction (unused images dropped after a week) plus
+        # tighter disk-pressure thresholds so a sweep starts well before the XFS
+        # data volume (shared with etcd/rook) gets crowded.
+        "--kubelet-arg image-minimum-gc-age=24h"
+        "--kubelet-arg image-maximum-gc-age=168h"
+        "--kubelet-arg image-gc-low-threshold=60"
+        "--kubelet-arg image-gc-high-threshold=70"
       ]
       ++ cfg.extraFlags;
     };
