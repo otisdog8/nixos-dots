@@ -1,8 +1,12 @@
 # Attic — self-hosted Nix binary cache, backed by the local Garage S3.
 #
-# Purpose: CI (self-hosted runners on the arquitens k3s cluster) builds our
-# NixOS configs / custom packages once and PUSHES the closures here; the rest of
-# the fleet — and later CI runs — PULL the prebuilt paths instead of rebuilding.
+# Purpose (current scope: CI only): the self-hosted runners on the arquitens
+# k3s cluster build our NixOS configs / custom packages, and PUSH+PULL the
+# closures here via attic-action so CI runs reuse prebuilt paths. The cache is
+# PRIVATE (token-gated reads) — runners authenticate per-job with a token, so it
+# is never made --public. Fleet-wide pulling (workstations pulling as a plain
+# substituter) is intentionally NOT wired yet; that would need a pull token
+# distributed to each host (sops is currently only set up on recusant).
 #
 # Shape (mirrors agent-auth.nix): native NixOS service on recusant, listening on
 # loopback, fronted by nginx on the tailscale IP under the *.recusant.rooty.dev
@@ -26,12 +30,14 @@
 #          --pull nix-cache --push nix-cache
 #      Store that token as a GitHub Actions secret (route it through agent-auth's
 #      secret flow rather than pasting by hand).
-#   4. From a workstation, create the cache and grab its PUBLIC signing key:
+#   4. From a workstation, create the (private) cache:
 #        attic login recusant https://attic.recusant.rooty.dev <admin-token>
 #        attic cache create nix-cache
-#        attic cache info nix-cache          # -> public key, "nix-cache:AAAA..."
-#      Paste that public key into nixos/default.nix trusted-public-keys and
-#      uncomment the substituter (see the TODO there), then rebuild the fleet.
+#      Leave it private — do NOT `attic cache configure nix-cache --public`.
+#      `attic cache info nix-cache` prints the public signing key; you only need
+#      it if you later wire fleet-wide substituter pulls (not done today — see
+#      the purpose note above). CI uses the push token from step 3 via
+#      attic-action, which configures the substituter + netrc inside each job.
 {
   config,
   ...
@@ -56,8 +62,10 @@ in
     enable = true;
     environmentFile = config.sops.secrets."atticd/env".path;
     settings = {
-      # Loopback; nginx terminates TLS on the tailnet and proxies here.
-      listen = "127.0.0.1:8080";
+      # Loopback; nginx terminates TLS on the tailnet and proxies here. NB: 8080
+      # is taken by sabnzbd (media.nix) — using it here proxied attic straight
+      # into sab. Keep this clear of that port.
+      listen = "127.0.0.1:8091";
 
       # SQLite is fine single-node; state persisted below. (default url)
       # database.url = "sqlite:///var/lib/atticd/server.db?mode=rwc";
@@ -103,7 +111,7 @@ in
     # socket, so this vhost must bind the same address.
     listenAddresses = [ tailscaleIp ];
     locations."/" = {
-      proxyPass = "http://127.0.0.1:8080";
+      proxyPass = "http://127.0.0.1:8091";
       extraConfig = ''
         # NAR uploads from CI can be large; don't let nginx cap or time them out.
         client_max_body_size 0;
