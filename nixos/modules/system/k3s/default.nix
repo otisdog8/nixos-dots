@@ -14,6 +14,15 @@ let
   # and min age could still be flags, but keeping all four here avoids mixing
   # mechanisms and dodges the deprecated-flag warnings. No featureGates entry:
   # ImageMaximumGCAge is GA and on by default as of k8s 1.34 (we run 1.35).
+  # Graceful node shutdown: kubelet takes a logind delay-inhibitor and drains
+  # pods in priority order before the box powers off — ordinary pods first (which
+  # unmounts their CephFS CSI volumes while the Rook mons/OSDs are still up), then
+  # system-node-critical pods (the OSDs/CSI plugins) in the final window. This is
+  # what breaks the shutdown-hang deadlock where the kernel CephFS mount outlives
+  # the OSD pods backing it. Kubelet clamps shutdownGracePeriod to logind's
+  # InhibitDelayMaxSec, so that's raised to match below. GracefulNodeShutdown is
+  # beta/default-on since k8s 1.21, so no featureGates entry is needed.
+  gracePeriod = 60; # ceiling per shutdown; kubelet proceeds early once pods drain
   kubeletConfig = pkgs.writeText "k3s-kubelet-config.yaml" ''
     apiVersion: kubelet.config.k8s.io/v1beta1
     kind: KubeletConfiguration
@@ -21,6 +30,8 @@ let
     imageMaximumGCAge: "168h"
     imageGCHighThresholdPercent: 70
     imageGCLowThresholdPercent: 60
+    shutdownGracePeriod: "${toString gracePeriod}s"
+    shutdownGracePeriodCriticalPods: "20s"
   '';
 in
 {
@@ -171,6 +182,11 @@ in
         '';
       };
     };
+
+    # Kubelet clamps its shutdownGracePeriod (set in kubeletConfig) to this, so
+    # raise it to match — otherwise graceful node shutdown silently shrinks to
+    # logind's 5s default and pods don't get drained before power-off.
+    services.logind.settings.Login.InhibitDelayMaxSec = gracePeriod;
 
     # Safety net: if shutdown stalls (rook/containerd/ceph kernel-side hang),
     # arm the hardware watchdog so the box reboots without needing SysRq.
