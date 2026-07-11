@@ -31,11 +31,11 @@
         "uv2nix": "uv2nix"
       },
       "locked": {
-        "lastModified": 1783587755,
-        "narHash": "sha256-GvVYJ7XTEL4K2P/slPrONHV606SATYu/BCXHRG/fesU=",
+        "lastModified": 1783812309,
+        "narHash": "sha256-MPgAjX0/ftD4vhiyKmd5JmeyxAJNNUE1U479unQcw0g=",
         "owner": "uorux",
         "repo": "agent-auth",
-        "rev": "c1f402afcd696d875b84e5b094515762e00282b1",
+        "rev": "c6e937bfa41869ae901f2d9ba8c42fd5002a000f",
         "type": "github"
       },
       "original": {

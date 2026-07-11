@@ -82,9 +82,13 @@
     # known from inside the env file anyway.
     settings = {
       GITHUB_APP_PRIVATE_KEY_FILE = "/run/credentials/agent-auth.service/github-pem";
-      # k3s API server (arquitens, tailnet). Reachability verified from the
-      # tailnet: anonymous curl gets the API server's own 401.
-      KUBERNETES_API_URL = "https://100.126.30.73:6443";
+      # k3s API servers — all three control-plane nodes (tailnet), comma-
+      # separated so the broker fails over when one is down (upstream c6e937b).
+      # The provisioner tries each in turn on transport error and promotes
+      # whichever answers. Same cluster CA + shared tls-san list validates all
+      # three (see modules/system/k3s: --tls-san for each node IP). Order:
+      # arquitens first (historical primary), then carrack, then munificent.
+      KUBERNETES_API_URL = "https://100.126.30.73:6443,https://100.103.225.29:6443,https://100.65.16.13:6443";
       KUBERNETES_TOKEN_FILE = "/run/credentials/agent-auth.service/k8s-token";
       # k3s cluster CA (public, nix store is fine) — the API cert is not
       # signed by anything in the system trust store.
