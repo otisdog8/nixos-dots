@@ -20,6 +20,7 @@
   };
 
   imports = [
+    inputs.disko.nixosModules.disko
     ./disks.nix
 
     # Hardware
@@ -43,16 +44,25 @@
     # Enable AMD GPU
     system.hardware.amd.enable = true;
 
-    # K3s cluster node
+    # K3s cluster node. Post-disk-swap this REJOINS via serverAddr with a fresh
+    # etcd datadir — munificent was never clusterInit, so no split-brain risk.
+    # etcd + DB land on the XFS /data volume; Ceph uses a raw LV (no loopback).
     system.k3s = {
       enable = true;
       serverAddr = "https://100.126.30.73:6443";
+      persistDir = "/data";
+      cephLoopback = false;
       extraFlags = [
         "--bind-address=100.65.16.13"
         "--node-ip=100.65.16.13"
         "--advertise-address=100.65.16.13"
       ];
     };
+
+    # Compressed swap (zswap). Backing LV lives in vg (see disks.nix), already
+    # encrypted. writeback disabled on system.slice keeps the k3s/etcd cold pages
+    # off the encrypted backing swap. Defaults: 20% pool, swappiness 60.
+    system.zswap.enable = true;
 
     # System hardening baseline (k3s-node profile leaves /tmp on disk for kubelet).
     system.hardening = {
@@ -67,7 +77,12 @@
     # into expectedPcr15, rebuild, and reboot.
     system.pcr-verification = {
       enable = true;
-      expectedPcr15 = "8f2d8bcfd3e57f0ab4691dd53a339e2c365e4b475307a534485ddbde7d8c88e9";
+      # disko names this host's LUKS "cryptmunificent" (mint-collision avoidance).
+      deviceName = "cryptmunificent";
+      # null = bootstrap/measure-only. The fresh LUKS volume has a new master key,
+      # so the OLD hash would drop you into the initrd emergency shell. Boot first,
+      # then capture the new value with `systemd-analyze pcrs 15 --json=short`.
+      expectedPcr15 = "96b5ee925510b8893c50581cfbd34a7ccf341981a3b576a577b1ea5076a85af4";
     };
   };
 
