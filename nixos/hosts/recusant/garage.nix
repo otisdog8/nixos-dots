@@ -11,7 +11,9 @@
 # server AND the k8s backup tenant on arquitens can reach it over the tailnet.
 # tailscale0 is globally trusted (networking.nix), so nothing is opened to the
 # LAN/WAN — no allowedTCPPorts needed. RPC/admin stay on loopback (single node,
-# no remote consumer).
+# no remote consumer). An nginx vhost (bottom of this file) also fronts the S3
+# API at https://garage.recusant.rooty.dev for a TLS endpoint with a stable
+# hostname — still tailnet-only (nginx binds the tailscale IP).
 #
 # Durability note: replication_factor = 1 means no redundancy. Fine for the
 # regenerable nix-cache; when k8s-backups is wired, add off-host replication —
@@ -131,5 +133,39 @@ in
   systemd.services.garage = {
     unitConfig.RequiresMountsFor = [ "/mnt/bcachefs/garage/data" ];
     serviceConfig.SupplementaryGroups = [ "garage-data" ];
+  };
+
+  # ── TLS S3 endpoint ──────────────────────────────────────────────────────────
+  # A friendly, TLS-terminated front for the S3 API. The raw API already answers
+  # on the tailnet at ${tailscaleIp}:3900 (plaintext), which is how local Attic
+  # and the arquitens backup tenant reach it. This vhost adds an HTTPS endpoint —
+  # `garage.recusant.rooty.dev` — under the existing *.recusant.rooty.dev wildcard
+  # cert (secrets.nix), so S3 clients can use a stable hostname with TLS instead
+  # of a bare tailscale IP. Same shape as attic.nix / agent-auth.nix: nginx binds
+  # the tailscale IP (server_name-matches within that exact-address socket), so
+  # nothing is opened to LAN/WAN — reachable only over the tailnet.
+  #
+  # Path-style addressing: clients must NOT use virtual-hosted-style buckets
+  # (bucket.garage.recusant.rooty.dev), since neither the wildcard cert nor this
+  # vhost covers that extra label and Garage has no root_domain set. Point the S3
+  # client at https://garage.recusant.rooty.dev with force_path_style = true.
+  #
+  # Host header is preserved (recommendedProxySettings → Host $host), so AWS
+  # SigV4 signatures computed against garage.recusant.rooty.dev validate: Garage
+  # recomputes with the same host it receives from nginx.
+  services.nginx.virtualHosts."garage.recusant.rooty.dev" = {
+    useACMEHost = "recusant.rooty.dev";
+    forceSSL = true;
+    listenAddresses = [ tailscaleIp ];
+    locations."/" = {
+      # The S3 API listens on the tailscale IP, not loopback — proxy there.
+      proxyPass = "http://${tailscaleIp}:3900";
+      extraConfig = ''
+        # S3 object uploads can be large; don't let nginx cap or time them out.
+        client_max_body_size 0;
+        proxy_read_timeout 300s;
+        proxy_send_timeout 300s;
+      '';
+    };
   };
 }
