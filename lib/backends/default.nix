@@ -11,4 +11,5 @@
 {
   none = import ./none.nix;
   nixpak = import ./nixpak.nix;
+  systemd = import ./systemd.nix;
 }

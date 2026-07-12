@@ -242,7 +242,13 @@
           storage = import ./storage.nix { inherit lib; } {
             inherit appName appCfg;
             username = builtins.head appCfg.defaultUsernames;
-            stashOwner = "user"; # Phase 1: nixpak/none. systemd derives root/dedicated in Phase 2.
+            # nixpak/none → jrt-owned (traversable). systemd same-uid → root lock;
+            # systemd + dedicatedUser → per-uid lock.
+            stashOwner =
+              if effectiveBackend == "systemd" then
+                (if cfg.sandbox.dedicatedUser then "dedicated" else "root")
+              else
+                "user";
             forceHome =
               (config.modules.sandbox.forceHomeLocation or false) || effectiveBackend == "none";
           };

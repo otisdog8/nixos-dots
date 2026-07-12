@@ -68,12 +68,23 @@
               ];
             };
 
-            # Environment variables
+            # Environment variables. Use envOr (with fallbacks) not env: the
+            # nixpak launcher PANICS on a referenced-but-unset var, and the
+            # systemd/dedicated backends run with a minimal Nix-derived env rather
+            # than the full session. In-session apps still get the real session
+            # value; only a missing var falls back.
             env = {
-              DISPLAY = sloth.env "DISPLAY";
-              WAYLAND_DISPLAY = sloth.env "WAYLAND_DISPLAY";
-              QT_QPA_PLATFORMTHEME = sloth.env "QT_QPA_PLATFORMTHEME";
-              LANG = sloth.env "LANG";
+              DISPLAY = sloth.envOr "DISPLAY" ":0";
+              WAYLAND_DISPLAY = sloth.envOr "WAYLAND_DISPLAY" "wayland-0";
+              QT_QPA_PLATFORMTHEME = sloth.envOr "QT_QPA_PLATFORMTHEME" "";
+              LANG = sloth.envOr "LANG" "C.UTF-8";
+              # Force chromium/electron onto Wayland. In-session apps inherit
+              # NIXOS_OZONE_WL from the session; systemd/dedicated apps run on a
+              # minimal env, so without this electron falls back to X11 (which has
+              # no Xauth in the sandbox → no window). Literal, harmless for
+              # non-electron GUI apps.
+              NIXOS_OZONE_WL = "1";
+              ELECTRON_OZONE_PLATFORM_HINT = "wayland";
             };
           };
         }
