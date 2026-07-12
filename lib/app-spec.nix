@@ -26,6 +26,24 @@
       description = "Desktop file name for XDG associations (e.g., 'zen.desktop')";
     };
 
+    # Default sandbox backend (Layer-2). Apps opt into v2 by setting this to
+    # nixpak/systemd/vm (or "none" for unsandboxed v2); the generated
+    # sandbox.backend option defaults to it. "legacy" keeps the pre-v2 path.
+    # This lives in the app-spec (independent eval) rather than being set via
+    # customConfig, so reading the effective backend never forces the outer
+    # config mid-merge.
+    defaultBackend = lib.mkOption {
+      type = lib.types.enum [
+        "legacy"
+        "none"
+        "nixpak"
+        "systemd"
+        "vm"
+      ];
+      default = "legacy";
+      description = "Default Layer-2 sandbox backend for this app.";
+    };
+
     # Default usernames for user-level persistence
     defaultUsernames = lib.mkOption {
       type = lib.types.listOf lib.types.str;
@@ -108,6 +126,121 @@
         type = lib.types.listOf lib.types.str;
         default = [ ];
         description = "System paths for /baked";
+      };
+    };
+
+    # ── v2: unified storage model (Layer 1) ──────────────────────────────────
+    # A single per-path declaration that (per backend) drives the on-disk stash
+    # location + tier (= backup policy), its creation, and the in-sandbox bind.
+    # Coexists with the legacy persistence.user.* lists above; an app uses one or
+    # the other depending on sandbox.backend. See lib/storage.nix.
+    storage = lib.mkOption {
+      type = lib.types.listOf (
+        lib.types.submodule {
+          options = {
+            path = lib.mkOption {
+              type = lib.types.str;
+              description = "Home-relative path inside the sandbox, e.g. \".config/obsidian\".";
+            };
+            tier = lib.mkOption {
+              type = lib.types.enum [
+                "persist"
+                "large"
+                "cache"
+              ];
+              default = "persist";
+              description = ''
+                Storage tier = backup policy: persist (backed up), large (persisted,
+                not backed up), cache (disposable). baked is intentionally excluded
+                — it has no backing subvol on most hosts.
+              '';
+            };
+            location = lib.mkOption {
+              type = lib.types.enum [
+                "stash"
+                "home"
+              ];
+              default = "stash";
+              description = ''
+                stash = /<tier>/sandbox/<app>/<path>, bound into the sandbox and
+                hidden per sandbox.stashOwner. home = normal ~/<path> via
+                impermanence (host-visible), still bound into the sandbox.
+              '';
+            };
+            type = lib.mkOption {
+              type = lib.types.enum [
+                "dir"
+                "file"
+              ];
+              default = "dir";
+            };
+            mode = lib.mkOption {
+              type = lib.types.str;
+              default = "0700";
+            };
+          };
+        }
+      );
+      default = [ ];
+      description = "v2 unified storage entries. Alternative to persistence.user.* for converted apps.";
+    };
+
+    # ── v2: backend-agnostic capability vocabulary (Layer 1) ──────────────────
+    # Features set these; backends lower them differently. Introduced now; feature
+    # conversion is incremental (unconverted features keep using nixpakModules,
+    # still consumed by the bwrap backends).
+    capabilities = {
+      gpu = lib.mkOption {
+        type = lib.types.bool;
+        default = false;
+        description = "App needs the GPU.";
+      };
+      network = lib.mkOption {
+        type = lib.types.bool;
+        default = false;
+        description = "App needs network access.";
+      };
+      wayland = lib.mkOption {
+        type = lib.types.bool;
+        default = false;
+        description = "App needs a Wayland socket.";
+      };
+      x11 = lib.mkOption {
+        type = lib.types.bool;
+        default = false;
+        description = "App needs X11.";
+      };
+      audio = lib.mkOption {
+        type = lib.types.bool;
+        default = false;
+        description = "App needs audio (pulse + pipewire).";
+      };
+      binds = {
+        rw = lib.mkOption {
+          type = lib.types.listOf lib.types.str;
+          default = [ ];
+          description = "Home-relative or absolute read-write binds.";
+        };
+        ro = lib.mkOption {
+          type = lib.types.listOf lib.types.str;
+          default = [ ];
+          description = "Home-relative or absolute read-only binds.";
+        };
+        dev = lib.mkOption {
+          type = lib.types.listOf lib.types.str;
+          default = [ ];
+          description = "Device binds.";
+        };
+      };
+      dbus.policies = lib.mkOption {
+        type = lib.types.attrsOf (
+          lib.types.enum [
+            "talk"
+            "own"
+          ]
+        );
+        default = { };
+        description = "Session-bus policies (name → talk|own).";
       };
     };
 

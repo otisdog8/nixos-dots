@@ -1257,16 +1257,16 @@
         ]
       },
       "locked": {
-        "lastModified": 1775528541,
-        "narHash": "sha256-fpL4jEQVKZLFOJLs2YO3QOJx0YOusvLAUL/O7qq90S8=",
+        "lastModified": 1783836606,
+        "narHash": "sha256-27ciByNu/4RjZvuj+PXxToCKuUItt6gguaA6p2/qDtc=",
         "owner": "otisdog8",
         "repo": "nixpak",
-        "rev": "e34db643fbcdd1dae56c21cd4c39ef240f9c7f5a",
+        "rev": "5f9ed597cb613ba1b94469a21629fe5b48144d79",
         "type": "github"
       },
       "original": {
         "owner": "otisdog8",
-        "ref": "sandbox-xdg-runtime-dir",
+        "ref": "hard-bind",
         "repo": "nixpak",
         "type": "github"
       }

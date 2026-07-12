@@ -78,7 +78,54 @@
           enable = lib.mkOption {
             type = lib.types.bool;
             default = false;
-            description = "Whether to sandbox ${appName} using nixpak";
+            description = "Whether to sandbox ${appName} using nixpak (legacy path)";
+          };
+
+          backend = lib.mkOption {
+            type = lib.types.enum [
+              "legacy"
+              "none"
+              "nixpak"
+              "systemd"
+              "vm"
+            ];
+            default = appCfg.defaultBackend;
+            description = ''
+              Sandbox backend (Layer-2 lowering). "legacy" = the untouched pre-v2
+              path driven by persistence.user.* + sandbox.enable. "none" = v2 but
+              unsandboxed (storage at its home location). nixpak/systemd/vm =
+              sandboxed. Defaults to app.defaultBackend; converted apps set that
+              and declare app.storage.
+            '';
+          };
+
+          dedicatedUser = lib.mkOption {
+            type = lib.types.bool;
+            default = false;
+            description = "systemd backend only, CLI apps only: run under a dedicated app-<name> uid.";
+          };
+
+          stashOwner = lib.mkOption {
+            type = lib.types.enum [
+              "user"
+              "root"
+              "dedicated"
+            ];
+            default = "user";
+            description = ''
+              Per-app stash ownership. "user" = jrt-owned (rootless nixpak). The
+              systemd backend derives root/dedicated from backend+dedicatedUser at
+              lowering time (Phase 2); see lib/storage.nix.
+            '';
+          };
+
+          envMode = lib.mkOption {
+            type = lib.types.enum [
+              "inject"
+              "defaults"
+            ];
+            default = "inject";
+            description = "systemd/vm env strategy: inject live session env, or derive sensible defaults.";
           };
 
           extraBinds = lib.mkOption {
@@ -182,18 +229,62 @@
 
           # Evaluate custom config with full nixos config
           customCfg = appCfg.customConfig { inherit config lib pkgs; };
+
+          # ── v2 backend dispatch (Layer 2) ─────────────────────────────────
+          # The effective backend comes from the app-spec (independent eval), NOT
+          # from reading cfg.sandbox.backend. Reading a cfg.sandbox.* option in a
+          # mkIf *condition* below would force the outer module merge to resolve
+          # that option while it is still collecting the very definitions the mkIf
+          # guards → infinite recursion. app.defaultBackend has no such dependency.
+          # Legacy apps (defaultBackend = "legacy") are entirely untouched.
+          effectiveBackend = appCfg.defaultBackend;
+          isLegacy = effectiveBackend == "legacy";
+          storage = import ./storage.nix { inherit lib; } {
+            inherit appName appCfg;
+            username = builtins.head appCfg.defaultUsernames;
+            stashOwner = "user"; # Phase 1: nixpak/none. systemd derives root/dedicated in Phase 2.
+            forceHome =
+              (config.modules.sandbox.forceHomeLocation or false) || effectiveBackend == "none";
+          };
+          # Guard the registry lookup: the module system forces mkIf *content*
+          # while computing unmatchedDefns even when the condition is false, so a
+          # legacy app must NOT index the registry (it has no "legacy" key).
+          backendResult =
+            if isLegacy then
+              {
+                package = sandboxedPackage;
+                systemConfig = { };
+              }
+            else
+              (import ./backends/default.nix).${effectiveBackend} {
+                inherit
+                  appName
+                  appCfg
+                  cfg
+                  config
+                  lib
+                  pkgs
+                  inputs
+                  storage
+                  ;
+              };
+          finalPkg = backendResult.package;
         in
         lib.mkMerge (
           [
             # Expose the final package
             {
-              modules.apps.${appName}.finalPackage = sandboxedPackage;
+              modules.apps.${appName}.finalPackage = finalPkg;
             }
 
             # Base config - always applied when enabled
             (lib.mkIf cfg.enable {
-              environment.systemPackages = [ sandboxedPackage ];
+              environment.systemPackages = [ finalPkg ];
             })
+
+            # v2: backend-emitted system config (tmpfiles, persistence, units).
+            # Inactive for legacy apps (their storage/backend paths stay unused).
+            (lib.mkIf (cfg.enable && !isLegacy) backendResult.systemConfig)
 
             # System-level persistence
             (lib.mkIf (cfg.enable && appCfg.persistence.system.persist != [ ]) {

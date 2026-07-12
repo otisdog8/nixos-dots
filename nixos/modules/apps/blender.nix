@@ -22,19 +22,19 @@
       package = inputs.nix-warez.packages.${pkgs.stdenv.hostPlatform.system}.blender_5_0;
       packageName = "blender";
 
-      persistence.user = {
-        # Config, addons, presets, scripts
-        persist = [
-          ".config/blender"
-        ];
+      # v2 unified storage (replaces persistence.user.* + impermanence).
+      storage = [
+        {
+          path = ".config/blender";
+          tier = "persist";
+        } # config, addons, presets, scripts
+        {
+          path = ".cache/blender";
+          tier = "cache";
+        } # thumbnails, compiled shaders
+      ];
 
-        # Cache (thumbnails, compiled shaders, etc.)
-        cache = [
-          ".cache/blender"
-        ];
-      };
-
-      # Project file access
+      # Project file access (raw nixpak module — coexists with app.storage).
       nixpakModules = [
         (
           { sloth, ... }:
@@ -45,6 +45,10 @@
           }
         )
       ];
+
+      # v2 nixpak backend: storage-driven binds + tmpfiles instead of the legacy
+      # persistence.user.* + impermanence path.
+      defaultBackend = "nixpak";
     };
   }
 )
