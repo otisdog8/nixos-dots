@@ -50,21 +50,36 @@ let
       moves = lib.concatMapStringsSep "\n" (
         e:
         let
-          src = "${tierMount.${e.tier}}/home/${m.user}/${e.path}";
           dst = "${tierMount.${e.tier}}/sandbox/${m.app}/${e.path}";
+          # Old-layout data can sit under ANY tier's home: a path being re-tiered
+          # (e.g. .claude/security persist→large, or codex logs persist→large) still
+          # lives under the parent's OLD tier, not its new declared one. Search the
+          # declared tier first, then the others; take the first that exists. Each
+          # candidate test is fully quoted, so paths with spaces (Electron's
+          # "Code Cache") are safe.
+          candidateTiers = [ e.tier ] ++ (lib.filter (t: t != e.tier) [ "persist" "large" "cache" ]);
+          srcPick = lib.concatMapStringsSep "\n" (
+            t:
+            let
+              c = "${tierMount.${t}}/home/${m.user}/${e.path}";
+            in
+            ''            if [ -z "$__src" ] && [ -e "${c}" ]; then __src="${c}"; fi''
+          ) candidateTiers;
         in
         ''
-          if [ -e "${src}" ]; then
+          __src=""
+          ${srcPick}
+          if [ -n "$__src" ]; then
             ${co}/mkdir -p "$(${co}/dirname "${dst}")"
             if [ ! -e "${dst}" ]; then
-              echo "  mv ${dst}"; ${co}/mv "${src}" "${dst}" || echo "  ERROR moving ${src}"
+              echo "  mv ${dst}"; ${co}/mv "$__src" "${dst}" || echo "  ERROR moving $__src"
             elif [ -d "${dst}" ] && [ -z "$(${co}/ls -A "${dst}" 2>/dev/null)" ]; then
-              ${co}/rmdir "${dst}"; echo "  mv(empty) ${dst}"; ${co}/mv "${src}" "${dst}" || echo "  ERROR moving ${src}"
+              ${co}/rmdir "${dst}"; echo "  mv(empty) ${dst}"; ${co}/mv "$__src" "${dst}" || echo "  ERROR moving $__src"
             else
               echo "  skip ${e.path} (target non-empty)"
             fi
           fi''
-      ) m.entries;
+      ) (lib.reverseList m.entries); # deepest-first: extract carved children before the parent moves
       # Reconcile ownership every run (not gated by the stamp): mv preserves the
       # old jrt ownership, and flipping an app same-uid <-> dedicated changes the
       # target owner. chown-on-mismatch is cheap and idempotent.

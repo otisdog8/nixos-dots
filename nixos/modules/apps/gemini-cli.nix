@@ -20,28 +20,24 @@
       packageName = "gemini";
       package = pkgs.gemini-cli;
 
-      persistence.user.persist = [
-        ".gemini"
+      defaultBackend = "nixpak";
+
+      # Empty on disk today, so just the config/creds dir on the backed-up tier.
+      # Carve a cache tier if/when gemini starts writing one under ~/.gemini.
+      storage = [
+        { path = ".gemini"; tier = "persist"; }
       ];
 
+      # $PWD comes from cwd.nix; the stash bind provides ~/.gemini. Only the
+      # shared host /tmp remains (preserved from the legacy config).
       nixpakModules = [
         (
-          { sloth, ... }:
+          { ... }:
           {
-            bubblewrap.bind.rw = [
-              (sloth.concat' sloth.homeDir "/.gemini")
-              (sloth.env "PWD")
-              "/tmp"
-            ];
+            bubblewrap.bind.rw = [ "/tmp" ];
           }
         )
       ];
-
-      customConfig =
-        { config, lib, ... }:
-        {
-          modules.apps.gemini-cli.sandbox.enable = lib.mkDefault true;
-        };
     };
   }
 )

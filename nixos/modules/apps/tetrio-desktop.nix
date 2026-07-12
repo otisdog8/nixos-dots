@@ -13,6 +13,7 @@
       ../../../lib/features/gui.nix
       ../../../lib/features/needs-gpu.nix
       ../../../lib/features/network.nix
+      ../../../lib/features/audio.nix
       ../../../lib/features/xdg-desktop.nix
     ];
 
@@ -21,8 +22,12 @@
       package = pkgs.tetrio-desktop;
       packageName = "tetrio";
 
-      # TETR.IO uses standard .config/tetrio-desktop location
-      # chromium.basePath defaults to ".config/${name}" which is correct
+      # Single-profile Electron app: chromium.nix supplies the whole storage
+      # layout (profile → /persist, standard Electron caches → /cache) from
+      # basePath = .config/tetrio-desktop (the name-derived default). No per-app
+      # storage list needed; the profiles option defaults to [] which is correct
+      # here (caches live at basePath, not under a Default/ profile).
+      defaultBackend = "nixpak";
     };
   }
 )

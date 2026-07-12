@@ -13,6 +13,7 @@
       ../../../lib/features/gui.nix
       ../../../lib/features/needs-gpu.nix
       ../../../lib/features/network.nix
+      ../../../lib/features/audio.nix
       ../../../lib/features/xdg-desktop.nix
     ];
 

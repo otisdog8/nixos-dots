@@ -1,33 +1,8 @@
-# FIDO/WebAuthn hardware security key support
+# FIDO/WebAuthn hardware security key support (raw /dev/hidraw*) — capability-based.
+# NOTE: deliberately NOT implied by gui.nix. Import this only in apps that use
+# security keys (browsers), so non-browser GUI apps don't get raw HID access.
 { config, lib, ... }:
 {
   imports = [ ../app-spec.nix ];
-
-  config.app.nixpakModules = [
-    (
-      { lib, ... }:
-      {
-        # Bind hidraw devices for FIDO/U2F keys
-        bubblewrap.bind.dev = [
-          "/dev/hidraw0"
-          "/dev/hidraw1"
-          "/dev/hidraw2"
-          "/dev/hidraw3"
-          "/dev/hidraw4"
-          "/dev/hidraw5"
-          "/dev/hidraw6"
-          "/dev/hidraw7"
-          "/dev/hidraw8"
-          "/dev/hidraw9"
-        ];
-
-        # libudev needs these to enumerate and identify FIDO devices
-        bubblewrap.bind.ro = [
-          "/run/udev"
-          "/sys/class/hidraw"
-          "/sys/bus/hid"
-        ];
-      }
-    )
-  ];
+  config.app.capabilities.fido = true;
 }

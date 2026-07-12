@@ -4,8 +4,10 @@
 {
   imports = [
     ../app-spec.nix
-    ./fido.nix
     ./open-links.nix
+    # NOTE: fido.nix (raw /dev/hidraw*) is deliberately NOT pulled in here.
+    # GUI-ness does not imply needing security keys; browsers get it via
+    # browser.nix, and any other app that needs it imports fido.nix explicitly.
   ];
 
   config.app = {
@@ -35,11 +37,11 @@
               proc = true;
             };
 
-            # Sockets for Wayland, audio
+            # Wayland only. Audio (pulse+pipewire, which is also MIC access) is NOT
+            # implied by gui — it's the `audio` capability (features/audio.nix), so
+            # apps that don't play/record sound don't get microphone access.
             sockets = {
               wayland = true;
-              pulse = true;
-              pipewire = true;
             };
 
             # Bind mounts

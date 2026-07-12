@@ -3,16 +3,5 @@
 { config, lib, ... }:
 {
   imports = [ ../app-spec.nix ];
-
-  config.app.nixpakModules = [
-    (
-      { sloth, ... }:
-      {
-        bubblewrap.bind.ro = [
-          (sloth.concat' sloth.homeDir "/.gitconfig")
-          (sloth.concat' sloth.homeDir "/.config/git")
-        ];
-      }
-    )
-  ];
+  config.app.capabilities.gitConfig = true;
 }

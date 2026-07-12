@@ -40,7 +40,12 @@ in
       ...
     }:
     {
-      imports = appCfg.nixpakModules ++ cfg.sandbox.nixpakModules;
+      # Layer-1 capabilities lowered to bwrap, alongside the raw-nixpakModules
+      # escape hatch (both consumed by this bwrap lowering; they compose freely).
+      imports =
+        appCfg.nixpakModules
+        ++ [ (import ../capabilities-nixpak.nix { inherit lib; } appCfg.capabilities) ]
+        ++ cfg.sandbox.nixpakModules;
 
       app.package = cfg.package;
       app.binPath = "bin/${appCfg.packageName}";

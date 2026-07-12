@@ -189,6 +189,12 @@
                     imports =
                       # Modules from features (gui.nix, electron.nix, etc.)
                       appCfg.nixpakModules
+                      # Capability lowering: features increasingly declare
+                      # app.capabilities.* instead of raw nixpakModules; the legacy
+                      # path must lower them too or legacy apps silently lose
+                      # network/gpu/audio/fido. Behavior-preserving (empty caps →
+                      # no-op), so pre-capability legacy apps are unaffected.
+                      ++ [ (import ./capabilities-nixpak.nix { inherit lib; } appCfg.capabilities) ]
                       # Per-host override modules
                       ++ cfg.sandbox.nixpakModules;
 
@@ -328,8 +334,12 @@
             })
           ]
           ++
-            # User-level persistence - applied for each user in defaultUsernames
-            (lib.flatten (
+            # User-level persistence — LEGACY apps only. A v2 app gets its home
+            # binds from the backend (storage.homePersistence); if a feature it
+            # imports still sets persistence.user.* (e.g. chromium.nix on tetrio),
+            # emitting these too would double-mount against the stash binds — the
+            # very cross-authority desync this redesign removes.
+            (lib.optionals isLegacy (lib.flatten (
               map (username: [
                 # User persistence - /persist directories
                 (lib.mkIf (cfg.enable && cfg.persistConfig && appCfg.persistence.user.persist != [ ]) {
@@ -371,7 +381,7 @@
                   environment.persistence."/baked".users.${username}.files = appCfg.persistence.user.bakedFiles;
                 })
               ]) appCfg.defaultUsernames
-            ))
+            )))
         );
     };
 }

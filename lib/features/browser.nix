@@ -2,10 +2,13 @@
 { config, lib, ... }:
 
 {
-  # Browsers are GUI apps with network
+  # Browsers are GUI apps with network + FIDO/WebAuthn security keys + audio
+  # (web audio/video — no longer implied by gui.nix).
   imports = [
     ./gui.nix
     ./network.nix
+    ./fido.nix
+    ./audio.nix
   ];
 
   config.app = {

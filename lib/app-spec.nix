@@ -215,6 +215,34 @@
         default = false;
         description = "App needs audio (pulse + pipewire).";
       };
+      fido = lib.mkOption {
+        type = lib.types.bool;
+        default = false;
+        description = ''
+          App needs FIDO/WebAuthn hardware security keys (raw /dev/hidraw*).
+          Deliberately NOT implied by `gui` — only browsers / apps that use
+          security keys should get raw HID access.
+        '';
+      };
+      cwd = lib.mkOption {
+        type = lib.types.bool;
+        default = false;
+        description = "Bind the current working directory ($PWD) read-write.";
+      };
+      # TODO(gitAncestor): a `capabilities.gitAncestor` that binds the project root
+      # (nearest .git ancestor of $PWD) rw, for agents working across a repo rather
+      # than just $PWD. Deferred because the semantics need a decision: nixpak's
+      # bind.lastArg/firstArg bind the nearest EXISTING ancestor of a CLI arg, which
+      # is not the same as "git root of $PWD" — the latter needs a launch-time
+      # `git rev-parse --show-toplevel` (a runtime helper in the wrapper), not a
+      # static bind. Pick the semantics before implementing.
+
+
+      gitConfig = lib.mkOption {
+        type = lib.types.bool;
+        default = false;
+        description = "Bind the user's git config (~/.gitconfig, ~/.config/git) read-only.";
+      };
       binds = {
         rw = lib.mkOption {
           type = lib.types.listOf lib.types.str;
