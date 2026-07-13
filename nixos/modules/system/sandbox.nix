@@ -110,29 +110,37 @@ let
       ) (lib.reverseList m.entries); # deepest-first: extract carved children before the parent moves
       # Reconcile ownership every run (not gated by the stamp): mv preserves the
       # old jrt ownership, and flipping an app same-uid <-> dedicated changes the
-      # target owner. chown-on-mismatch is cheap and idempotent.
+      # target owner. NB: check the WHOLE tree, not just dst's top-dir owner — the
+      # dedicated tmpfiles leaf rule chowns the top dir to app-<name> (non-recursively),
+      # so a top-owner test would wrongly conclude "already migrated" and leave the
+      # children jrt-owned → the app EACCESes on its own data. `find … ! -user … -quit`
+      # early-exits at the first mis-owned entry, so it stays cheap once converged.
       chowns = lib.concatMapStringsSep "\n" (
         e:
         let
           dst = "${tierMount.${e.tier}}/sandbox/${m.app}/${e.path}";
         in
         ''
-          if [ -e "${dst}" ]; then
-            __cur=$(${co}/stat -c %U "${dst}" 2>/dev/null || echo "")
-            if [ "$__cur" != "${m.owner}" ]; then
-              echo "  chown ${m.owner} ${dst}"; ${co}/chown -R "${m.owner}" "${dst}" 2>/dev/null || true
-            fi
+          if [ -e "${dst}" ] && [ -n "$(${pkgs.findutils}/bin/find "${dst}" ! -user "${m.owner}" -print -quit 2>/dev/null)" ]; then
+            echo "  chown -R ${m.owner} ${dst}"; ${co}/chown -R "${m.owner}" "${dst}" 2>/dev/null || true
           fi''
       ) m.entries;
     in
     ''
       if ${pg} -x "${m.bin}" >/dev/null 2>&1; then
-        : # ${m.app} running — defer; retries next switch/boot
+        : # ${m.app} running — defer the MOVES (mv'ing data from under a live app is
+          # unsafe); chowns still run below.
       else
         ${unmounts}
         ${moves}
-        ${chowns}
       fi
+      # Ownership reconcile runs EVERY activation, gated on nothing: changing a file's
+      # owner never disrupts a running process's open FDs, and gating it on the app
+      # being stopped means a dedicated app that happens to be running at switch time
+      # never gets its stash chowned off the old (jrt) owner — it then hits EACCES on
+      # its OWN data (the lunar-client symptom). Idempotent: skips entries already
+      # owned correctly, and no-ops on dst paths that don't exist yet.
+      ${chowns}
     '';
 
   migrateScript = pkgs.writeShellScript "sandbox-stash-migrate" ''

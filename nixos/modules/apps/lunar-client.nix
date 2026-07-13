@@ -19,6 +19,8 @@
       ../../../lib/features/network.nix
       ../../../lib/features/audio.nix
       ../../../lib/features/xdg-desktop.nix
+      # Lunar minimizes to a StatusNotifierItem tray icon — needs the tray DBus policy.
+      ../../../lib/features/system-tray.nix
     ];
 
     config.app = {
@@ -46,14 +48,13 @@
       # top of the `persist` parent. Cross-tier nesting is explicitly allowed by
       # lib/storage.nix (only SAME-tier nesting is illegal).
       #
-      # DEDICATED-UID EXPERIMENT (deliberately NOT applied): unlike the pure-Electron
-      # games, Lunar runs Minecraft via Java/LWJGL, which commonly needs XWayland — and
-      # a dedicated uid can't auth to the X server (the exact failure mode zoom hit). To
-      # try it: set defaultBackend="systemd", wrap the launcher for --ozone-platform=
-      # wayland (Electron part only), add sandbox.dedicatedUser=true + an app-lunar-
-      # client user in video/audio groups, then VALIDATE the game window actually opens
-      # (not just the launcher). Kept on nixpak same-uid because it's validated working.
-      defaultBackend = "nixpak";
+      # Dedicated-uid + XWayland forward. Lunar runs Minecraft via Java/LWJGL which
+      # needs X11; a dedicated uid can't auth to jrt's XWayland on its own, so
+      # x11Forward (customConfig below) grants it via the launcher's xhost. The Electron
+      # launcher UI keeps using native Wayland (gui.nix's hint + the socket relay), so
+      # only the game touches the shared X server. Profile/settings/mods run as
+      # app-lunar-client, hidden from jrt.
+      defaultBackend = "systemd";
       storage = [
         # Settings, mods, resourcepacks (backed up).
         {
@@ -76,6 +77,19 @@
         # NB: ~/.config/lunarclient is NOT declared here — chromium.nix emits it
         # (persist profile + carved /cache children) via chromium.basePath above.
       ];
+
+      customConfig =
+        { config, lib, ... }:
+        {
+          modules.apps.lunar-client.sandbox.dedicatedUser = true;
+          # X11 forward for the Java/LWJGL game window (POC — see
+          # xwayland-forward-POC.md; shares jrt's X server).
+          modules.apps.lunar-client.sandbox.x11Forward = true;
+          users.users."app-lunar-client".extraGroups = [
+            "video"
+            "audio"
+          ];
+        };
     };
   }
 )

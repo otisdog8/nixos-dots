@@ -224,6 +224,18 @@ let
           echo "sandbox-${appName}: graft target '$__t' resolved through a symlink; refusing" >&2
           exit 1
         fi
+        ${lib.optionalString dedicated ''
+          # Dedicated apps run as a DIFFERENT uid, so EVERY intermediate dir on the
+          # graft path must be app-traversable. Root-created intermediates are 0755
+          # (fine), but one that PRE-EXISTS inside a mounted parent stash — e.g. a
+          # chromium "Shared Dictionary" left jrt-owned 0700 by a nixpak→dedicated
+          # migration — would block the app. chown the intermediates (NOT the leaf,
+          # which is about to be an app-owned mount) to the app uid. Idempotent; a
+          # no-op on already-correct trees.
+          ${lib.concatMapStringsSep "\n" (p: ''
+            ${co}/chown ${appUser} "${p}" 2>/dev/null || true
+          '') (lib.init checkPaths)}
+        ''}
         # The stash SOURCE itself: a symlink (migration moved one in, or a malicious
         # jrt planted it) would make this bind follow to an attacker-chosen host path.
         # Require the real expected type, never a symlink.

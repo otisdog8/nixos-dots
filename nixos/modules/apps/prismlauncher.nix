@@ -25,12 +25,11 @@
       # here — clean tiers: config backed up, game installs large (not backed up),
       # cache disposable.
       #
-      # DEDICATED-UID EXPERIMENT (deliberately NOT applied): PrismLauncher is Qt, but it
-      # launches Minecraft via Java/LWJGL which commonly needs XWayland — a dedicated
-      # uid can't auth to the X server (zoom's failure mode). Same caveat as lunar: try
-      # defaultBackend="systemd" + dedicatedUser + QT_QPA_PLATFORM=wayland, but VALIDATE
-      # a launched instance's game window actually renders before relying on it.
-      defaultBackend = "nixpak";
+      # Dedicated-uid + XWayland forward. PrismLauncher (Qt) and the Minecraft it
+      # launches (Java/LWJGL) both use X11; a dedicated uid can't auth to jrt's XWayland
+      # on its own, so x11Forward (customConfig below) grants it via the launcher's
+      # xhost. Config/instances run as app-prismlauncher, hidden from jrt.
+      defaultBackend = "systemd";
       storage = [
         {
           path = ".config/PrismLauncher";
@@ -76,6 +75,20 @@
           }
         )
       ];
+
+      customConfig =
+        { config, lib, ... }:
+        {
+          modules.apps.prismlauncher.sandbox.dedicatedUser = true;
+          # X11 forward for the Qt launcher + Java/LWJGL game (POC — see
+          # xwayland-forward-POC.md; shares jrt's X server).
+          modules.apps.prismlauncher.sandbox.x11Forward = true;
+          users.users."app-prismlauncher".extraGroups = [
+            "video"
+            "audio"
+            "input" # /dev/input is root:input 0660 — needed to read controllers
+          ];
+        };
     };
   }
 )
