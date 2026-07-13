@@ -19,8 +19,8 @@
 
     config.app = {
       name = "tetrio-desktop";
-      # EXPERIMENT (dedicated-uid): force native Wayland like vesktop — a dedicated
-      # uid can't auth to XWayland, and Electron's hint alone falls back to X11.
+      # Force native Wayland like vesktop: a dedicated uid can't auth to XWayland, and
+      # Electron's hint alone falls back to X11.
       package = pkgs.symlinkJoin {
         name = "tetrio-desktop-wayland";
         paths = [ pkgs.tetrio-desktop ];
@@ -37,12 +37,9 @@
       # layout (profile → /persist, standard Electron caches → /cache) from
       # basePath = .config/tetrio-desktop (the name-derived default). No per-app
       # storage list needed; the profiles option defaults to [] which is correct
-      # here (caches live at basePath, not under a Default/ profile).
-      #
-      # EXPERIMENT: dedicated-uid systemd (was nixpak same-uid). Pure Electron, so it
-      # should behave like vesktop (native Wayland works cross-uid). Login/scores run
-      # as app-tetrio-desktop, hidden from jrt. Revert to `defaultBackend = "nixpak"`
-      # + drop the wrapper/customConfig if the game misbehaves cross-uid.
+      # here (caches live at basePath, not under a Default/ profile). Dedicated-uid
+      # systemd (pure Electron, behaves like vesktop): login/scores run as
+      # app-tetrio-desktop, hidden from jrt.
       defaultBackend = "systemd";
 
       customConfig =

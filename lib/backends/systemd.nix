@@ -95,8 +95,8 @@ let
     docBind = if dedicated then [ "${runtimeDir}/doc" "${jrtRuntime}/doc" ] else null;
     # dedicated: inner proxy transparent; the jrt-side bridge is the single filter.
     transparentDbus = dedicated;
-    # POC: expose jrt's X socket + DISPLAY to the inner sandbox (xhost grant is in the
-    # launcher). See nixos/modules/apps/xwayland-forward-POC.md.
+    # Expose jrt's X socket + DISPLAY to the inner sandbox (the xhost grant that makes
+    # it usable is in the launcher). See nixos/modules/apps/xwayland-forward.md.
     x11Forward = dedicated && cfg.sandbox.x11Forward;
     # Per-app shared downloads → jrt's ~/Downloads/<app>. Value is the subdir name.
     sharedDownloads = if dedicated && cfg.sandbox.sharedDownloads then appName else null;
@@ -419,9 +419,9 @@ let
       "${xhost} -SI:localuser:${appUser} >/dev/null 2>&1 || true; "
     }if [ -n "$__dbus_pid" ]; then kill "$__dbus_pid" 2>/dev/null || true; fi; ${pkgs.systemd}/bin/systemctl stop ${unitName}.service >/dev/null 2>&1 || true' EXIT INT TERM
     ${lib.optionalString (dedicated && cfg.sandbox.x11Forward) ''
-      # POC: grant the dedicated app uid access to jrt's X server via server-interpreted
+      # Grant the dedicated app uid access to jrt's X server via server-interpreted
       # localuser auth (no Xauthority cookie needed). Revoked in the trap above. Shares
-      # jrt's X — see nixos/modules/apps/xwayland-forward-POC.md for the caveats.
+      # jrt's X — see nixos/modules/apps/xwayland-forward.md for the caveats.
       ${xhost} +SI:localuser:${appUser} >/dev/null 2>&1 || true
     ''}
     ${pkgs.systemd}/bin/systemctl start --wait ${unitName}.service

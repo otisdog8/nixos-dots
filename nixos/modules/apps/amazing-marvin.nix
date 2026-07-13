@@ -19,8 +19,8 @@
 
     config.app = {
       name = "amazing-marvin";
-      # EXPERIMENT (dedicated-uid): force native Wayland like vesktop (dedicated uid
-      # can't auth to XWayland; Electron's hint alone falls back to X11).
+      # Force native Wayland like vesktop: a dedicated uid can't auth to XWayland, and
+      # Electron's hint alone falls back to X11.
       package = pkgs.symlinkJoin {
         name = "amazing-marvin-wayland";
         paths = [ pkgs.otisdog8.amazing-marvin ];
@@ -34,12 +34,9 @@
       packageName = "amazing-marvin";
 
       # Marvin uses .config/Marvin (profile == persist root). chromium.nix supplies
-      # the whole storage layout; no per-app cache list needed.
-      #
-      # EXPERIMENT: dedicated-uid systemd (was nixpak same-uid). Pure Electron → should
-      # behave like vesktop. Marvin's account/login runs as app-amazing-marvin, hidden
-      # from jrt. Revert to `defaultBackend = "nixpak"` + drop wrapper/customConfig if
-      # it misbehaves cross-uid.
+      # the whole storage layout; no per-app cache list needed. Dedicated-uid systemd
+      # (pure Electron, behaves like vesktop): account/login runs as app-amazing-marvin,
+      # hidden from jrt.
       defaultBackend = "systemd";
       chromium.basePath = ".config/Marvin";
 

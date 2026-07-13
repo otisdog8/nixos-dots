@@ -45,12 +45,10 @@
         }
       ];
 
-      # POC XWayland forward test case: previously forced onto native Wayland because a
-      # dedicated uid couldn't auth to XWayland — the x11Forward POC removes exactly
-      # that barrier (launcher xhost grant + X socket), so drive Qt onto XCB/XWayland
-      # through the forward and see whether zoom is happier there (it segfaulted a Qt6
-      # child on native Wayland — see the zoom TODO). Flip QT_QPA_PLATFORM back to
-      # "wayland" + x11Forward=false to revert.
+      # Drive Qt onto XCB/XWayland (not native Wayland): zoom's bundled Qt6 segfaulted a
+      # child on native Wayland, and a dedicated uid can only reach XWayland via the
+      # x11Forward grant (customConfig below). QT_QPA_PLATFORM=xcb + x11Forward is the
+      # working combo; the socket/auth for it is set up by the launcher.
       nixpakModules = [
         (
           { ... }:

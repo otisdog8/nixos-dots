@@ -82,8 +82,8 @@
         { config, lib, ... }:
         {
           modules.apps.lunar-client.sandbox.dedicatedUser = true;
-          # X11 forward for the Java/LWJGL game window (POC — see
-          # xwayland-forward-POC.md; shares jrt's X server).
+          # X11 forward for the Java/LWJGL game window (see
+          # xwayland-forward.md; shares jrt's X server).
           modules.apps.lunar-client.sandbox.x11Forward = true;
           users.users."app-lunar-client".extraGroups = [
             "video"

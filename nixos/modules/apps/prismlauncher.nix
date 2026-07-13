@@ -80,8 +80,8 @@
         { config, lib, ... }:
         {
           modules.apps.prismlauncher.sandbox.dedicatedUser = true;
-          # X11 forward for the Qt launcher + Java/LWJGL game (POC — see
-          # xwayland-forward-POC.md; shares jrt's X server).
+          # X11 forward for the Qt launcher + Java/LWJGL game (see
+          # xwayland-forward.md; shares jrt's X server).
           modules.apps.prismlauncher.sandbox.x11Forward = true;
           users.users."app-prismlauncher".extraGroups = [
             "video"

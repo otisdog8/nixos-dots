@@ -35,9 +35,9 @@
   # xdg-dbus-proxy --filter instances (that breaks: see systemd.nix). true → run
   # nixpak's INNER proxy TRANSPARENT (no --filter); the bridge filters instead.
   transparentDbus ? false,
-  # POC (dedicated only): expose jrt's X socket (/tmp/.X11-unix) + DISPLAY to the
-  # sandbox so the app can use XWayland. Auth is granted by the launcher's xhost. See
-  # nixos/modules/apps/xwayland-forward-POC.md.
+  # Dedicated only: expose jrt's X socket (/tmp/.X11-unix) + DISPLAY to the sandbox so
+  # the app can use XWayland. Auth is granted by the launcher's xhost. See
+  # nixos/modules/apps/xwayland-forward.md.
   x11Forward ? false,
   # Per-app shared downloads (dedicated only): bind jrt's ~/Downloads/<app> in AS the
   # app's ~/Downloads, so saved files land host-visible under a per-app subdir instead

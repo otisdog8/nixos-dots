@@ -19,18 +19,16 @@
         # instead of X11 properties (which don't work on Wayland)
         bubblewrap.env.MOZ_DBUS_REMOTE = "1";
 
-        # Chromium/Electron's shell.openExternal shells out to `xdg-open` (Chromium
-        # only routes FILE dialogs through the portal, not URL opens), and a stock
-        # xdg-open can't reach the host browser from inside the sandbox — hence the
-        # "failed to execvp: xdg-open" (it isn't even on PATH). flatpak-xdg-utils'
-        # xdg-open instead D-Bus-calls org.freedesktop.portal.OpenURI (talk-allowed
-        # by xdg.nix, reachable over the session-bus bridge) → host default handler
-        # (the zen launcher, as jrt) → running browser. Prepend it so it shadows any
-        # real xdg-open; bindEntireStore=true already makes its closure available.
-        # flatpak-xdg-utils FIRST (its xdg-open → portal wins), then real xdg-utils for
-        # the other xdg-* tools it lacks — notably xdg-settings, which some Electron
-        # apps (tetrio) shell out to at startup and CRASH on if it's missing (they
-        # regex-match the null exec result). Then the inherited PATH.
+        # When Electron/Chromium shells out to `xdg-open` (its fallback when it doesn't
+        # use the portal — see the .flatpak-info bind below), a stock xdg-open can't
+        # reach the host browser from inside the sandbox. So build a PATH where
+        # flatpak-xdg-utils comes FIRST: its xdg-open D-Bus-calls
+        # org.freedesktop.portal.OpenURI (talk-allowed by xdg.nix, reachable over the
+        # session-bus bridge) → host default handler → running browser. Then real
+        # xdg-utils for the other xdg-* tools flatpak-xdg-utils lacks — notably
+        # xdg-settings, which some Electron apps (tetrio) shell out to at startup and
+        # CRASH on if it's missing. Then the inherited PATH. bindEntireStore=true makes
+        # both closures available.
         bubblewrap.env.PATH = sloth.concat [
           "${pkgs.flatpak-xdg-utils}/bin"
           ":"
@@ -39,13 +37,11 @@
           (sloth.envOr "PATH" "/run/current-system/sw/bin")
         ];
 
-        # Chromium/electron route link clicks (shell.openExternal) through the OpenURI
-        # portal — which reaches the HOST default handler → our sandbox launcher's URL
-        # forwarding — only when they detect a sandbox via /.flatpak-info. Without it
-        # they spawn xdg-open, which can't reach the host browser from inside the
-        # sandbox ("failed to execvp: xdg-open"). Bind nixpak's generated .flatpak-info
-        # (the app's OWN self-detection; separate from the doc-portal bridge identity,
-        # same app-id).
+        # Binding nixpak's generated .flatpak-info lets Electron/Chromium detect the
+        # sandbox and PREFER the OpenURI portal for shell.openExternal (reaching the host
+        # default handler → running browser); without it they'd fall back to xdg-open
+        # (covered by the PATH above). This is the app's OWN self-detection — same
+        # app-id as, but separate from, the doc-portal bridge identity.
         bubblewrap.bind.ro = [
           [
             "${config.flatpak.infoFile}"

@@ -30,14 +30,10 @@ in
   };
 
   # captive-browser: SOCKS5 + sandboxed ungoogled-chromium for portal auth.
-  # ALREADY SANDBOXED: cbBrowserPkg is ungoogled-chromium's framework finalPackage
-  # (now a dedicated-uid systemd sandbox with a tmpfs home), so portal auth runs the
-  # contained browser, not a raw one — the `or pkgs.ungoogled-chromium` fallback only
-  # bites on a host that has captive-browser but not the app enabled. TEST after the
-  # dedicated-uid switch: the launcher captures a CURATED env, so confirm the
-  # --user-data-dir / --proxy-server=socks5://$PROXY flags still reach the inner
-  # browser and a real captive portal loads (the SOCKS proxy is localhost, shared
-  # netns, so it should).
+  # cbBrowserPkg is ungoogled-chromium's framework finalPackage (a dedicated-uid systemd
+  # sandbox with a tmpfs home), so portal auth runs the contained browser, not a raw one
+  # — the `or pkgs.ungoogled-chromium` fallback only bites on a host that has
+  # captive-browser but not the app enabled.
   # bindInterface=false lets the upstream default dhcp-dns query every
   # device, so we don't have to hardcode wlan0/wlp3s0 per host.
   programs.captive-browser = {

@@ -134,18 +134,18 @@
             description = "Additional bind mounts for sandboxed ${appName} (relative to home or absolute paths)";
           };
 
-          # POC — see nixos/modules/apps/xwayland-forward-POC.md.
+          # See nixos/modules/apps/xwayland-forward.md.
           x11Forward = lib.mkOption {
             type = lib.types.bool;
             default = false;
             description = ''
-              PROOF OF CONCEPT (systemd + dedicatedUser only): let a dedicated-uid app
-              reach jrt's XWayland. The launcher (as jrt) grants the app uid X access
-              via `xhost +SI:localuser:app-<name>` and the inner sandbox binds the X
-              socket + DISPLAY. SECURITY: this shares jrt's X server, which has NO
-              inter-client isolation — the app can snoop/inject other X clients. Use
-              only for apps that genuinely need XWayland and can't do native Wayland
-              (e.g. zoom); the isolated production path is a per-app xwayland-satellite.
+              systemd + dedicatedUser only: let a dedicated-uid app reach jrt's XWayland
+              (for apps needing XCB/X11 that can't do native Wayland). The launcher (as
+              jrt) grants the app uid X access via `xhost +SI:localuser:app-<name>` and
+              the inner sandbox binds the X socket + DISPLAY. SECURITY: this shares jrt's
+              X server, which has NO inter-client isolation — the app can snoop/inject
+              other X clients. Enable only where XWayland is required; the isolated path
+              is a per-app xwayland-satellite (see the doc).
             '';
           };
 

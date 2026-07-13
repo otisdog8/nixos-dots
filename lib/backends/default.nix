@@ -7,7 +7,7 @@
 # merged into the host NixOS config (tmpfiles, persistence, units).
 #
 # "legacy" is not a backend here — it is the untouched pre-v2 code path in
-# lib/apps.nix. systemd/vm land in later phases.
+# lib/apps.nix. The vm backend is future work (not yet registered).
 {
   none = import ./none.nix;
   nixpak = import ./nixpak.nix;
