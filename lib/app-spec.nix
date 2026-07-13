@@ -26,6 +26,18 @@
       description = "Desktop file name for XDG associations (e.g., 'zen.desktop')";
     };
 
+    # The app's org.freedesktop.Application D-Bus name, for forwarding URL/file args
+    # to an ALREADY-RUNNING sandboxed instance (the systemd launcher can't re-pass
+    # args to a live service). Registered on jrt's session bus via the bridge. May be
+    # a PREFIX — the launcher enumerates the live bus name (gecko appends a per-profile
+    # instance suffix, e.g. org.mozilla.zen.<hash>). "" → no forwarding (URL only
+    # opens when the app is launched fresh).
+    dbusName = lib.mkOption {
+      type = lib.types.str;
+      default = "";
+      description = "org.freedesktop.Application D-Bus name (or prefix) for URL forwarding to a running instance.";
+    };
+
     # Default sandbox backend (Layer-2). Apps opt into v2 by setting this to
     # nixpak/systemd/vm (or "none" for unsandboxed v2); the generated
     # sandbox.backend option defaults to it. "legacy" keeps the pre-v2 path.

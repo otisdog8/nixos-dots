@@ -53,6 +53,9 @@ let
   ul = "${pkgs.util-linux}/bin";
   acl = "${pkgs.acl}/bin";
   bwrap = "${pkgs.bubblewrap}/bin/bwrap";
+  busctl = "${pkgs.systemd}/bin/busctl";
+  gdbus = "${pkgs.glib}/bin/gdbus";
+  grep = "${pkgs.gnugrep}/bin/grep";
   # Patched proxy (drops the in-band AUTH EXTERNAL uid) — see the
   # xdg-dbus-proxy-crossuid overlay. Only the bridge uses it, so nixpak's own
   # proxy and every other xdg-dbus-proxy consumer stay on the stock build.
@@ -187,7 +190,29 @@ let
           if [ -L "${p}" ]; then echo "sandbox-${appName}: symlink in graft path '${p}'; refusing" >&2; exit 1; fi
         '') checkPaths}
         __t="${appHome}/${e.path}"
-        ${co}/mkdir -p "$__t"
+        # Create the bind TARGET matching the entry type: a file entry needs a file
+        # mountpoint (mkdir here would make `mount --bind <file> <dir>` fail with
+        # "wrong fs type"), a dir entry needs a directory.
+        ${
+          if e.type == "file" then
+            ''
+              ${co}/mkdir -p "$(${co}/dirname "$__t")"
+              # A prior run (or an old buggy build that mkdir'd file targets) may have
+              # left this as a DIRECTORY; `mount --bind <file> <dir>` then fails with
+              # "wrong fs type". Clear a stale wrong-type mountpoint (rmdir fails safe if
+              # it's unexpectedly non-empty) before creating the file mountpoint. Not a
+              # symlink — the checkPaths guard above already refused one at this path.
+              if [ -e "$__t" ] && [ ! -f "$__t" ]; then ${co}/rmdir "$__t"; fi
+              [ -e "$__t" ] || ${co}/touch "$__t"
+            ''
+          else
+            ''
+              # Symmetric self-heal: clear a stale non-dir (e.g. a leftover file from a
+              # type change) so mkdir yields a directory mountpoint.
+              if [ -e "$__t" ] && [ ! -d "$__t" ]; then ${co}/rm -f "$__t"; fi
+              ${co}/mkdir -p "$__t"
+            ''
+        }
         # Belt: confirm the realized path is still canonical (no symlink slipped in).
         if [ "$(${co}/realpath "$__t")" != "$__t" ]; then
           echo "sandbox-${appName}: graft target '$__t' resolved through a symlink; refusing" >&2
@@ -201,15 +226,30 @@ let
         ${ul}/mount --bind "${e.stashPath}" "$__t"
       ''
     ) stashEntries}
+    ${lib.optionalString (appCfg.dbusName != "") ''
+      # URL/file args the launcher stashed for this fresh launch (null-delimited; only
+      # dbusName apps stash them). Read as ARGS (not env — safe to source from jrt) and
+      # pass to the post-drop app.
+      __args=()
+      if [ -r "${jrtRuntime}/sandbox-${appName}.args" ]; then
+        while IFS= read -r -d "" __a; do __args+=("$__a"); done < "${jrtRuntime}/sandbox-${appName}.args"
+      fi
+    ''}
     ${
+      let
+        # NB: normal "…" string, NOT ''…'' — an indented string's leading space is
+        # stripped as common indentation, which would glue the binary to its first arg
+        # (`zen-beta--name`). The leading space here is load-bearing.
+        appArgs = lib.optionalString (appCfg.dbusName != "") " \"\${__args[@]}\"";
+      in
       if dedicated then
         ''
           __u=$(${co}/id -u ${appUser}); __g=$(${co}/id -g ${appUser})
-          exec ${ul}/setpriv --reuid="$__u" --regid="$__g" --init-groups ${innerPkg}/bin/${binName}
+          exec ${ul}/setpriv --reuid="$__u" --regid="$__g" --init-groups ${innerPkg}/bin/${binName}${appArgs}
         ''
       else
         ''
-          exec ${ul}/setpriv --reuid=${uid} --regid=${gid} --init-groups ${innerPkg}/bin/${binName}
+          exec ${ul}/setpriv --reuid=${uid} --regid=${gid} --init-groups ${innerPkg}/bin/${binName}${appArgs}
         ''
     }
   '';
@@ -228,6 +268,59 @@ let
   launcher = pkgs.writeShellScriptBin binName ''
     set -eu
     __dbus_pid=""
+    ${lib.optionalString (appCfg.dbusName != "") ''
+      # URL/file handling — ONLY for apps that declare a dbusName (URL handlers, e.g.
+      # the browser). Every other systemd app skips this entirely and gets the plain
+      # start-and-wait launcher below, unchanged.
+      if ${pkgs.systemd}/bin/systemctl is-active --quiet ${unitName}.service; then
+        # Already running: forward the URLs to the live instance and exit (systemctl
+        # start would no-op, --wait would block). gecko remote: interface <dbusName>,
+        # method OpenURL(ay) at /<dbusName-as-path>/Remote — the per-profile INSTANCE
+        # is only in the bus name, so enumerate the live one from the prefix.
+        if [ "$#" -gt 0 ]; then
+          __dest=$(${busctl} --user list --no-legend 2>/dev/null | ${grep} -oE '${appCfg.dbusName}[A-Za-z0-9._]*' | ${co}/head -1 || true)
+          [ -z "''${__dest:-}" ] && __dest="${appCfg.dbusName}"
+          __path="/$(${co}/printf '%s' "${appCfg.dbusName}" | ${co}/tr . /)/Remote"
+          # gecko's OpenURL(ay) payload is a mozilla-serialized COMMAND LINE, not a bare
+          # URL: uint32 argc, then argc × uint32 absolute byte-offset of each argv, then
+          # cwd\0, argv[0]\0 … argv[argc-1]\0 (header = 4 + 4*argc bytes; offset[i] =
+          # header + len(cwd)+1 + Σ_{k<i}(len(argv[k])+1)). We forward the WHOLE command
+          # line the URL handler was invoked with — argv[0]=the binary (program slot the
+          # receiver ignores), argv[1..]="$@" (e.g. `--name zen-beta <url>`) — in ONE
+          # call, so gecko consumes its own flags and opens the URL, exactly as a native
+          # `zen-beta … <url>` forward does. Wire format captured from a live zen forward
+          # and confirmed (receiver method-returns, tab opens). Sent as busctl `ay <n> …`.
+          __enc_u32() { ${co}/printf '%d %d %d %d' $(( $1 & 255 )) $(( ($1 >> 8) & 255 )) $(( ($1 >> 16) & 255 )) $(( ($1 >> 24) & 255 )); }
+          __enc_str() {
+            __s=$1; __i=0; __len=''${#__s}; __o=""
+            while [ "$__i" -lt "$__len" ]; do
+              __c=''${__s:$__i:1}; __o="$__o $(${co}/printf '%d' "'$__c")"; __i=$(( __i + 1 ))
+            done
+            ${co}/printf '%s 0' "$__o"
+          }
+          __cwd="$PWD"
+          # argv[0] = program slot; then the forwarded args verbatim.
+          set -- "${innerPkg}/bin/${binName}" "$@"
+          __argc=$#
+          __cur=$(( 4 + 4 * __argc + ''${#__cwd} + 1 ))
+          __offs=""; __blob=""
+          for __a in "$@"; do
+            __offs="$__offs $(__enc_u32 "$__cur")"
+            __blob="$__blob $(__enc_str "$__a")"
+            __cur=$(( __cur + ''${#__a} + 1 ))
+          done
+          __bytes="$(__enc_u32 "$__argc") $__offs $(__enc_str "$__cwd") $__blob"
+          __count=$(set -- $__bytes; echo $#)
+          ${busctl} --user call "$__dest" "$__path" "${appCfg.dbusName}" \
+            OpenURL ay $__count $__bytes >/dev/null 2>&1 || true
+        fi
+        exit 0
+      fi
+      # Fresh launch: stash args (null-delimited) for the runScript to pass to the app.
+      ${co}/rm -f "${jrtRuntime}/sandbox-${appName}.args"
+      ${co}/touch "${jrtRuntime}/sandbox-${appName}.args"
+      for __a in "$@"; do ${co}/printf '%s\0' "$__a" >> "${jrtRuntime}/sandbox-${appName}.args"; done
+    ''}
     ${
       if dedicated then
         ''
