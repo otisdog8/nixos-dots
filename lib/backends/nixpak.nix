@@ -13,17 +13,18 @@
   storage,
 }:
 {
-  package = import ./nixpak-pkg.nix {
-    inherit
-      appCfg
-      cfg
-      lib
-      pkgs
-      inputs
-      storage
-      ;
-    stashAtHome = false;
-  };
+  package =
+    (import ./nixpak-pkg.nix {
+      inherit
+        appCfg
+        cfg
+        lib
+        pkgs
+        inputs
+        storage
+        ;
+      stashAtHome = false;
+    }).package;
   systemConfig = {
     systemd.tmpfiles.rules = storage.tmpfilesRules;
     environment.persistence = storage.homePersistence;

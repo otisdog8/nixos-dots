@@ -215,6 +215,14 @@ in
       });
     '';
 
+    # Cross-uid document portal: our xdg-desktop-portal fork mounts the
+    # document-portal FUSE with allow_other (overlays/custom-packages.nix) so a
+    # dedicated-uid app can read the doc:// files jrt's portal exports. fusermount3
+    # refuses an allow_other mount unless user_allow_other is set here — and if the
+    # mount is refused the portal fails to start, breaking file dialogs for EVERY
+    # sandboxed app, so this and the overlay change are a matched pair.
+    programs.fuse.userAllowOther = true;
+
     # One-time data migration into the stash layout. As an activation script it
     # runs on `nixos-rebuild switch` (no reboot needed) and on boot, before the
     # graphical session — see migrateApp above for the safety properties.

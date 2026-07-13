@@ -25,12 +25,18 @@
   # (shared jrt data like a vault) must resolve against jrt's home literal, not the
   # app's own $HOME. null → resolve against $HOME (same-uid).
   sharedHome ? null,
+  # Cross-uid document portal (dedicated only): a [src dst] pair binding the
+  # runScript-relayed doc FUSE at jrt's IDENTITY path inside the sandbox, so the
+  # doc:// paths the portal returns (jrt-absolute) resolve. null → same-uid, where
+  # nixpak's own mountDocumentPortal already handles it. See lib/backends/systemd.nix.
+  docBind ? null,
 }:
 let
   nixpakLib = inputs.nixpak or (builtins.throw "nixpak not available - add nixpak to flake inputs");
   mkNixPak = nixpakLib.lib.nixpak { inherit lib pkgs; };
 in
-(mkNixPak {
+let
+  built = mkNixPak {
   config =
     {
       config,
@@ -81,6 +87,17 @@ in
             "${sharedHome}/${p}"
           else
             sloth.concat' sloth.homeDir "/${p}"
-        ) cfg.sandbox.extraBinds);
+        ) cfg.sandbox.extraBinds)
+        # Cross-uid doc-portal identity bind (dedicated). Soft (--bind-try): the
+        # runScript only relays it when jrt actually has a doc portal running.
+        ++ lib.optional (docBind != null) docBind;
     };
-}).config.env
+  };
+in
+{
+  package = built.config.env;
+  # nixpak's generated .flatpak-info (Application name = the app-id, session-bus
+  # policy). The systemd backend binds this onto the cross-uid bridge's /proc/root
+  # so the portal identifies the dedicated app as sandboxed → hands out doc:// paths.
+  flatpakInfoFile = built.config.flatpak.infoFile;
+}

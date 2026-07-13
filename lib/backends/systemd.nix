@@ -52,6 +52,7 @@ let
   co = "${pkgs.coreutils}/bin";
   ul = "${pkgs.util-linux}/bin";
   acl = "${pkgs.acl}/bin";
+  bwrap = "${pkgs.bubblewrap}/bin/bwrap";
   # Patched proxy (drops the in-band AUTH EXTERNAL uid) — see the
   # xdg-dbus-proxy-crossuid overlay. Only the bridge uses it, so nixpak's own
   # proxy and every other xdg-dbus-proxy consumer stay on the stock build.
@@ -75,7 +76,7 @@ let
 
   stashEntries = lib.filter (e: e.location == "stash") storage.entries;
 
-  innerPkg = import ./nixpak-pkg.nix {
+  innerNix = import ./nixpak-pkg.nix {
     inherit
       appCfg
       cfg
@@ -88,7 +89,23 @@ let
     # dedicated: shared jrt data (extraBinds like the vault) lives in jrt's home,
     # not the app's own home.
     sharedHome = if dedicated then sharedHome else null;
+    # dedicated: expose the relayed doc FUSE at jrt's identity path inside the
+    # sandbox (the portal returns jrt-absolute doc:// paths). Same-uid apps use
+    # nixpak's own mountDocumentPortal (same uid, no relay needed).
+    docBind = if dedicated then [ "${runtimeDir}/doc" "${jrtRuntime}/doc" ] else null;
   };
+  innerPkg = innerNix.package;
+  # nixpak's .flatpak-info for this app — bound onto the bridge below (dedicated).
+  # The portal's flatpak app-info parser REQUIRES an [Instance] group, but nixpak's
+  # writeINI infoFile only emits [Application]/[Context]/[Session Bus Policy]. Append
+  # an [Instance] group (matching nixpak's own flatpak-shim: flatpak.nix) so the
+  # portal accepts the identity instead of failing with "does not have group Instance".
+  # instance-id is per-app (dedicated apps share jrt's runtime, so a fixed id would
+  # collide): the portal reads .flatpak/<instance-id>/bwrapinfo.json under it.
+  flatpakInfoFile = pkgs.runCommand "sandbox-${appName}-flatpak-info" { } ''
+    cat ${innerNix.flatpakInfoFile} > "$out"
+    printf '\n[Instance]\ninstance-id=${appName}\nsession-bus-proxy=true\nsystem-bus-proxy=true\n' >> "$out"
+  '';
 
   # WAYLAND_DISPLAY is the only session var we can't state as a Nix literal, so it
   # is globbed at runtime (Nix-controlled, no jrt input). Done for dedicated and
@@ -114,6 +131,15 @@ let
         if [ -d "$__s" ]; then ${co}/mkdir -p "${runtimeDir}/$__n"; else ${co}/touch "${runtimeDir}/$__n"; fi
         ${ul}/mount --bind "$__s" "${runtimeDir}/$__n" 2>/dev/null || true
       done
+      # Cross-uid document portal: jrt's doc FUSE lives under jrt's 0700 runtime dir
+      # (the app can't traverse there), so root relays it into the app's own runtime
+      # dir. The FUSE is mounted allow_other (xdg-desktop-portal fork), so the app
+      # uid can then read the doc:// files the portal exports. nixpak binds this at
+      # jrt's identity path inside the sandbox (docBind), where returned paths land.
+      if [ -d "${jrtRuntime}/doc" ]; then
+        ${co}/mkdir -p "${runtimeDir}/doc"
+        ${ul}/mount --bind "${jrtRuntime}/doc" "${runtimeDir}/doc" 2>/dev/null || true
+      fi
       # D-Bus session bus goes through the jrt-side bridge (started by the launcher),
       # NOT the raw bus — the app's uid is rejected at D-Bus EXTERNAL auth.
       if [ -S "${bridgeSock}" ]; then
@@ -176,11 +202,38 @@ let
           # Cross-uid D-Bus bridge: a transparent xdg-dbus-proxy run AS JRT (so it
           # authenticates to the session bus fine), exposing an ACL'd socket the
           # runScript binds in as the app's bus. Unblocks tray + portals + notifs.
+          #
+          # Wrapped in a minimal bwrap whose ONLY purpose is to give the bridge a
+          # /.flatpak-info at its /proc/root: the portal resolves a caller's identity
+          # from /proc/<peer-pid>/root/.flatpak-info, and the peer it sees is THIS
+          # bridge — so this makes it identify the dedicated app by its real app-id
+          # and hand out doc:// paths (vs "host" + real paths). Same bwrap recipe as
+          # nixpak's own dbus-proxy wrapper: default (writable tmpfs) root so the
+          # /.flatpak-info mountpoint can be created, selective binds, and NO
+          # --unshare-user/--uid — bwrap's default preserves the real uid (${uid}),
+          # so the crossuid SO_PEERCRED/AUTH-EXTERNAL match is unchanged. Reuses
+          # nixpak's generated infoFile — no policy duplication.
           ${co}/rm -f "${bridgeSock}" 2>/dev/null || true
-          ${dbusProxy} "$DBUS_SESSION_BUS_ADDRESS" "${bridgeSock}" &
+          ${bwrap} \
+            --ro-bind-try /etc /etc \
+            --ro-bind /nix/store /nix/store \
+            --bind-try /var /var \
+            --bind-try /tmp /tmp \
+            --bind /run /run \
+            --ro-bind-try "${flatpakInfoFile}" /.flatpak-info \
+            --die-with-parent \
+            -- ${dbusProxy} "$DBUS_SESSION_BUS_ADDRESS" "${bridgeSock}" &
           __dbus_pid=$!
           for __i in $(${co}/seq 1 60); do [ -S "${bridgeSock}" ] && break; ${co}/sleep 0.05; done
           ${acl}/setfacl -m "u:${appUser}:rw" "${bridgeSock}" 2>/dev/null || true
+          # The portal (running as jrt) resolves the flatpak instance named in the
+          # bridge's .flatpak-info by reading jrt's own runtime dir:
+          # $XDG_RUNTIME_DIR/.flatpak/<instance-id>/bwrapinfo.json. nixpak writes that
+          # into the APP's runtime dir (invisible to the jrt portal), so mirror a
+          # placeholder here (child-pid 1, exactly as nixpak's flatpak-shim does).
+          ${co}/mkdir -p "${jrtRuntime}/.flatpak/${appName}"
+          ${co}/printf '{"child-pid": 1, "mnt-namespace": 1, "net-namespace": 1, "pid-namespace": 1}' \
+            > "${jrtRuntime}/.flatpak/${appName}/bwrapinfo.json"
           # Shared jrt data (vault etc.): traverse the path + rw the tree.
           ${lib.concatMapStringsSep "\n" (p: ''
             ${acl}/setfacl -m "u:${appUser}:x" "${sharedHome}" 2>/dev/null || true

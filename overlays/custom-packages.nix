@@ -4,6 +4,18 @@ final: prev: {
 
   xdg-desktop-portal = prev.xdg-desktop-portal.overrideAttrs (oldAttrs: {
     src = inputs.xdg-desktop-portal-src;
+
+    # Mount the document-portal FUSE with allow_other so a DEDICATED-uid sandbox
+    # app (running as app-<name>, not jrt) can read the doc:// files jrt's portal
+    # exports for it. The daemon still does its own per-app access control in the
+    # FUSE handlers (this only lifts the kernel's mounting-uid-only gate); NOT
+    # default_permissions, which would re-impose inode-uid checks and defeat it.
+    # Requires programs.fuse.userAllowOther (fusermount3 rejects allow_other
+    # otherwise — and the portal would then fail to mount at all).
+    postPatch = (oldAttrs.postPatch or "") + ''
+      substituteInPlace document-portal/document-portal-fuse.c \
+        --replace-fail 'fsname=portal,auto_unmount",' 'fsname=portal,auto_unmount,allow_other",'
+    '';
   });
 
   # nixpkgs pins several Electron apps (vesktop here) to pnpm 10.29.2, which is
