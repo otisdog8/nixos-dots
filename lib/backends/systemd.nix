@@ -501,6 +501,16 @@ in
 
     systemd.services.${unitName} = {
       description = "Sandboxed stash service: ${appName}";
+      # LAUNCHER-PREPARED — do NOT let `nixos-rebuild switch` restart/stop this unit.
+      # The in-session launcher (as jrt) sets up the session-socket ACLs and starts the
+      # cross-uid D-Bus bridge, THEN `systemctl start --wait`s this unit. If switch
+      # restarts it, the --wait returns, the launcher's trap tears the bridge down, and
+      # systemd re-execs the app bare — no bridge, no ACLs — so the app's session bus
+      # (portals/OpenURI/tray/notifications/keyring) goes dead while the app keeps
+      # running. Leave the prepared instance alone; a changed definition takes effect on
+      # the next quit-and-relaunch (which re-runs the launcher prep).
+      restartIfChanged = false;
+      stopIfChanged = false;
       serviceConfig = {
         Type = "exec";
         # Root (+) so it can unshare a mount ns and graft the stash; runScript
