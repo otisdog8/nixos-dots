@@ -234,6 +234,28 @@ in
       default = cfg.profile != "k3s-node";
       description = "Enable /tmp on tmpfs (nosuid,nodev). Off by default for k3s nodes.";
     };
+
+    preferSystemBinaries = lib.mkOption {
+      type = lib.types.bool;
+      default = false;
+      description = ''
+        Order the user's writable Nix profiles (~/.nix-profile, the per-user
+        profile) AFTER the system profiles on PATH, instead of before. Closes
+        the shadowing vector where `nix profile install <trojan-git>` overrides
+        a system command like git/ssh/kubectl for the session.
+
+        Setuid tooling (sudo, mount, su) is unaffected either way — those live
+        in /run/wrappers/bin, which is prepended separately and stays first.
+
+        Tradeoff: this inverts the normal "user profile overrides system"
+        convention, so a package you `nix profile install` will no longer take
+        precedence over a same-named system package. It also pins the profile
+        list with mkForce, so if a future nixpkgs adds a new default profile dir
+        it won't be on PATH until this list is updated. Off by default; the
+        benefit is modest here since the user profile is not persisted (wiped
+        each boot) and an in-session attacker has stronger options anyway.
+      '';
+    };
   };
 
   config = lib.mkIf cfg.enable {
@@ -348,6 +370,19 @@ in
       enable = lib.mkDefault true;
       delay = lib.mkDefault 4000000;
     };
+
+    # Reorder PATH so user-writable profiles lose to system profiles. The
+    # wrappers dir (/run/wrappers/bin, setuid sudo) is added separately with a
+    # higher priority and is NOT part of environment.profiles, so it remains
+    # first regardless. Mirrors the current nixpkgs default set, reversed.
+    environment.profiles = lib.mkIf cfg.preferSystemBinaries (lib.mkForce [
+      "/run/current-system/sw"
+      "/nix/var/nix/profiles/default"
+      "/etc/profiles/per-user/$USER"
+      "$HOME/.nix-profile"
+      "/nix/profile"
+      "$HOME/.local/state/nix/profile"
+    ]);
 
     # Mount-option hardening: tmpfs /tmp gets nosuid,nodev automatically via
     # systemd's tmp.mount. Intentionally NOT noexec (Steam/Wine/PyCharm break).

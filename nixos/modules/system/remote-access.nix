@@ -79,6 +79,13 @@ in
     services.openssh = {
       enable = true;
       ports = [ 22 ];
+      # Do NOT honour ~/.ssh/authorized_keys. Under impermanence the user's
+      # ~/.ssh is (was) persisted and writable, so a home-folder compromise
+      # could drop an authorized_keys entry that survives reboot — a permanent
+      # remote backdoor. With this off, sshd only reads keys from
+      # /etc/ssh/authorized_keys.d/%u, which NixOS generates read-only from the
+      # declarative `authorizedKeys.keys` below (in wiped, non-persistent /etc).
+      authorizedKeysInHomedir = false;
       settings = {
         PasswordAuthentication = true;
         AllowUsers = null; # Allows all users by default

@@ -141,7 +141,13 @@
   #systemd.coredump.enable = false;
   #boot.kernel.sysctl."kernel.core_pattern" = "|/bin/false";
 
-  # Users
+  # Users — fully declarative. mutableUsers=false means /etc/{passwd,shadow,group}
+  # are rebuilt from this config on every activation: `useradd`/`passwd` changes
+  # (e.g. an attacker with transient root adding a login) can't stick, and there
+  # is no drift. Every login user must therefore have a declarative password;
+  # jrt and root both do below. Override per-host with lib.mkForce if ever needed.
+  users.mutableUsers = false;
+
   users.users.root.hashedPassword = "$y$j9T$/mXrIMQE7/SDmS9f9MyMB0$ouFzDiwIZFC0kHhh3kygGmpthEa86ztWnVcc3iFEV5.";
 
   users.users.jrt = {
