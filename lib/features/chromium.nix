@@ -30,6 +30,13 @@ let
       tier = "cache";
     }) cfg.profileCacheDirs
   ) cfg.profiles;
+
+  # Caches that live OUTSIDE basePath, relative to persistRoot (e.g. vesktop's
+  # Crashpad sits next to sessionData, not inside it).
+  extraCaches = map (c: {
+    path = "${cfg.persistRoot}/${c}";
+    tier = "cache";
+  }) cfg.extraCacheDirs;
 in
 {
   imports = [
@@ -41,7 +48,27 @@ in
     basePath = lib.mkOption {
       type = lib.types.str;
       default = ".config/${config.app.name}";
-      description = "Base path for chromium app data (for apps with non-standard layouts).";
+      description = "Base path for the Chromium/Electron PROFILE (where the caches live).";
+    };
+
+    persistRoot = lib.mkOption {
+      type = lib.types.str;
+      default = config.app.chromium.basePath;
+      description = ''
+        Top directory to persist. Defaults to basePath. Set it to a PARENT when the
+        Electron profile is a subdirectory (e.g. vesktop keeps its profile at
+        .config/vesktop/sessionData but real state — Vencord settings/themes — sits
+        in the parent .config/vesktop), so that sibling state isn't dropped.
+      '';
+    };
+
+    extraCacheDirs = lib.mkOption {
+      type = lib.types.listOf lib.types.str;
+      default = [ ];
+      description = ''
+        Extra cache subdirectories relative to persistRoot, for caches that live
+        OUTSIDE basePath (e.g. vesktop's Crashpad, a sibling of sessionData).
+      '';
     };
 
     cacheDirs = lib.mkOption {
@@ -95,8 +122,9 @@ in
   };
 
   config.app = {
-    # ── Legacy backend (impermanence) — unchanged for back-compat. ──
-    persistence.user.persist = [ base ];
+    # ── Legacy backend (impermanence) — unchanged for back-compat.
+    # (persistRoot defaults to basePath, so this is identical for existing apps.) ──
+    persistence.user.persist = [ cfg.persistRoot ];
     persistence.user.cache = [
       "${base}/Cache"
       "${base}/GPUCache"
@@ -104,15 +132,16 @@ in
       "${base}/DawnCache"
     ];
 
-    # ── v2 backend — unified storage: profile on /persist, caches on /cache.
+    # ── v2 backend — unified storage: persistRoot on /persist, caches on /cache.
     # Inert for legacy apps; used the moment an app sets a non-legacy backend.
     storage = [
       {
-        path = base;
+        path = cfg.persistRoot;
         tier = "persist";
       }
     ]
     ++ topCaches
-    ++ profileCaches;
+    ++ profileCaches
+    ++ extraCaches;
   };
 }

@@ -1,0 +1,79 @@
+Rewrite the in-band uid in "AUTH EXTERNAL <uid>" to the PROXY'S OWN uid (which
+matches the out-of-band SO_PEERCRED it already sends via
+g_unix_connection_send_credentials), so a D-Bus server accepts the connection
+even when the proxy relays a different-uid client. Keeping a non-empty uid
+preserves the one-step SASL EXTERNAL handshake (server replies OK); sending an
+empty uid instead makes the server issue a DATA challenge that one-step libdbus
+clients don't answer, deadlocking.
+
+This lets the systemd-stash dedicated-uid backend run a jrt-side bridge that
+relays a different-uid sandboxed app onto jrt's session bus (tray, portals /
+screenshare, notifications). See lib/backends/systemd.nix (bridgeSock).
+
+Buffer.size is the valid-data length in the write phase (not the 256-byte auth
+capacity here), so a length change updates BOTH pos and size; growth is guarded
+against the 256-byte auth buffer.
+
+--- a/flatpak-proxy.c
++++ b/flatpak-proxy.c
+@@ -2234,3 +2234,56 @@
++static void
++rewrite_external_uid (Buffer *buffer)
++{
++  static const char hexd[] = "0123456789abcdef";
++  char dec[16];
++  char hex[32];
++  gsize dec_len, hex_len, k;
++  const char *cmd = "AUTH EXTERNAL ";
++  gsize clen = strlen (cmd);
++  gsize i = 0;
++
++  dec_len = (gsize) g_snprintf (dec, sizeof dec, "%u", (guint) getuid ());
++  hex_len = 0;
++  for (k = 0; k < dec_len; k++)
++    {
++      unsigned char c = (unsigned char) dec[k];
++      hex[hex_len++] = hexd[(c >> 4) & 0xf];
++      hex[hex_len++] = hexd[c & 0xf];
++    }
++
++  while (i < buffer->pos)
++    {
++      guint8 *nl = memmem (buffer->data + i, buffer->pos - i, "\r\n", 2);
++      gsize line_len;
++      if (nl == NULL)
++        break;
++      line_len = (gsize) (nl - (buffer->data + i));
++      if (line_len > clen && memcmp (buffer->data + i, cmd, clen) == 0)
++        {
++          gsize uid_start = i + clen;
++          gsize uid_len = line_len - clen;
++          if (uid_len != hex_len)
++            {
++              gssize delta = (gssize) hex_len - (gssize) uid_len;
++              gsize tail_start = i + line_len;
++              gsize tail_len = buffer->pos - tail_start;
++              if (delta > 0 && buffer->pos + (gsize) delta > 256)
++                {
++                  i += line_len + 2;
++                  continue;
++                }
++              memmove (buffer->data + uid_start + hex_len, buffer->data + tail_start, tail_len);
++              buffer->pos = (gsize) ((gssize) buffer->pos + delta);
++              buffer->size = (gsize) ((gssize) buffer->size + delta);
++            }
++          memcpy (buffer->data + uid_start, hex, hex_len);
++          i = uid_start + hex_len + 2;
++        }
++      else
++        i += line_len + 2;
++    }
++}
++
+ static gssize
+ find_auth_end (FlatpakProxyClient *client, Buffer *buffer, gsize *out_lines_skipped)
+ {
+@@ -2325,2 +2378,3 @@
+               gsize lines_skipped = 0;
++              rewrite_external_uid (buffer);
+               gssize auth_end = find_auth_end (client, buffer, &lines_skipped);

@@ -78,7 +78,19 @@ let
             else
               echo "  skip ${e.path} (target non-empty)"
             fi
-          fi''
+          fi${lib.optionalString (e.tier == "cache") ''
+
+          # Cache is disposable: after migrating the canonical copy, delete any
+          # stale duplicates of this EXACT declared path left under the other tiers
+          # (the persist/cache desync), so the persist parent move can't sweep them
+          # into the backed-up stash. Bounded to declared cache entries only.
+          ${lib.concatMapStringsSep "\n" (
+            t:
+            let
+              c = "${tierMount.${t}}/home/${m.user}/${e.path}";
+            in
+            ''          if [ -e "${c}" ]; then echo "  rm stale cache ${c}"; ${co}/rm -rf "${c}"; fi''
+          ) candidateTiers}''}''
       ) (lib.reverseList m.entries); # deepest-first: extract carved children before the parent moves
       # Reconcile ownership every run (not gated by the stamp): mv preserves the
       # old jrt ownership, and flipping an app same-uid <-> dedicated changes the

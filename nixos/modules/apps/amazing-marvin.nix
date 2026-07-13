@@ -22,7 +22,9 @@
       package = pkgs.otisdog8.amazing-marvin;
       packageName = "amazing-marvin";
 
-      # Marvin uses .config/Marvin
+      # Marvin uses .config/Marvin (profile == persist root). chromium.nix supplies
+      # the whole storage layout; no per-app cache list needed.
+      defaultBackend = "nixpak";
       chromium.basePath = ".config/Marvin";
     };
   }

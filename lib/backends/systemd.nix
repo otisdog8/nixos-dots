@@ -52,6 +52,15 @@ let
   co = "${pkgs.coreutils}/bin";
   ul = "${pkgs.util-linux}/bin";
   acl = "${pkgs.acl}/bin";
+  # Patched proxy (drops the in-band AUTH EXTERNAL uid) — see the
+  # xdg-dbus-proxy-crossuid overlay. Only the bridge uses it, so nixpak's own
+  # proxy and every other xdg-dbus-proxy consumer stay on the stock build.
+  dbusProxy = "${pkgs.xdg-dbus-proxy-crossuid}/bin/xdg-dbus-proxy";
+  # jrt-side D-Bus bridge socket (dedicated only). D-Bus rejects the app's uid at
+  # EXTERNAL auth, so a transparent xdg-dbus-proxy run AS JRT authenticates to the
+  # session bus and relays; the app reaches it through the runScript's bind, and
+  # nixpak's own proxy still layers policy filtering on top.
+  bridgeSock = "${jrtRuntime}/sandbox-${appName}-bus";
 
   stashEntries = lib.filter (e: e.location == "stash") storage.entries;
 
@@ -84,12 +93,18 @@ let
       ${co}/mkdir -p "${runtimeDir}"
       ${co}/chown "${appUser}" "${runtimeDir}" 2>/dev/null || true
       ${co}/chmod 700 "${runtimeDir}"
-      for __s in ${jrtRuntime}/wayland-* ${jrtRuntime}/pipewire-* ${jrtRuntime}/pulse ${jrtRuntime}/bus; do
+      for __s in ${jrtRuntime}/wayland-* ${jrtRuntime}/pipewire-* ${jrtRuntime}/pulse; do
         [ -e "$__s" ] || continue
         __n="$(${co}/basename "$__s")"
         if [ -d "$__s" ]; then ${co}/mkdir -p "${runtimeDir}/$__n"; else ${co}/touch "${runtimeDir}/$__n"; fi
         ${ul}/mount --bind "$__s" "${runtimeDir}/$__n" 2>/dev/null || true
       done
+      # D-Bus session bus goes through the jrt-side bridge (started by the launcher),
+      # NOT the raw bus — the app's uid is rejected at D-Bus EXTERNAL auth.
+      if [ -S "${bridgeSock}" ]; then
+        ${co}/touch "${runtimeDir}/bus"
+        ${ul}/mount --bind "${bridgeSock}" "${runtimeDir}/bus" 2>/dev/null || true
+      fi
     ''}
     ${lib.optionalString needsGlob ''
       __w=$(${co}/ls ${jrtRuntime}/wayland-* 2>/dev/null | ${co}/head -1 || true)
@@ -125,15 +140,24 @@ let
 
   launcher = pkgs.writeShellScriptBin binName ''
     set -eu
+    __dbus_pid=""
     ${
       if dedicated then
         ''
           # Grant app-${appUser} rw on ONLY the specific session sockets (which the
           # runScript binds into the app's own runtime dir). No ACL on jrt's
           # runtime dir itself → app-${appUser} can't list/create/delete there.
-          for __s in "${jrtRuntime}"/wayland-* "${jrtRuntime}"/pipewire-* "${jrtRuntime}/pulse" "${jrtRuntime}/bus"; do
+          for __s in "${jrtRuntime}"/wayland-* "${jrtRuntime}"/pipewire-* "${jrtRuntime}/pulse"; do
             if [ -e "$__s" ]; then ${acl}/setfacl -R -m "u:${appUser}:rwX" "$__s" 2>/dev/null || true; fi
           done
+          # Cross-uid D-Bus bridge: a transparent xdg-dbus-proxy run AS JRT (so it
+          # authenticates to the session bus fine), exposing an ACL'd socket the
+          # runScript binds in as the app's bus. Unblocks tray + portals + notifs.
+          ${co}/rm -f "${bridgeSock}" 2>/dev/null || true
+          ${dbusProxy} "$DBUS_SESSION_BUS_ADDRESS" "${bridgeSock}" &
+          __dbus_pid=$!
+          for __i in $(${co}/seq 1 60); do [ -S "${bridgeSock}" ] && break; ${co}/sleep 0.05; done
+          ${acl}/setfacl -m "u:${appUser}:rw" "${bridgeSock}" 2>/dev/null || true
           # Shared jrt data (vault etc.): traverse the path + rw the tree.
           ${lib.concatMapStringsSep "\n" (p: ''
             ${acl}/setfacl -m "u:${appUser}:x" "${sharedHome}" 2>/dev/null || true
@@ -152,7 +176,7 @@ let
           done
         ''
     }
-    trap '${pkgs.systemd}/bin/systemctl stop ${unitName}.service >/dev/null 2>&1 || true' EXIT INT TERM
+    trap 'if [ -n "$__dbus_pid" ]; then kill "$__dbus_pid" 2>/dev/null || true; fi; ${pkgs.systemd}/bin/systemctl stop ${unitName}.service >/dev/null 2>&1 || true' EXIT INT TERM
     ${pkgs.systemd}/bin/systemctl start --wait ${unitName}.service
   '';
 
@@ -214,8 +238,26 @@ in
         # drops to the app principal via setpriv before exec'ing the sandbox.
         ExecStart = "+${pkgs.util-linux}/bin/unshare --mount --propagation private -- ${runScript}";
         Restart = "no";
+        # No core dumps: a sandboxed app's core would write its memory — including
+        # secrets like the Discord token this stash exists to hide — in plaintext
+        # to /var/lib/systemd/coredump. (Also silences electron's spurious
+        # speech-dispatcher thread-abort dumps.)
+        LimitCORE = 0;
         Environment = [
           "HOME=${appHome}"
+          # setpriv --reuid/--regid does NOT reset USER/LOGNAME, so without these
+          # the app runs as the target uid but still sees USER=root (the service
+          # starts as root before the drop) while HOME points at the app's home —
+          # an inconsistency that breaks path construction and "am I root" checks.
+          "USER=${appUser}"
+          "LOGNAME=${appUser}"
+          # Point libpulse straight at the bound pulse socket. Otherwise it tries
+          # to set up $XDG_RUNTIME_DIR/pulse as a "secure directory" it must OWN —
+          # which fails under the dedicated uid (the dir is bound from jrt, wrong
+          # owner) and under same-uid (the dir comes back mounted read-only) — and
+          # Electron then falls back to raw ALSA (no card = no audio). Connecting
+          # directly to the socket skips the runtime-dir setup entirely.
+          "PULSE_SERVER=unix:${runtimeDir}/pulse/native"
         ]
         ++ lib.optionals needsGlob [
           "XDG_RUNTIME_DIR=${runtimeDir}"
