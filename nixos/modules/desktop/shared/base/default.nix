@@ -14,6 +14,9 @@ in
     ./audio.nix
     ./bluetooth.nix
     ./graphics-tools.nix
+    # Ark is now a sandboxed framework app (nixpak, contained archive parsing)
+    # instead of a raw systemPackages entry — see config.modules.apps.ark below.
+    ../../../apps/ark.nix
   ];
 
   options.modules.desktop.shared.base = {
@@ -46,11 +49,14 @@ in
       playerctld.enable = true;
     };
 
+    # Ark: sandboxed via the app framework (nixpak) instead of a raw package —
+    # contains untrusted-archive parsing. Puts `ark` on PATH via finalPackage.
+    modules.apps.ark.enable = true;
+
     # Core desktop packages
     environment.systemPackages = with pkgs; [
       # File managers and core apps
       lxqt.pcmanfm-qt
-      kdePackages.ark
     ];
 
     # Home-manager services

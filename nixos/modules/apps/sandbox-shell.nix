@@ -23,6 +23,11 @@
     config.app = {
       name = "sandbox-shell";
       packageName = "sandbox-zsh";
+
+      # v2 nixpak backend (replaces the legacy sandbox.enable path). No app.storage:
+      # this shell is intentionally EPHEMERAL — a tmpfs $HOME where writes vanish on
+      # exit — so there is nothing to persist.
+      defaultBackend = "nixpak";
       # zsh resolves its module/function paths from compile-time absolute
       # store paths, so a renamed symlink to bin/zsh is sufficient.
       package = pkgs.runCommand "sandbox-zsh-${pkgs.zsh.version}" { } ''
@@ -47,12 +52,6 @@
           }
         )
       ];
-
-      customConfig =
-        { config, lib, ... }:
-        {
-          modules.apps.sandbox-shell.sandbox.enable = lib.mkDefault true;
-        };
     };
   }
 )

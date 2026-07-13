@@ -1,10 +1,11 @@
-# Obsidian note-taking application — v2 systemd-stash backend.
+# Obsidian note-taking application — v2 systemd-stash backend, dedicated uid.
 #
-# The profile (.config/obsidian) lives in a root-owned stash, hidden from
-# unsandboxed jrt; its chromium caches go to the disposable /cache tier (sibling
-# on-disk roots, so no same-tier nesting). The vault is host-visible (edited
-# outside the sandbox too) and bound in via extraBinds — it's already persisted
-# by the global ~/Documents impermanence entry.
+# The profile (.config/obsidian) AND the vault (Documents/obsidian) both live in
+# app-obsidian-owned stash entries (below), hidden from unsandboxed jrt — a
+# compromised (non-root) jrt can neither read the notes nor plant a plugin that
+# obsidian would run. The chromium caches go to the disposable /cache tier (sibling
+# on-disk roots, so no same-tier nesting). NB: the vault is a stash entry, NOT a
+# host-visible extraBind — it's isolated, not shared.
 
 (import ../../../lib/apps.nix).mkApp (
   {

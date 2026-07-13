@@ -35,6 +35,14 @@
   # xdg-dbus-proxy --filter instances (that breaks: see systemd.nix). true → run
   # nixpak's INNER proxy TRANSPARENT (no --filter); the bridge filters instead.
   transparentDbus ? false,
+  # POC (dedicated only): expose jrt's X socket (/tmp/.X11-unix) + DISPLAY to the
+  # sandbox so the app can use XWayland. Auth is granted by the launcher's xhost. See
+  # nixos/modules/apps/xwayland-forward-POC.md.
+  x11Forward ? false,
+  # Per-app shared downloads (dedicated only): bind jrt's ~/Downloads/<app> in AS the
+  # app's ~/Downloads, so saved files land host-visible under a per-app subdir instead
+  # of the app's hidden home. null → off. Value is the app name (the subdir).
+  sharedDownloads ? null,
 }:
 let
   nixpakSrc = inputs.nixpak or (builtins.throw "nixpak not available - add nixpak to flake inputs");
@@ -71,7 +79,14 @@ let
       # escape hatch (both consumed by this bwrap lowering; they compose freely).
       imports =
         appCfg.nixpakModules
-        ++ [ (import ../capabilities-nixpak.nix { inherit lib; } appCfg.capabilities) ]
+        # x11Forward reuses the existing x11 capability (binds /tmp/.X11-unix, no
+        # XAUTHORITY — nixpak's sockets.x11 handler DOES read XAUTHORITY and panics
+        # when unset, which is why we go through the capability, not that socket).
+        ++ [
+          (import ../capabilities-nixpak.nix { inherit lib; } (
+            appCfg.capabilities // { x11 = appCfg.capabilities.x11 || x11Forward; }
+          ))
+        ]
         ++ cfg.sandbox.nixpakModules;
 
       app.package = cfg.package;
@@ -81,6 +96,8 @@ let
       # be the (single) filter. Same-uid apps keep the inner filter (default true).
       dbus.filter = !transparentDbus;
 
+      # (X11 forward: the socket is bound via the x11 capability above, DISPLAY comes
+      # from gui.nix's envOr "DISPLAY" ":0", and auth from the launcher's xhost.)
       bubblewrap.network = lib.mkOverride 999 false;
 
       # Stash entries (parent-first from storage.entries) — hard bind.
@@ -101,7 +118,12 @@ let
         (map (e: sloth.concat' sloth.homeDir "/${e.path}") (
           lib.filter (e: e.location == "home") storage.entries
         ))
-        # extra binds (legacy semantics; shared jrt data under dedicated uid).
+        # extra binds. For a dedicated uid, a home-relative extraBind means "share
+        # jrt's ~/<p> into this app" — and we bind it at the APP's OWN ~/<p> (a [src
+        # dst] pair: jrt's path → app's home path), so e.g. extraBinds=["Downloads"]
+        # makes the app's default ~/Downloads transparently BE jrt's ~/Downloads
+        # (host-visible, no download-dir pref to change). The launcher ACLs the jrt-side
+        # source (systemd.nix). Same-uid apps and absolute/$PWD paths bind as-is.
         ++ (map (
           p:
           if lib.hasPrefix "/" p then
@@ -109,10 +131,19 @@ let
           else if lib.hasPrefix "." p then
             sloth.concat' (sloth.env "PWD") "/${p}"
           else if sharedHome != null then
-            "${sharedHome}/${p}"
+            [
+              "${sharedHome}/${p}"
+              (sloth.concat' sloth.homeDir "/${p}")
+            ]
           else
             sloth.concat' sloth.homeDir "/${p}"
         ) cfg.sandbox.extraBinds)
+        # Per-app shared downloads: jrt's ~/Downloads/<app> → the app's ~/Downloads.
+        # The launcher ACLs the jrt-side subdir + tmpfiles creates it (systemd.nix).
+        ++ lib.optional (sharedDownloads != null) [
+          "${sharedHome}/Downloads/${sharedDownloads}"
+          (sloth.concat' sloth.homeDir "/Downloads")
+        ]
         # Cross-uid doc-portal identity bind (dedicated). Soft (--bind-try): the
         # runScript only relays it when jrt actually has a doc portal running.
         ++ lib.optional (docBind != null) docBind;

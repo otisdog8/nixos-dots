@@ -45,6 +45,14 @@
       # and applied in a single namespace, so the child `large` binds mount cleanly on
       # top of the `persist` parent. Cross-tier nesting is explicitly allowed by
       # lib/storage.nix (only SAME-tier nesting is illegal).
+      #
+      # DEDICATED-UID EXPERIMENT (deliberately NOT applied): unlike the pure-Electron
+      # games, Lunar runs Minecraft via Java/LWJGL, which commonly needs XWayland — and
+      # a dedicated uid can't auth to the X server (the exact failure mode zoom hit). To
+      # try it: set defaultBackend="systemd", wrap the launcher for --ozone-platform=
+      # wayland (Electron part only), add sandbox.dedicatedUser=true + an app-lunar-
+      # client user in video/audio groups, then VALIDATE the game window actually opens
+      # (not just the launcher). Kept on nixpak same-uid because it's validated working.
       defaultBackend = "nixpak";
       storage = [
         # Settings, mods, resourcepacks (backed up).

@@ -45,13 +45,17 @@
         }
       ];
 
-      # Force Qt onto native Wayland: XWayland needs a cross-uid X-auth the dedicated
-      # uid doesn't have (same reason vesktop forces --ozone-platform=wayland).
+      # POC XWayland forward test case: previously forced onto native Wayland because a
+      # dedicated uid couldn't auth to XWayland — the x11Forward POC removes exactly
+      # that barrier (launcher xhost grant + X socket), so drive Qt onto XCB/XWayland
+      # through the forward and see whether zoom is happier there (it segfaulted a Qt6
+      # child on native Wayland — see the zoom TODO). Flip QT_QPA_PLATFORM back to
+      # "wayland" + x11Forward=false to revert.
       nixpakModules = [
         (
           { ... }:
           {
-            bubblewrap.env.QT_QPA_PLATFORM = "wayland";
+            bubblewrap.env.QT_QPA_PLATFORM = "xcb";
           }
         )
       ];
@@ -60,6 +64,7 @@
         { config, lib, ... }:
         {
           modules.apps.zoom.sandbox.dedicatedUser = true;
+          modules.apps.zoom.sandbox.x11Forward = true;
           users.users."app-zoom".extraGroups = [
             "video"
             "audio"

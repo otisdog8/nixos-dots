@@ -54,6 +54,7 @@ let
   acl = "${pkgs.acl}/bin";
   bwrap = "${pkgs.bubblewrap}/bin/bwrap";
   busctl = "${pkgs.systemd}/bin/busctl";
+  xhost = "${pkgs.xorg.xhost}/bin/xhost";
   gdbus = "${pkgs.glib}/bin/gdbus";
   grep = "${pkgs.gnugrep}/bin/grep";
   # Patched proxy (drops the in-band AUTH EXTERNAL uid) — see the
@@ -94,6 +95,11 @@ let
     docBind = if dedicated then [ "${runtimeDir}/doc" "${jrtRuntime}/doc" ] else null;
     # dedicated: inner proxy transparent; the jrt-side bridge is the single filter.
     transparentDbus = dedicated;
+    # POC: expose jrt's X socket + DISPLAY to the inner sandbox (xhost grant is in the
+    # launcher). See nixos/modules/apps/xwayland-forward-POC.md.
+    x11Forward = dedicated && cfg.sandbox.x11Forward;
+    # Per-app shared downloads → jrt's ~/Downloads/<app>. Value is the subdir name.
+    sharedDownloads = if dedicated && cfg.sandbox.sharedDownloads then appName else null;
   };
   innerPkg = innerNix.package;
   # Bridge filter: the app's own dbus policies (--talk/--own/...) + --filter, applied
@@ -376,6 +382,15 @@ let
             ${acl}/setfacl -m "u:${appUser}:x" "$(${co}/dirname "${sharedHome}/${p}")" 2>/dev/null || true
             ${acl}/setfacl -R -m "u:${appUser}:rwX" "${sharedHome}/${p}" 2>/dev/null || true
           '') (lib.filter (p: !(lib.hasPrefix "/" p) && !(lib.hasPrefix "." p)) cfg.sandbox.extraBinds)}
+          ${lib.optionalString cfg.sandbox.sharedDownloads ''
+            # Per-app shared downloads: let the app uid reach ~/Downloads/${appName}
+            # (traverse ~ and ~/Downloads, rw the per-app subdir). A default ACL makes
+            # files the app creates jrt-accessible too.
+            ${acl}/setfacl -m "u:${appUser}:x" "${sharedHome}" 2>/dev/null || true
+            ${acl}/setfacl -m "u:${appUser}:x" "${sharedHome}/Downloads" 2>/dev/null || true
+            ${acl}/setfacl -R -m "u:${appUser}:rwX" "${sharedHome}/Downloads/${appName}" 2>/dev/null || true
+            ${acl}/setfacl -d -m "u:${appUser}:rwX" "${sharedHome}/Downloads/${appName}" 2>/dev/null || true
+          ''}
         ''
       else
         lib.optionalString (cfg.sandbox.envMode == "inject") ''
@@ -388,7 +403,15 @@ let
           done
         ''
     }
-    trap 'if [ -n "$__dbus_pid" ]; then kill "$__dbus_pid" 2>/dev/null || true; fi; ${pkgs.systemd}/bin/systemctl stop ${unitName}.service >/dev/null 2>&1 || true' EXIT INT TERM
+    trap '${lib.optionalString (dedicated && cfg.sandbox.x11Forward)
+      "${xhost} -SI:localuser:${appUser} >/dev/null 2>&1 || true; "
+    }if [ -n "$__dbus_pid" ]; then kill "$__dbus_pid" 2>/dev/null || true; fi; ${pkgs.systemd}/bin/systemctl stop ${unitName}.service >/dev/null 2>&1 || true' EXIT INT TERM
+    ${lib.optionalString (dedicated && cfg.sandbox.x11Forward) ''
+      # POC: grant the dedicated app uid access to jrt's X server via server-interpreted
+      # localuser auth (no Xauthority cookie needed). Revoked in the trap above. Shares
+      # jrt's X — see nixos/modules/apps/xwayland-forward-POC.md for the caveats.
+      ${xhost} +SI:localuser:${appUser} >/dev/null 2>&1 || true
+    ''}
     ${pkgs.systemd}/bin/systemctl start --wait ${unitName}.service
   '';
 
@@ -436,7 +459,11 @@ in
 {
   package = finalPkg;
   systemConfig = {
-    systemd.tmpfiles.rules = storage.tmpfilesRules; # dedicated → leaf owned app-<name>
+    systemd.tmpfiles.rules =
+      storage.tmpfilesRules # dedicated → leaf owned app-<name>
+      # Per-app shared-downloads subdir under jrt's ~/Downloads (which impermanence
+      # already persists on /large). jrt-owned; the launcher ACLs it for the app uid.
+      ++ lib.optional (dedicated && cfg.sandbox.sharedDownloads) "d ${sharedHome}/Downloads/${appName} 0755 ${username} users -";
     environment.persistence = storage.homePersistence;
     assertions = storage.assertions ++ ptraceAssertion ++ injectAssertion;
     # Explicit unit name for the polkit start/stop/ref allowlist (sandbox.nix) —

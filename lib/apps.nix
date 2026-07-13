@@ -134,6 +134,32 @@
             description = "Additional bind mounts for sandboxed ${appName} (relative to home or absolute paths)";
           };
 
+          # POC — see nixos/modules/apps/xwayland-forward-POC.md.
+          x11Forward = lib.mkOption {
+            type = lib.types.bool;
+            default = false;
+            description = ''
+              PROOF OF CONCEPT (systemd + dedicatedUser only): let a dedicated-uid app
+              reach jrt's XWayland. The launcher (as jrt) grants the app uid X access
+              via `xhost +SI:localuser:app-<name>` and the inner sandbox binds the X
+              socket + DISPLAY. SECURITY: this shares jrt's X server, which has NO
+              inter-client isolation — the app can snoop/inject other X clients. Use
+              only for apps that genuinely need XWayland and can't do native Wayland
+              (e.g. zoom); the isolated production path is a per-app xwayland-satellite.
+            '';
+          };
+
+          sharedDownloads = lib.mkOption {
+            type = lib.types.bool;
+            default = false;
+            description = ''
+              systemd + dedicatedUser only: bind jrt's ~/Downloads/${appName} in AS the
+              app's ~/Downloads, so saved files land in a host-visible per-app subdir of
+              jrt's real Downloads (on /large, persisted) instead of the app's hidden
+              home. The launcher ACL-grants the app uid on that subdir.
+            '';
+          };
+
           nixpakModules = lib.mkOption {
             type = lib.types.listOf lib.types.deferredModule;
             default = [ ];

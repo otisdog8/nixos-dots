@@ -29,16 +29,29 @@ helper.mkApp (
       packageName = "nvim";
       package = nixvimPackage;
 
-      persistence.user = {
-        persist = [
-          ".config/nvim"
-          ".local/share/nvim"
-        ];
-
-        cache = [
-          ".local/state/nvim"
-        ];
-      };
+      # v2 nixpak backend (replaces the legacy sandbox.enable path). location = "home"
+      # for every entry: nvim is a same-uid dev editor (it edits $PWD as jrt), so a
+      # hidden stash buys ~nothing, and home keeps its state at the normal ~ paths —
+      # zero data movement on conversion, host-visible, and no risk of shadowing any
+      # home-manager-managed ~/.config/nvim.
+      defaultBackend = "nixpak";
+      storage = [
+        {
+          path = ".config/nvim";
+          tier = "persist";
+          location = "home";
+        }
+        {
+          path = ".local/share/nvim";
+          tier = "persist";
+          location = "home";
+        }
+        {
+          path = ".local/state/nvim";
+          tier = "cache";
+          location = "home";
+        }
+      ];
 
       nixpakModules = [
         (
@@ -80,12 +93,6 @@ helper.mkApp (
           }
         )
       ];
-
-      customConfig =
-        { config, lib, ... }:
-        {
-          modules.apps.nixvim.sandbox.enable = lib.mkDefault true;
-        };
     };
   }
 )

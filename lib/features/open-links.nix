@@ -27,8 +27,14 @@
         # by xdg.nix, reachable over the session-bus bridge) → host default handler
         # (the zen launcher, as jrt) → running browser. Prepend it so it shadows any
         # real xdg-open; bindEntireStore=true already makes its closure available.
+        # flatpak-xdg-utils FIRST (its xdg-open → portal wins), then real xdg-utils for
+        # the other xdg-* tools it lacks — notably xdg-settings, which some Electron
+        # apps (tetrio) shell out to at startup and CRASH on if it's missing (they
+        # regex-match the null exec result). Then the inherited PATH.
         bubblewrap.env.PATH = sloth.concat [
           "${pkgs.flatpak-xdg-utils}/bin"
+          ":"
+          "${pkgs.xdg-utils}/bin"
           ":"
           (sloth.envOr "PATH" "/run/current-system/sw/bin")
         ];

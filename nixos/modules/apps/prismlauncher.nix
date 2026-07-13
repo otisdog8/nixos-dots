@@ -24,6 +24,12 @@
       # v2 unified storage (replaces persistence.user.* + impermanence). No nesting
       # here — clean tiers: config backed up, game installs large (not backed up),
       # cache disposable.
+      #
+      # DEDICATED-UID EXPERIMENT (deliberately NOT applied): PrismLauncher is Qt, but it
+      # launches Minecraft via Java/LWJGL which commonly needs XWayland — a dedicated
+      # uid can't auth to the X server (zoom's failure mode). Same caveat as lunar: try
+      # defaultBackend="systemd" + dedicatedUser + QT_QPA_PLATFORM=wayland, but VALIDATE
+      # a launched instance's game window actually renders before relying on it.
       defaultBackend = "nixpak";
       storage = [
         {

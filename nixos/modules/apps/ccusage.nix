@@ -33,6 +33,11 @@
       # Static musl build: self-contained, minimal closure, embedded pricing.
       package = inputs.ccusage.packages.${pkgs.stdenv.hostPlatform.system}.ccusage-static;
 
+      # v2 nixpak backend (replaces the legacy sandbox.enable path). Read-only tool:
+      # no app.storage — it only binds ~/.claude READ-ONLY (below) and has no writable
+      # state of its own.
+      defaultBackend = "nixpak";
+
       nixpakModules = [
         (
           { sloth, ... }:
@@ -45,12 +50,6 @@
           }
         )
       ];
-
-      customConfig =
-        { config, lib, ... }:
-        {
-          modules.apps.ccusage.sandbox.enable = lib.mkDefault true;
-        };
     };
   }
 )
