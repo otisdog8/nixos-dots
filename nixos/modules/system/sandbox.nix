@@ -13,6 +13,15 @@
 let
   cfg = config.modules.sandbox;
 
+  # Exact allowlist of the REAL sandbox-<app>.service units, for the polkit rule
+  # below. A prefix match ("sandbox-*") was a root-escalation: manage-units also
+  # gates StartTransientUnit, so jrt could `systemd-run --unit=sandbox-evil
+  # --uid=0 -- …` and run arbitrary root commands. Only exact existing unit names
+  # may be managed; a transient unit can't reuse a static unit's fragment name,
+  # so this closes the hole.
+  sandboxUnits = lib.filter (lib.hasPrefix "sandbox-") (lib.attrNames config.systemd.services);
+  allowedUnitsJson = builtins.toJSON (map (u: "${u}.service") sandboxUnits);
+
   tierMount = {
     persist = "/persist";
     large = "/large";
@@ -183,15 +192,23 @@ in
 
     # The systemd-stash backend runs each app as a root-set-up system service
     # (private mount ns + stash graft, then drop to the user). The user triggers
-    # it with `systemctl start --wait sandbox-<app>`, so allow the desktop user to
-    # manage ONLY sandbox-* units — they can start/stop these, never define units
-    # (the unit definitions live in the read-only nix store).
+    # it with `systemctl start --wait sandbox-<app>` and stops it on teardown, so
+    # allow the desktop user to manage ONLY the exact set of generated
+    # sandbox-<app>.service units. NOT a prefix match: manage-units also gates
+    # StartTransientUnit, so `sandbox-*` would let jrt systemd-run an arbitrary
+    # root unit named "sandbox-…". The exact allowlist is what closes that hole.
+    #
+    # Verb-pinning (start/stop only) was tried as extra defense-in-depth, but the
+    # launcher's `start --wait` path did NOT present verb=="start" to this rule
+    # (it fell through to an auth prompt), so it's dropped — the name allowlist is
+    # the real control and a transient unit can't reuse a static fragment name.
     security.polkit.extraConfig = ''
       polkit.addRule(function(action, subject) {
         if (action.id == "org.freedesktop.systemd1.manage-units" &&
             subject.user == "jrt") {
+          var allowed = ${allowedUnitsJson};
           var unit = action.lookup("unit");
-          if (unit && unit.indexOf("sandbox-") == 0) {
+          if (unit && allowed.indexOf(unit) >= 0) {
             return polkit.Result.YES;
           }
         }

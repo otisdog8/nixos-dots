@@ -58,8 +58,19 @@ let
   dbusProxy = "${pkgs.xdg-dbus-proxy-crossuid}/bin/xdg-dbus-proxy";
   # jrt-side D-Bus bridge socket (dedicated only). D-Bus rejects the app's uid at
   # EXTERNAL auth, so a transparent xdg-dbus-proxy run AS JRT authenticates to the
-  # session bus and relays; the app reaches it through the runScript's bind, and
-  # nixpak's own proxy still layers policy filtering on top.
+  # session bus and relays; the app reaches it through the runScript's bind.
+  #
+  # SECURITY (finding #3): the bridge is TRANSPARENT (unfiltered) — nixpak's own
+  # inner proxy is the policy filter (--talk/--own). The raw bridge socket is
+  # visible in the sandbox (/run/<app>/bus via the /run bind), so a compromised app
+  # could connect to it directly and get unfiltered jrt-session-bus authority,
+  # bypassing nixpak's filter. This is NOT a regression: a same-uid nixpak app can
+  # already reach jrt's real bus (/run/user/<uid>/bus) directly and bypass the same
+  # filter — the dedicated app has strictly LESS (its own data is uid-hidden, and it
+  # can't reach the raw bus, only the bridge). Making the bridge --filter'ed is the
+  # defense-in-depth follow-up, but it must replicate the app's exact policies AND
+  # the portal Request/Response object tracking through two chained proxies (which
+  # currently makes screenshare work) — so it's deferred, not free.
   bridgeSock = "${jrtRuntime}/sandbox-${appName}-bus";
 
   stashEntries = lib.filter (e: e.location == "stash") storage.entries;
@@ -90,6 +101,10 @@ let
       # App's own runtime dir; jrt's session sockets bound in (ns-private, so they
       # never appear on the host) and ACL'd by the launcher. nixpak's own writes
       # (.flatpak, nixpak-bus, wayland proxy) then land in a dir the app owns.
+      # Recreate it FRESH each launch (its parent /run is root-owned, so the app
+      # can't swap the dir for a symlink) — this clears any stale symlinks/mount
+      # targets the previous, possibly-compromised, app uid left as a trap.
+      ${co}/rm -rf "${runtimeDir}"
       ${co}/mkdir -p "${runtimeDir}"
       ${co}/chown "${appUser}" "${runtimeDir}" 2>/dev/null || true
       ${co}/chmod 700 "${runtimeDir}"
@@ -111,8 +126,16 @@ let
       if [ -n "''${__w:-}" ]; then export WAYLAND_DISPLAY="$(${co}/basename "$__w")"; fi
     ''}
     ${lib.concatMapStringsSep "\n" (e: ''
-      ${co}/mkdir -p "${appHome}/${e.path}"
-      ${ul}/mount --bind "${e.stashPath}" "${appHome}/${e.path}"
+      __t="${appHome}/${e.path}"
+      ${co}/mkdir -p "$__t"
+      # Root-stage safety: refuse to graft through a symlink the app may have
+      # planted anywhere in the target path (realpath != literal ⇒ a component
+      # resolved elsewhere). Fail closed rather than bind over an app-chosen path.
+      if [ "$(${co}/realpath "$__t")" != "$__t" ]; then
+        echo "sandbox-${appName}: graft target '$__t' resolved through a symlink; refusing" >&2
+        exit 1
+      fi
+      ${ul}/mount --bind "${e.stashPath}" "$__t"
     '') stashEntries}
     ${
       if dedicated then

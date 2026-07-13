@@ -87,6 +87,16 @@
               # non-electron GUI apps.
               NIXOS_OZONE_WL = "1";
               ELECTRON_OZONE_PLATFORM_HINT = "wayland";
+              # Firefox/gecko native Wayland (hard enable, no X11 fallback).
+              # Harmless for non-gecko apps.
+              MOZ_ENABLE_WAYLAND = "1";
+              # Portal/ScreenCast detection: chromium/electron pick the PipeWire
+              # portal screen capturer (vs X11) based on the desktop/session type.
+              # The dedicated backend's minimal env lacks these, so default to the
+              # compositor (Hyprland) / wayland; in-session apps inherit the real
+              # session value via envOr.
+              XDG_CURRENT_DESKTOP = sloth.envOr "XDG_CURRENT_DESKTOP" "Hyprland";
+              XDG_SESSION_TYPE = sloth.envOr "XDG_SESSION_TYPE" "wayland";
             };
           };
         }

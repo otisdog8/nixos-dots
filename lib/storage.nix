@@ -66,6 +66,11 @@ let
   # Cumulative directory paths under `base` for the given path components.
   cumul = base: comps: lib.foldl' (acc: c: acc ++ [ "${lib.last acc}/${c}" ]) [ base ] comps;
 
+  # systemd-tmpfiles splits rule columns on whitespace, so a space in a path
+  # (Electron's "Code Cache") must be C-escaped or the rule is silently malformed
+  # and the stash dir is never created. The mount/mv paths use the raw form.
+  escT = lib.replaceStrings [ " " ] [ "\\x20" ];
+
   # Rules for one stash entry: root-owned intermediate dirs + the leaf.
   mkEntryRules =
     e:
@@ -76,13 +81,13 @@ let
       # the leaf dir, or the file itself). Root-owned; the leaf carries app perms.
       innerDirs = if comps == [ ] then [ ] else lib.init comps;
       interPaths = lib.tail (cumul appRoot innerDirs); # excludes appRoot itself
-      interRules = map (p: "d ${p} ${appDirMode} root root -") interPaths;
+      interRules = map (p: "d ${escT p} ${appDirMode} root root -") interPaths;
       leafPath = "${appRoot}/${e.path}";
       leafRule =
         if e.type == "file" then
-          "f ${leafPath} ${e.mode} ${leafOwner} ${leafGroup} -"
+          "f ${escT leafPath} ${e.mode} ${leafOwner} ${leafGroup} -"
         else
-          "d ${leafPath} ${e.mode} ${leafOwner} ${leafGroup} -";
+          "d ${escT leafPath} ${e.mode} ${leafOwner} ${leafGroup} -";
     in
     interRules ++ [ leafRule ];
 
@@ -136,10 +141,29 @@ let
         "sandbox app '${appName}': storage paths '${a.path}' and '${b.path}' are nested on the same tier '${a.tier}'. systemd-tmpfiles cannot create the inner leaf (unsafe path transition through the jrt-owned outer leaf). Put them on different tiers, or merge into one entry."
     ) stashEntries
   ) stashEntries;
+  # (#4) Validate storage paths: they feed root systemd-tmpfiles rules and root
+  # bind mounts, so reject anything that isn't a normalized home-relative path —
+  # no absolute paths, no '.'/'..' components, and only a conservative safe charset
+  # (letters, digits, . _ - / and space; the space is \x20-escaped for tmpfiles).
+  badPathMsgs = lib.concatMap (
+    e:
+    let
+      comps = compsOf e.path;
+      ok =
+        e.path != ""
+        && !(lib.hasPrefix "/" e.path)
+        && !(lib.elem ".." comps)
+        && !(lib.elem "." comps)
+        && builtins.match "[a-zA-Z0-9._/ -]+" e.path != null;
+    in
+    lib.optional (
+      !ok
+    ) "sandbox app '${appName}': invalid storage path '${e.path}'. Must be a normalized home-relative path (no leading '/', no '.'/'..' components, chars in [A-Za-z0-9._/ -])."
+  ) entries;
   assertions = map (m: {
     assertion = false;
     message = m;
-  }) nestingMsgs;
+  }) (nestingMsgs ++ badPathMsgs);
 in
 {
   inherit

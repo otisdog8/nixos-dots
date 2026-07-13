@@ -21,6 +21,21 @@
       package = pkgs.firefox;
       packageName = "firefox";
       desktopFileName = "firefox.desktop";
+
+      # Dedicated-uid + ephemeral (tmpfs home, no stash). gecko goes native-Wayland
+      # via MOZ_ENABLE_WAYLAND (gui.nix), with built-in portal ScreenCast — no
+      # --ozone flag/wrapper needed.
+      defaultBackend = "systemd";
+
+      customConfig =
+        { config, lib, ... }:
+        {
+          modules.apps.firefox.sandbox.dedicatedUser = true;
+          users.users."app-firefox".extraGroups = [
+            "video"
+            "audio"
+          ];
+        };
     };
   }
 )
