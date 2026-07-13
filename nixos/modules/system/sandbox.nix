@@ -14,13 +14,13 @@ let
   cfg = config.modules.sandbox;
 
   # Exact allowlist of the REAL sandbox-<app>.service units, for the polkit rule
-  # below. A prefix match ("sandbox-*") was a root-escalation: manage-units also
-  # gates StartTransientUnit, so jrt could `systemd-run --unit=sandbox-evil
-  # --uid=0 -- …` and run arbitrary root commands. Only exact existing unit names
-  # may be managed; a transient unit can't reuse a static unit's fragment name,
-  # so this closes the hole.
-  sandboxUnits = lib.filter (lib.hasPrefix "sandbox-") (lib.attrNames config.systemd.services);
-  allowedUnitsJson = builtins.toJSON (map (u: "${u}.service") sandboxUnits);
+  # below. Sourced from modules.sandbox.units (each backend emits its own unit name)
+  # rather than scanning services by "sandbox-" prefix — an explicit list doesn't
+  # implicitly reserve the prefix for any future unrelated sandbox-* unit. A prefix
+  # match would also have been a root-escalation (manage-units gates
+  # StartTransientUnit → `systemd-run --unit=sandbox-evil --uid=0`); the exact list
+  # closes that (a transient unit can't reuse a static unit's fragment name).
+  allowedUnitsJson = builtins.toJSON cfg.units;
 
   tierMount = {
     persist = "/persist";
@@ -52,8 +52,8 @@ let
           t = "/home/${m.user}/${e.path}";
         in
         ''
-          if ${ul}/mountpoint -q "${t}" 2>/dev/null; then
-            ${ul}/umount "${t}" 2>/dev/null || ${ul}/umount -l "${t}" 2>/dev/null || true
+          if __safe "${t}" && ${ul}/mountpoint -q --nofollow "${t}" 2>/dev/null; then
+            ${ul}/umount --no-canonicalize "${t}" 2>/dev/null || ${ul}/umount -l --no-canonicalize "${t}" 2>/dev/null || true
           fi''
       ) (lib.reverseList m.entries); # deepest-first
       moves = lib.concatMapStringsSep "\n" (
@@ -78,12 +78,19 @@ let
         ''
           __src=""
           ${srcPick}
+          # Root moving a jrt-controlled path: refuse if ANY component (not just the
+          # leaf) is a symlink — __safe requires the physical realpath to equal the
+          # literal path, so a jrt-planted symlink anywhere below /<tier>/home/jrt
+          # (e.g. .../Documents -> /elsewhere) can't redirect the root mv into or a
+          # symlinked source into the stash (the backend also re-checks the stash type
+          # before binding). mv -T never descends into an existing dir.
+          if [ -n "$__src" ] && ! __safe "$__src"; then echo "  refusing symlinked source path $__src"; __src=""; fi
           if [ -n "$__src" ]; then
             ${co}/mkdir -p "$(${co}/dirname "${dst}")"
             if [ ! -e "${dst}" ]; then
-              echo "  mv ${dst}"; ${co}/mv "$__src" "${dst}" || echo "  ERROR moving $__src"
+              echo "  mv ${dst}"; ${co}/mv -T "$__src" "${dst}" || echo "  ERROR moving $__src"
             elif [ -d "${dst}" ] && [ -z "$(${co}/ls -A "${dst}" 2>/dev/null)" ]; then
-              ${co}/rmdir "${dst}"; echo "  mv(empty) ${dst}"; ${co}/mv "$__src" "${dst}" || echo "  ERROR moving $__src"
+              ${co}/rmdir "${dst}"; echo "  mv(empty) ${dst}"; ${co}/mv -T "$__src" "${dst}" || echo "  ERROR moving $__src"
             else
               echo "  skip ${e.path} (target non-empty)"
             fi
@@ -98,7 +105,7 @@ let
             let
               c = "${tierMount.${t}}/home/${m.user}/${e.path}";
             in
-            ''          if [ -e "${c}" ]; then echo "  rm stale cache ${c}"; ${co}/rm -rf "${c}"; fi''
+            ''          if __safe "${c}"; then echo "  rm stale cache ${c}"; ${co}/rm -rf "${c}"; fi''
           ) candidateTiers}''}''
       ) (lib.reverseList m.entries); # deepest-first: extract carved children before the parent moves
       # Reconcile ownership every run (not gated by the stamp): mv preserves the
@@ -129,6 +136,11 @@ let
     '';
 
   migrateScript = pkgs.writeShellScript "sandbox-stash-migrate" ''
+    # A path is safe for a root mv/rm/umount iff it EXISTS and no component is a
+    # symlink — its physical realpath must equal the literal path. Guards every
+    # destructive/mount op below against a jrt-planted symlink anywhere under
+    # /<tier>/home/jrt (or ~) redirecting root at some other host path.
+    __safe() { [ -e "$1" ] && [ "$(${co}/realpath -- "$1" 2>/dev/null)" = "$1" ]; }
     ${lib.concatMapStringsSep "\n" migrateApp cfg.stashMigrations}
     exit 0
   '';
@@ -144,6 +156,19 @@ in
         per-entry placement and the hidden stash. One switch for debugging,
         inspection, recovery, or a host where hiding isn't wanted. Sandboxing
         itself is unaffected — only the stash placement is disabled.
+      '';
+    };
+
+    units = lib.mkOption {
+      internal = true;
+      default = [ ];
+      type = lib.types.listOf lib.types.str;
+      description = ''
+        Exact systemd unit names (sandbox-<app>.service) the stash backends
+        generate — emitted explicitly by each backend, consumed by the polkit
+        allowlist below. An explicit list, NOT a scan of every service whose name
+        starts with "sandbox-" (which would implicitly reserve that prefix and let
+        an unrelated future sandbox-* unit inherit the jrt start/stop grant).
       '';
     };
 
@@ -194,21 +219,24 @@ in
     # (private mount ns + stash graft, then drop to the user). The user triggers
     # it with `systemctl start --wait sandbox-<app>` and stops it on teardown, so
     # allow the desktop user to manage ONLY the exact set of generated
-    # sandbox-<app>.service units. NOT a prefix match: manage-units also gates
-    # StartTransientUnit, so `sandbox-*` would let jrt systemd-run an arbitrary
-    # root unit named "sandbox-…". The exact allowlist is what closes that hole.
-    #
-    # Verb-pinning (start/stop only) was tried as extra defense-in-depth, but the
-    # launcher's `start --wait` path did NOT present verb=="start" to this rule
-    # (it fell through to an auth prompt), so it's dropped — the name allowlist is
-    # the real control and a transient unit can't reuse a static fragment name.
+    # sandbox-<app>.service units, and ONLY the verbs that flow actually needs.
+    #   - Exact allowlist, NOT a prefix match: manage-units also gates
+    #     StartTransientUnit, so `sandbox-*` would let jrt systemd-run an arbitrary
+    #     root unit named "sandbox-…". The exact allowlist closes that hole.
+    #   - Verb pinned to start/stop/ref: `systemctl start --wait` issues StartUnit
+    #     (start) AND RefUnit (ref, to hold the result until the unit exits); stop is
+    #     teardown. Everything else manage-units gates — set-property, kill, freeze,
+    #     clean, thaw, … — is denied (falls through to the admin default), so this
+    #     grant is no broader than the launcher requires.
     security.polkit.extraConfig = ''
       polkit.addRule(function(action, subject) {
         if (action.id == "org.freedesktop.systemd1.manage-units" &&
             subject.user == "jrt") {
           var allowed = ${allowedUnitsJson};
           var unit = action.lookup("unit");
-          if (unit && allowed.indexOf(unit) >= 0) {
+          var verb = action.lookup("verb");
+          if (unit && allowed.indexOf(unit) >= 0 &&
+              (verb == "start" || verb == "stop" || verb == "ref")) {
             return polkit.Result.YES;
           }
         }

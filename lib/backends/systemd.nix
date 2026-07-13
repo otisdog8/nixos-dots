@@ -61,17 +61,13 @@ let
   # EXTERNAL auth, so a transparent xdg-dbus-proxy run AS JRT authenticates to the
   # session bus and relays; the app reaches it through the runScript's bind.
   #
-  # SECURITY (finding #3): the bridge is TRANSPARENT (unfiltered) — nixpak's own
-  # inner proxy is the policy filter (--talk/--own). The raw bridge socket is
-  # visible in the sandbox (/run/<app>/bus via the /run bind), so a compromised app
-  # could connect to it directly and get unfiltered jrt-session-bus authority,
-  # bypassing nixpak's filter. This is NOT a regression: a same-uid nixpak app can
-  # already reach jrt's real bus (/run/user/<uid>/bus) directly and bypass the same
-  # filter — the dedicated app has strictly LESS (its own data is uid-hidden, and it
-  # can't reach the raw bus, only the bridge). Making the bridge --filter'ed is the
-  # defense-in-depth follow-up, but it must replicate the app's exact policies AND
-  # the portal Request/Response object tracking through two chained proxies (which
-  # currently makes screenshare work) — so it's deferred, not free.
+  # SECURITY (finding #3): the FILTER lives HERE, on the jrt-side bridge (a trusted
+  # uid the app can't tamper with), not on nixpak's inner proxy. nixpak-pkg.nix runs
+  # the inner proxy TRANSPARENT for dedicated apps (transparentDbus → dbus.filter =
+  # false) and the bridge applies the app's exact policies via bridgeFilterArgs +
+  # --filter. This avoids the earlier chained-filter break (two xdg-dbus-proxy
+  # --filter instances desynced reply/Request tracking → "Did not receive a reply"):
+  # now there's ONE filter, and its client is a faithful transparent relay.
   bridgeSock = "${jrtRuntime}/sandbox-${appName}-bus";
 
   stashEntries = lib.filter (e: e.location == "stash") storage.entries;
@@ -93,8 +89,13 @@ let
     # sandbox (the portal returns jrt-absolute doc:// paths). Same-uid apps use
     # nixpak's own mountDocumentPortal (same uid, no relay needed).
     docBind = if dedicated then [ "${runtimeDir}/doc" "${jrtRuntime}/doc" ] else null;
+    # dedicated: inner proxy transparent; the jrt-side bridge is the single filter.
+    transparentDbus = dedicated;
   };
   innerPkg = innerNix.package;
+  # Bridge filter: the app's own dbus policies (--talk/--own/...) + --filter, applied
+  # to the jrt-side bridge. Only meaningful for dedicated (inner is transparent then).
+  bridgeFilterArgs = lib.concatMapStringsSep " " lib.escapeShellArg (innerNix.dbusArgs ++ [ "--filter" ]);
   # nixpak's .flatpak-info for this app — bound onto the bridge below (dedicated).
   # The portal's flatpak app-info parser REQUIRES an [Instance] group, but nixpak's
   # writeINI infoFile only emits [Application]/[Context]/[Session Bus Policy]. Append
@@ -106,6 +107,8 @@ let
     cat ${innerNix.flatpakInfoFile} > "$out"
     printf '\n[Instance]\ninstance-id=${appName}\nsession-bus-proxy=true\nsystem-bus-proxy=true\n' >> "$out"
   '';
+  # Flatpak app-id — scopes the cross-uid doc bind to this app's by-app/<appId>.
+  appId = innerNix.appId;
 
   # WAYLAND_DISPLAY is the only session var we can't state as a Nix literal, so it
   # is globbed at runtime (Nix-controlled, no jrt input). Done for dedicated and
@@ -127,22 +130,39 @@ let
       ${co}/chmod 700 "${runtimeDir}"
       for __s in ${jrtRuntime}/wayland-* ${jrtRuntime}/pipewire-* ${jrtRuntime}/pulse; do
         [ -e "$__s" ] || continue
+        # Refuse a symlink or a non-socket/dir: a compromised jrt could plant one in
+        # its own runtime dir to trick root into bind-mounting an arbitrary host file
+        # (e.g. /etc/shadow) into the app's runtime as "wayland-1". Only relay the
+        # real sockets (and the pulse dir) we expect.
+        [ -L "$__s" ] && continue
+        { [ -S "$__s" ] || [ -d "$__s" ]; } || continue
         __n="$(${co}/basename "$__s")"
         if [ -d "$__s" ]; then ${co}/mkdir -p "${runtimeDir}/$__n"; else ${co}/touch "${runtimeDir}/$__n"; fi
         ${ul}/mount --bind "$__s" "${runtimeDir}/$__n" 2>/dev/null || true
       done
       # Cross-uid document portal: jrt's doc FUSE lives under jrt's 0700 runtime dir
       # (the app can't traverse there), so root relays it into the app's own runtime
-      # dir. The FUSE is mounted allow_other (xdg-desktop-portal fork), so the app
-      # uid can then read the doc:// files the portal exports. nixpak binds this at
-      # jrt's identity path inside the sandbox (docBind), where returned paths land.
-      if [ -d "${jrtRuntime}/doc" ]; then
+      # dir. Scoped to this app's by-app/<appId> subtree (NOT the whole FUSE) so the
+      # app can only reach its OWN granted documents — the doc portal returns paths
+      # as-the-app-sees-them (its by-app view mounted at .../doc), so binding by-app/
+      # <appId> at the identity path is correct AND is what nixpak does same-uid. The
+      # FUSE is allow_other (our fork), so the app uid can read it; nixpak binds this
+      # at jrt's identity path inside the sandbox (docBind).
+      # Root follows this jrt-controlled source path, so refuse if jrt turned any
+      # component (the doc mount, by-app, or by-app/<appId>) into a symlink pointing
+      # root at some other host path. Confused-deputy guard (app only gets DAC access
+      # either way, but don't let jrt choose the target).
+      if [ -d "${jrtRuntime}/doc" ] \
+         && [ ! -L "${jrtRuntime}/doc" ] \
+         && [ ! -L "${jrtRuntime}/doc/by-app" ] \
+         && [ ! -L "${jrtRuntime}/doc/by-app/${appId}" ]; then
         ${co}/mkdir -p "${runtimeDir}/doc"
-        ${ul}/mount --bind "${jrtRuntime}/doc" "${runtimeDir}/doc" 2>/dev/null || true
+        ${ul}/mount --bind "${jrtRuntime}/doc/by-app/${appId}" "${runtimeDir}/doc" 2>/dev/null || true
       fi
       # D-Bus session bus goes through the jrt-side bridge (started by the launcher),
-      # NOT the raw bus — the app's uid is rejected at D-Bus EXTERNAL auth.
-      if [ -S "${bridgeSock}" ]; then
+      # NOT the raw bus — the app's uid is rejected at D-Bus EXTERNAL auth. Refuse a
+      # symlinked bridge socket ([ -S ] alone would follow one).
+      if [ -S "${bridgeSock}" ] && [ ! -L "${bridgeSock}" ]; then
         ${co}/touch "${runtimeDir}/bus"
         ${ul}/mount --bind "${bridgeSock}" "${runtimeDir}/bus" 2>/dev/null || true
       fi
@@ -151,18 +171,36 @@ let
       __w=$(${co}/ls ${jrtRuntime}/wayland-* 2>/dev/null | ${co}/head -1 || true)
       if [ -n "''${__w:-}" ]; then export WAYLAND_DISPLAY="$(${co}/basename "$__w")"; fi
     ''}
-    ${lib.concatMapStringsSep "\n" (e: ''
-      __t="${appHome}/${e.path}"
-      ${co}/mkdir -p "$__t"
-      # Root-stage safety: refuse to graft through a symlink the app may have
-      # planted anywhere in the target path (realpath != literal ⇒ a component
-      # resolved elsewhere). Fail closed rather than bind over an app-chosen path.
-      if [ "$(${co}/realpath "$__t")" != "$__t" ]; then
-        echo "sandbox-${appName}: graft target '$__t' resolved through a symlink; refusing" >&2
-        exit 1
-      fi
-      ${ul}/mount --bind "${e.stashPath}" "$__t"
-    '') stashEntries}
+    ${lib.concatMapStringsSep "\n" (
+      e:
+      let
+        comps = lib.filter (c: c != "") (lib.splitString "/" e.path);
+        cumul = lib.foldl' (acc: c: acc ++ [ "${lib.last acc}/${c}" ]) [ appHome ] comps;
+        # Every level BELOW appHome (which /home being root-owned makes unswappable).
+        checkPaths = lib.tail cumul;
+      in
+      ''
+        # Root-stage safety: the app owns its home, so verify NO component of the
+        # graft path is an app-planted symlink BEFORE mkdir -p follows it (which
+        # would make root create dirs under an app-chosen target). Fail closed.
+        ${lib.concatMapStringsSep "\n" (p: ''
+          if [ -L "${p}" ]; then echo "sandbox-${appName}: symlink in graft path '${p}'; refusing" >&2; exit 1; fi
+        '') checkPaths}
+        __t="${appHome}/${e.path}"
+        ${co}/mkdir -p "$__t"
+        # Belt: confirm the realized path is still canonical (no symlink slipped in).
+        if [ "$(${co}/realpath "$__t")" != "$__t" ]; then
+          echo "sandbox-${appName}: graft target '$__t' resolved through a symlink; refusing" >&2
+          exit 1
+        fi
+        # The stash SOURCE itself: a symlink (migration moved one in, or a malicious
+        # jrt planted it) would make this bind follow to an attacker-chosen host path.
+        # Require the real expected type, never a symlink.
+        if [ -L "${e.stashPath}" ]; then echo "sandbox-${appName}: stash '${e.stashPath}' is a symlink; refusing" >&2; exit 1; fi
+        if [ ! -${if e.type == "file" then "f" else "d"} "${e.stashPath}" ]; then echo "sandbox-${appName}: stash '${e.stashPath}' is not a ${e.type}; refusing" >&2; exit 1; fi
+        ${ul}/mount --bind "${e.stashPath}" "$__t"
+      ''
+    ) stashEntries}
     ${
       if dedicated then
         ''
@@ -197,7 +235,12 @@ let
           # runScript binds into the app's own runtime dir). No ACL on jrt's
           # runtime dir itself → app-${appUser} can't list/create/delete there.
           for __s in "${jrtRuntime}"/wayland-* "${jrtRuntime}"/pipewire-* "${jrtRuntime}/pulse"; do
-            if [ -e "$__s" ]; then ${acl}/setfacl -R -m "u:${appUser}:rwX" "$__s" 2>/dev/null || true; fi
+            [ -e "$__s" ] || continue
+            # Mirror the root-side relay checks: never ACL a symlink or a non-socket/
+            # non-dir (a compromised jrt could plant one to widen the ACL's reach).
+            [ -L "$__s" ] && continue
+            { [ -S "$__s" ] || [ -d "$__s" ]; } || continue
+            ${acl}/setfacl -R -m "u:${appUser}:rwX" "$__s" 2>/dev/null || true
           done
           # Cross-uid D-Bus bridge: a transparent xdg-dbus-proxy run AS JRT (so it
           # authenticates to the session bus fine), exposing an ACL'd socket the
@@ -222,7 +265,7 @@ let
             --bind /run /run \
             --ro-bind-try "${flatpakInfoFile}" /.flatpak-info \
             --die-with-parent \
-            -- ${dbusProxy} "$DBUS_SESSION_BUS_ADDRESS" "${bridgeSock}" &
+            -- ${dbusProxy} "$DBUS_SESSION_BUS_ADDRESS" "${bridgeSock}" ${bridgeFilterArgs} &
           __dbus_pid=$!
           for __i in $(${co}/seq 1 60); do [ -S "${bridgeSock}" ] && break; ${co}/sleep 0.05; done
           ${acl}/setfacl -m "u:${appUser}:rw" "${bridgeSock}" 2>/dev/null || true
@@ -281,13 +324,31 @@ let
       /proc/<pid>/root — only sandbox.dedicatedUser does that.
     '';
   };
+  # Same-uid + inject reads a jrt-written EnvironmentFile into the ROOT ExecStart
+  # (the `+unshare … runScript` runs privileged before the setpriv drop). jrt can
+  # pre-create/race that file (it may start the unit via polkit) and even the curated
+  # values are newline-injectable, so LD_PRELOAD / loader env would execute as ROOT.
+  # Dedicated NEVER reads it (uses Nix-derived `defaults`); forbid it for same-uid.
+  injectAssertion = lib.optional (!dedicated && cfg.sandbox.envMode == "inject") {
+    assertion = false;
+    message = ''
+      sandbox app '${appName}': systemd same-uid backend with envMode = "inject" is
+      unsafe — the jrt-written ${envFile} is read into the ROOT ExecStart, an
+      LD_PRELOAD/loader-injection vector into a root process. Use
+      envMode = "defaults" (Nix-derived env) for a same-uid systemd app, or run it
+      under sandbox.dedicatedUser (which never reads a jrt env file).
+    '';
+  };
 in
 {
   package = finalPkg;
   systemConfig = {
     systemd.tmpfiles.rules = storage.tmpfilesRules; # dedicated → leaf owned app-<name>
     environment.persistence = storage.homePersistence;
-    assertions = storage.assertions ++ ptraceAssertion;
+    assertions = storage.assertions ++ ptraceAssertion ++ injectAssertion;
+    # Explicit unit name for the polkit start/stop/ref allowlist (sandbox.nix) —
+    # not a prefix scan.
+    modules.sandbox.units = [ "${unitName}.service" ];
     modules.sandbox.stashMigrations = lib.optional (storage.stashEntries != [ ]) {
       app = appName;
       bin = binName;
