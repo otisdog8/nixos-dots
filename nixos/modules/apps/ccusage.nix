@@ -1,9 +1,10 @@
-# ccusage - analyse Claude Code token usage and costs from local data.
+# ccusage - analyse Claude Code + Codex token usage and costs from local data.
 #
-# ccusage only READS Claude Code's usage logs (~/.claude/projects/**/*.jsonl),
-# so this sandbox is deliberately tighter than the agent sandboxes:
-#   - ~/.claude is bound READ-ONLY, so ccusage can never modify your data,
-#     settings, or credentials.
+# ccusage only READS usage logs — Claude Code's (~/.claude/projects/**/*.jsonl) and
+# Codex's (~/.codex/sessions, via `ccusage codex`) — so this sandbox is deliberately
+# tighter than the agent sandboxes:
+#   - ~/.claude and ~/.codex are bound READ-ONLY, so ccusage can never modify your
+#     data, settings, or credentials.
 #   - NO network. The static musl build embeds pricing data (litellm /
 #     models.dev), so reports run fully offline. If a subcommand still tries to
 #     fetch live pricing, pass --offline.
@@ -44,8 +45,10 @@
           {
             bubblewrap.bind.ro = [
               (sloth.concat' sloth.homeDir "/.claude")
+              (sloth.concat' sloth.homeDir "/.codex")
               # Tighter alternative (usage logs only, hides credentials/settings):
               # (sloth.concat' sloth.homeDir "/.claude/projects")
+              # (sloth.concat' sloth.homeDir "/.codex/sessions")
             ];
           }
         )

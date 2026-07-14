@@ -86,7 +86,6 @@
           users.users."app-prismlauncher".extraGroups = [
             "video"
             "audio"
-            "input" # /dev/input is root:input 0660 — needed to read controllers
           ];
         };
     };

@@ -34,17 +34,9 @@
         } # thumbnails, compiled shaders
       ];
 
-      # Project file access (raw nixpak module — coexists with app.storage).
-      nixpakModules = [
-        (
-          { sloth, ... }:
-          {
-            bubblewrap.bind.rw = [
-              (sloth.concat' sloth.homeDir "/Documents/school")
-            ];
-          }
-        )
-      ];
+      # Project files are opened on-demand through the xdg document portal (per-file
+      # access), not a blanket rw bind of ~/Documents — .blend files can carry
+      # auto-executing Python, so no standing write into persistent jrt dirs.
 
       # v2 nixpak backend: storage-driven binds + tmpfiles instead of the legacy
       # persistence.user.* + impermanence path.
