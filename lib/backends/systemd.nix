@@ -497,8 +497,12 @@ in
     systemd.tmpfiles.rules =
       storage.tmpfilesRules # dedicated → leaf owned app-<name>
       # Per-app shared-downloads subdir under jrt's ~/Downloads (which impermanence
-      # already persists on /large). jrt-owned; the launcher ACLs it for the app uid.
-      ++ lib.optional (dedicated && cfg.sandbox.sharedDownloads) "d ${sharedHome}/Downloads/${appName} 0755 ${username} users -";
+      # already persists on /large). jrt-owned; the launcher ACLs it rwX for the app
+      # uid. Mode is 0775, NOT 0755: the group bits are the POSIX ACL *mask*, and
+      # chmod 0755 (which tmpfiles re-runs every activation) would clamp the mask to
+      # r-x and strip the app's ACL write bit. 0775 keeps the mask rwx (group = users,
+      # effectively just jrt; other stays r-x) so the app's write survives resetups.
+      ++ lib.optional (dedicated && cfg.sandbox.sharedDownloads) "d ${sharedHome}/Downloads/${appName} 0775 ${username} users -";
     environment.persistence = storage.homePersistence;
     assertions = storage.assertions ++ ptraceAssertion ++ injectAssertion;
     # Explicit unit name for the polkit start/stop/ref allowlist (sandbox.nix) —
