@@ -37,9 +37,11 @@
     ../../modules/system/k3s
   ];
 
-  # Enable full desktop environment, AMD GPU, and K3s cluster node
+  # Headless K3s cluster node: no desktop (boots to multi-user.target; access via
+  # SSH). AMD GPU driver kept for hardware/compute. Flip enable back to true to
+  # use it as a workstation again.
   modules = {
-    desktop.full.enable = true;
+    desktop.full.enable = false;
     system.hardware.amd.enable = true;
     # Rejoins via serverAddr (arquitens) with a fresh etcd datadir after the disk
     # swap — carrack was never clusterInit, so no split-brain risk. etcd + DB land

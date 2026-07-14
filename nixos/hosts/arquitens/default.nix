@@ -37,9 +37,11 @@
     ../../modules/system/k3s
   ];
 
-  # Enable full desktop environment, AMD GPU, and K3s
+  # Headless K3s cluster node: no desktop (boots to multi-user.target; access via
+  # SSH). AMD GPU driver kept for hardware/compute. Flip enable back to true to
+  # use it as a workstation again.
   modules = {
-    desktop.full.enable = true;
+    desktop.full.enable = false;
 
     # Enable AMD GPU
     system.hardware.amd.enable = true;
