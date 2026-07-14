@@ -342,6 +342,30 @@ let
     ${
       if dedicated then
         ''
+          # Revoke (on quit, from the trap) every ACL the grants below add to jrt's
+          # LONG-LIVED objects — the session sockets, the bridge socket, and shared
+          # jrt data (the vault etc.). Without this the app's `u:app-<name>` entry
+          # lingers on jrt's Wayland/PipeWire/Pulse sockets (screen/audio capture) and
+          # on the vault after the app exits, standing access it no longer needs.
+          # Entries are per-uid, so removing THIS app's entry never disturbs another
+          # concurrent dedicated app's grant on the same shared socket. The per-app
+          # ~/Downloads/<app> share is intentionally left intact (purpose-built, jrt-
+          # owned, its default ACL keeps saved files jrt-readable).
+          __revoke_acls() {
+            for __s in "${jrtRuntime}"/wayland-* "${jrtRuntime}"/pipewire-* "${jrtRuntime}/pulse"; do
+              [ -e "$__s" ] || continue
+              ${acl}/setfacl -R -x "u:${appUser}" "$__s" 2>/dev/null || true
+            done
+            ${acl}/setfacl -x "u:${appUser}" "${bridgeSock}" 2>/dev/null || true
+            ${lib.concatMapStringsSep "\n" (p: ''
+              ${acl}/setfacl -R -x "u:${appUser}" "${sharedHome}/${p}" 2>/dev/null || true
+              ${acl}/setfacl -x "u:${appUser}" "$(${co}/dirname "${sharedHome}/${p}")" 2>/dev/null || true
+            '') (lib.filter (p: !(lib.hasPrefix "/" p) && !(lib.hasPrefix "." p)) cfg.sandbox.extraBinds)}
+            ${lib.optionalString
+              ((lib.filter (p: !(lib.hasPrefix "/" p) && !(lib.hasPrefix "." p)) cfg.sandbox.extraBinds) != [ ])
+              ''${acl}/setfacl -x "u:${appUser}" "${sharedHome}" 2>/dev/null || true''
+            }
+          }
           # Grant app-${appUser} rw on ONLY the specific session sockets (which the
           # runScript binds into the app's own runtime dir). No ACL on jrt's
           # runtime dir itself → app-${appUser} can't list/create/delete there.
@@ -417,7 +441,7 @@ let
     }
     trap '${lib.optionalString (dedicated && cfg.sandbox.x11Forward)
       "${xhost} -SI:localuser:${appUser} >/dev/null 2>&1 || true; "
-    }if [ -n "$__dbus_pid" ]; then kill "$__dbus_pid" 2>/dev/null || true; fi; ${pkgs.systemd}/bin/systemctl stop ${unitName}.service >/dev/null 2>&1 || true' EXIT INT TERM
+    }${lib.optionalString dedicated "__revoke_acls; "}if [ -n "$__dbus_pid" ]; then kill "$__dbus_pid" 2>/dev/null || true; fi; ${pkgs.systemd}/bin/systemctl stop ${unitName}.service >/dev/null 2>&1 || true' EXIT INT TERM
     ${lib.optionalString (dedicated && cfg.sandbox.x11Forward) ''
       # Grant the dedicated app uid access to jrt's X server via server-interpreted
       # localuser auth (no Xauthority cookie needed). Revoked in the trap above. Shares
