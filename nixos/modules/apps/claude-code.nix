@@ -26,35 +26,41 @@
       # land sooner than the main nixos-unstable pin (still binary-cached).
       package = pkgs.unstable-small.claude-code;
 
-      persistence.user.persist = [
-        ".claude"
+      defaultBackend = "nixpak";
+
+      storage = [
+        # Parent catches auth + real state (projects, history.jsonl, plans, tasks,
+        # backups) and anything else claude writes under ~/.claude.
+        { path = ".claude"; tier = "persist"; }
+        { path = ".claude.json"; tier = "persist"; type = "file"; }
+        # Big non-regenerable-but-not-backup-worthy → /large (local snapshots only).
+        { path = ".claude/security"; tier = "large"; } # ~282M
+        { path = ".claude/file-history"; tier = "large"; } # ~19M edit-undo history
+        { path = ".claude/plugins"; tier = "large"; } # ~8.8M, re-installable
+        # Disposable → /cache.
+        { path = ".claude/cache"; tier = "cache"; }
+        { path = ".claude/paste-cache"; tier = "cache"; }
+        { path = ".claude/shell-snapshots"; tier = "cache"; }
+        { path = ".claude/jobs"; tier = "cache"; }
+        { path = ".claude/daemon"; tier = "cache"; }
+        { path = ".claude/telemetry"; tier = "cache"; }
+        {
+          path = ".claude/stats-cache.json";
+          tier = "cache";
+          type = "file";
+        }
       ];
 
-      persistence.user.persistFiles = [
-        ".claude.json"
-      ];
-
+      # $PWD comes from cwd.nix; the stash binds provide ~/.claude and
+      # ~/.claude.json. Only the shared host /tmp remains (preserved from legacy).
       nixpakModules = [
         (
-          { sloth, ... }:
+          { ... }:
           {
-            bubblewrap = {
-              bind.rw = [
-                (sloth.concat' sloth.homeDir "/.claude")
-                (sloth.concat' sloth.homeDir "/.claude.json")
-                (sloth.env "PWD")
-                "/tmp"
-              ];
-            };
+            bubblewrap.bind.rw = [ "/tmp" ];
           }
         )
       ];
-
-      customConfig =
-        { config, lib, ... }:
-        {
-          modules.apps.claude-code.sandbox.enable = lib.mkDefault true;
-        };
     };
   }
 )

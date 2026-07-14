@@ -102,27 +102,13 @@
       packageName = "gsd";
       package = gsd-pi;
 
-      persistence.user.persist = [
-        ".gsd"
-      ];
+      defaultBackend = "nixpak";
 
-      nixpakModules = [
-        (
-          { sloth, ... }:
-          {
-            bubblewrap.bind.rw = [
-              (sloth.concat' sloth.homeDir "/.gsd")
-              (sloth.env "PWD")
-            ];
-          }
-        )
+      # Empty on disk today. $PWD comes from cwd.nix; the stash bind provides
+      # ~/.gsd. Carve a cache tier if/when gsd starts writing one.
+      storage = [
+        { path = ".gsd"; tier = "persist"; }
       ];
-
-      customConfig =
-        { config, lib, ... }:
-        {
-          modules.apps.gsd.sandbox.enable = lib.mkDefault true;
-        };
     };
   }
 )

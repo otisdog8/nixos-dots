@@ -4,8 +4,10 @@
 {
   imports = [
     ../app-spec.nix
-    ./fido.nix
     ./open-links.nix
+    # NOTE: fido.nix (raw /dev/hidraw*) is deliberately NOT pulled in here.
+    # GUI-ness does not imply needing security keys; browsers get it via
+    # browser.nix, and any other app that needs it imports fido.nix explicitly.
   ];
 
   config.app = {
@@ -35,11 +37,11 @@
               proc = true;
             };
 
-            # Sockets for Wayland, audio
+            # Wayland only. Audio (pulse+pipewire, which is also MIC access) is NOT
+            # implied by gui — it's the `audio` capability (features/audio.nix), so
+            # apps that don't play/record sound don't get microphone access.
             sockets = {
               wayland = true;
-              pulse = true;
-              pipewire = true;
             };
 
             # Bind mounts
@@ -68,12 +70,33 @@
               ];
             };
 
-            # Environment variables
+            # Environment variables. Use envOr (with fallbacks) not env: the
+            # nixpak launcher PANICS on a referenced-but-unset var, and the
+            # systemd/dedicated backends run with a minimal Nix-derived env rather
+            # than the full session. In-session apps still get the real session
+            # value; only a missing var falls back.
             env = {
-              DISPLAY = sloth.env "DISPLAY";
-              WAYLAND_DISPLAY = sloth.env "WAYLAND_DISPLAY";
-              QT_QPA_PLATFORMTHEME = sloth.env "QT_QPA_PLATFORMTHEME";
-              LANG = sloth.env "LANG";
+              DISPLAY = sloth.envOr "DISPLAY" ":0";
+              WAYLAND_DISPLAY = sloth.envOr "WAYLAND_DISPLAY" "wayland-0";
+              QT_QPA_PLATFORMTHEME = sloth.envOr "QT_QPA_PLATFORMTHEME" "";
+              LANG = sloth.envOr "LANG" "C.UTF-8";
+              # Force chromium/electron onto Wayland. In-session apps inherit
+              # NIXOS_OZONE_WL from the session; systemd/dedicated apps run on a
+              # minimal env, so without this electron falls back to X11 (which has
+              # no Xauth in the sandbox → no window). Literal, harmless for
+              # non-electron GUI apps.
+              NIXOS_OZONE_WL = "1";
+              ELECTRON_OZONE_PLATFORM_HINT = "wayland";
+              # Firefox/gecko native Wayland (hard enable, no X11 fallback).
+              # Harmless for non-gecko apps.
+              MOZ_ENABLE_WAYLAND = "1";
+              # Portal/ScreenCast detection: chromium/electron pick the PipeWire
+              # portal screen capturer (vs X11) based on the desktop/session type.
+              # The dedicated backend's minimal env lacks these, so default to the
+              # compositor (Hyprland) / wayland; in-session apps inherit the real
+              # session value via envOr.
+              XDG_CURRENT_DESKTOP = sloth.envOr "XDG_CURRENT_DESKTOP" "Hyprland";
+              XDG_SESSION_TYPE = sloth.envOr "XDG_SESSION_TYPE" "wayland";
             };
           };
         }

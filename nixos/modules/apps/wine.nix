@@ -51,19 +51,6 @@
         ];
       };
 
-      # Wine needs input devices for controllers/joysticks
-      nixpakModules = [
-        (
-          { lib, ... }:
-          {
-            bubblewrap.bind.dev = [
-              "/dev/input"
-              "/dev/uinput"
-            ];
-          }
-        )
-      ];
-
       customConfig =
         {
           config,

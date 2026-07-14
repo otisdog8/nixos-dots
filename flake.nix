@@ -15,7 +15,10 @@
       inputs.nixpkgs.follows = "nixpkgs";
     };
     nixpak = {
-      url = "github:otisdog8/nixpak/sandbox-xdg-runtime-dir";
+      # hard-bind branch: adds bind.rwHard/roHard (--bind vs --bind-try) for the
+      # sandbox stash sources (lib/backends/nixpak.nix). Branched off
+      # sandbox-xdg-runtime-dir.
+      url = "github:otisdog8/nixpak/hard-bind";
       inputs.nixpkgs.follows = "nixpkgs";
     };
     xdg-desktop-portal-src = {
@@ -105,8 +108,6 @@
       url = "github:ndom91/rose-pine-hyprcursor";
       inputs.nixpkgs.follows = "nixpkgs";
     };
-    wezterm-flake.url = "github:wez/wezterm?dir=nix&rev=4506a7648e2ebef266225c1acdcd79967a4fc73b";
-    wezterm-flake.inputs.nixpkgs.follows = "nixpkgs";
     nix-warez.url = "github:edolstra/nix-warez?dir=blender";
   };
 
@@ -124,7 +125,6 @@
       hyprland,
       hyprsplit,
       Hyprspace,
-      wezterm-flake,
       ...
     }@inputs:
 

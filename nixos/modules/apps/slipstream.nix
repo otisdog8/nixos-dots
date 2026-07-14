@@ -18,7 +18,11 @@
       package = pkgs.slipstream;
       packageName = "slipstream";
 
-      # Mod manager data and FTL game files
+      # Left on the legacy path pending validation on the constitution host (where
+      # slipstream/FTL actually runs). To convert: mirror r2modman — nixpak backend with
+      # a `location = "home"` storage entry for .local/share/slipstream, since it patches
+      # FTL's files inside Steam's host-visible library, so its own data must stay
+      # host-visible too (and location=home means zero data movement).
       persistence.user.large = [
         ".local/share/slipstream"
       ];

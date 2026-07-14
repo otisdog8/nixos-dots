@@ -21,23 +21,29 @@
       package = pkgs.prismlauncher;
       packageName = "prismlauncher";
 
-      # Persistence configuration
-      persistence.user = {
-        # PrismLauncher config
-        persist = [
-          ".config/PrismLauncher"
-        ];
-
-        # Game installations
-        large = [
-          ".local/share/PrismLauncher"
-        ];
-
-        # Cache
-        cache = [
-          ".cache/PrismLauncher"
-        ];
-      };
+      # v2 unified storage (replaces persistence.user.* + impermanence). No nesting
+      # here — clean tiers: config backed up, game installs large (not backed up),
+      # cache disposable.
+      #
+      # Dedicated-uid + XWayland forward. PrismLauncher (Qt) and the Minecraft it
+      # launches (Java/LWJGL) both use X11; a dedicated uid can't auth to jrt's XWayland
+      # on its own, so x11Forward (customConfig below) grants it via the launcher's
+      # xhost. Config/instances run as app-prismlauncher, hidden from jrt.
+      defaultBackend = "systemd";
+      storage = [
+        {
+          path = ".config/PrismLauncher";
+          tier = "persist";
+        }
+        {
+          path = ".local/share/PrismLauncher";
+          tier = "large";
+        }
+        {
+          path = ".cache/PrismLauncher";
+          tier = "cache";
+        }
+      ];
 
       # Additional sandbox configuration
       nixpakModules = [
@@ -69,6 +75,19 @@
           }
         )
       ];
+
+      customConfig =
+        { config, lib, ... }:
+        {
+          modules.apps.prismlauncher.sandbox.dedicatedUser = true;
+          # X11 forward for the Qt launcher + Java/LWJGL game (see
+          # xwayland-forward.md; shares jrt's X server).
+          modules.apps.prismlauncher.sandbox.x11Forward = true;
+          users.users."app-prismlauncher".extraGroups = [
+            "video"
+            "audio"
+          ];
+        };
     };
   }
 )

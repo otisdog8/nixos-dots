@@ -77,6 +77,12 @@ in
     '';
   };
 
+  # impermanence creates the ~/.ssh parent for the persisted key files (below)
+  # with default 0755 perms. Force it to 0700 from early boot — before the
+  # home-manager fixSshConfigPermissions hook also fixes it — so the private
+  # key never sits in a group/world-listable directory.
+  systemd.tmpfiles.rules = [ "d /home/jrt/.ssh 0700 jrt users - -" ];
+
   environment.persistence = {
     "/persist" = {
       enable = true; # NB: Defaults to true, not needed
@@ -102,14 +108,21 @@ in
           ".minecraft"
           ".config/minecraft"
           ".config/op"
-          {
-            directory = ".ssh";
-            mode = "0700";
-          }
         ];
+        # NB: ~/.ssh is deliberately NOT persisted as a directory. Persisting
+        # the whole dir let an attacker with home-folder write drop a malicious
+        # ~/.ssh/config (ProxyCommand / Match exec runs on every ssh + git push)
+        # or an authorized_keys entry that survived reboot. Instead we persist
+        # only the private key material; ~/.ssh/config is regenerated read-only
+        # each boot by home-manager (mixins/cli), and authorized_keys is ignored
+        # by sshd (authorizedKeysInHomedir=false in remote-access.nix). The .ssh
+        # dir itself is recreated 0700 by the HM fixSshConfigPermissions hook.
         files = [
           ".bash_history"
           ".zsh_history"
+          ".ssh/id_ed25519"
+          ".ssh/id_ed25519.pub"
+          ".ssh/known_hosts"
         ];
       };
     };

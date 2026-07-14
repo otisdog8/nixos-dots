@@ -57,7 +57,6 @@ let
     -----------------------------------------------------------------
     hl.on("hyprland.start", function()
       hl.exec_cmd("1password --silent")
-      hl.exec_cmd("op-fuzzel-daemon")
       hl.exec_cmd("kwalletd6")
       hl.exec_cmd("systemctl --user start hyprpolkitagent")
       hl.exec_cmd("polkit-agent-helper-1")
@@ -73,9 +72,6 @@ let
     -- Keybindings
     -----------------------------------------------------------------
     hl.bind(mod .. " + V", hl.dsp.exec_cmd("cliphist list | fuzzel --dmenu | cliphist decode | wl-copy"))
-    hl.bind(mod .. " + o", hl.dsp.exec_cmd("op-fuzzel"))
-    hl.bind(mod .. " + SHIFT + o", hl.dsp.exec_cmd("op-fuzzel-browser"))
-    hl.bind(mod .. " + ALT + o", hl.dsp.exec_cmd("op-auth me@rooty.dev"))
     hl.bind(mod .. " + n", hl.dsp.exec_cmd("nix-search-fuzzel"))
     hl.bind(mod .. " + SHIFT + n", hl.dsp.exec_cmd("nix-search-clipboard"))
     hl.bind("CTRL + ALT + l", hl.dsp.exec_cmd("loginctl lock-session"))

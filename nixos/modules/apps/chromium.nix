@@ -18,12 +18,39 @@
 
     config.app = {
       name = "chromium";
-      package = pkgs.chromium;
+      # Force native Wayland (a dedicated uid can't auth to XWayland) + PipeWire
+      # screen capturer, exactly as zen/ungoogled-chromium do.
+      package = pkgs.symlinkJoin {
+        name = "chromium-wayland";
+        paths = [ pkgs.chromium ];
+        nativeBuildInputs = [ pkgs.makeWrapper ];
+        postBuild = ''
+          rm $out/bin/chromium
+          makeWrapper ${pkgs.chromium}/bin/chromium $out/bin/chromium \
+            --add-flags "--ozone-platform=wayland --enable-features=WebRtcPipeWireCapturer"
+        '';
+      };
       packageName = "chromium";
       desktopFileName = "chromium-browser.desktop";
 
-      # Chromium uses standard .config/chromium location
-      # chromium.basePath defaults to ".config/${name}" which is correct
+      # basePath defaults to .config/chromium (correct). Caches live under Default/,
+      # so profiles=["Default"] carves them (Cache/Code Cache/GPUCache/Dawn*/Service
+      # Worker/CacheStorage) to /cache.
+      chromium.profiles = [ "Default" ];
+
+      # Dedicated-uid + persistent, mirroring brave/zen: profile hidden from jrt and
+      # kept across reboots; caches carved to /cache by chromium.nix.
+      defaultBackend = "systemd";
+
+      customConfig =
+        { config, lib, ... }:
+        {
+          modules.apps.chromium.sandbox.dedicatedUser = true;
+          users.users."app-chromium".extraGroups = [
+            "video"
+            "audio"
+          ];
+        };
     };
   }
 )

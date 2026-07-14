@@ -1,16 +1,6 @@
-# Network access feature
+# Network access feature (capability-based; lowered per backend).
 { config, lib, ... }:
-
 {
   imports = [ ../app-spec.nix ];
-
-  config.app.nixpakModules = [
-    (
-      { config, lib, ... }:
-      {
-        bubblewrap.network = true;
-        etc.sslCertificates.enable = true;
-      }
-    )
-  ];
+  config.app.capabilities.network = true;
 }

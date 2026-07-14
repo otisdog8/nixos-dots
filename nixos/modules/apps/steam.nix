@@ -14,6 +14,10 @@
       ../../../lib/features/network.nix
       ../../../lib/features/audio.nix
       ../../../lib/features/xdg-desktop.nix
+      # Proton, game wrapper scripts, and r2modman's modded-launch scripts all exec a
+      # hardcoded /bin/sh, absent from a bwrap tmpfs root. Same fix r2modman needs; the
+      # full modded-launch chain (steam ↔ r2modman) still wants runtime testing.
+      ../../../lib/features/bin-sh.nix
     ];
 
     config.app = {
@@ -21,16 +25,40 @@
       package = pkgs.steam;
       packageName = "steam";
 
-      # Game library and installations (both go to large)
-      persistence.user.large = [
-        ".steam"
-        ".local/share/Steam"
-      ];
-
-      # Game saves (Steam library games)
-      persistence.user.persist = [
-        ".local/share/FasterThanLight"
-        ".local/share/Paradox Interactive/Stellaris/"
+      # v2 storage, but every entry is location = "home" (host-visible at ~, NOT a
+      # hidden stash). Two reasons this is mandatory:
+      #   1. r2modman (a separate same-uid sandbox) binds ~/.steam and
+      #      ~/.local/share/Steam rw to install mods into Steam's game dirs — a stash
+      #      would hide them from r2modman and break modding. (Full isolation waits on
+      #      the steam+r2modman shared-namespace work.)
+      #   2. location=home is the SAME impermanence path the legacy layout used, so
+      #      converting moves ZERO data — the 135G library stays exactly where it is.
+      # Same-uid nixpak (not dedicated): steam runs as jrt so jrt/r2modman can reach
+      # the library; the sandbox is the boundary, not host-hiding.
+      defaultBackend = "nixpak";
+      storage = [
+        # Library + installs: large (persisted, not backed up), host-visible.
+        {
+          path = ".steam";
+          tier = "large";
+          location = "home";
+        }
+        {
+          path = ".local/share/Steam";
+          tier = "large";
+          location = "home";
+        }
+        # Non-Steam-cloud game saves: persist (backed up), host-visible.
+        {
+          path = ".local/share/FasterThanLight";
+          tier = "persist";
+          location = "home";
+        }
+        {
+          path = ".local/share/Paradox Interactive/Stellaris";
+          tier = "persist";
+          location = "home";
+        }
       ];
 
       # Enable input devices for game controllers
