@@ -246,8 +246,10 @@
 #     persistData = true;     # Persist data files
 #     enableCache = true;     # Enable caching
 #
-#     # Sandboxing
-#     sandbox.enable = true;   # Enable nixpak sandboxing
+#     # Sandboxing. Prefer a v2 backend (config.app.defaultBackend =
+#     # "nixpak"/"systemd") + app.storage. sandbox.enable is the legacy in-session
+#     # wrap, kept for not-yet-migrated apps:
+#     sandbox.enable = true;   # Enable the legacy nixpak wrap
 #     sandbox.extraBinds = [   # Additional bind mounts (relative to $HOME or absolute)
 #       "Documents/vault"      # Relative: expands to $HOME/Documents/vault
 #       "/mnt/data"            # Absolute: used as-is

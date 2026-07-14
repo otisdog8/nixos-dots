@@ -332,6 +332,15 @@ let
 
   enabledServers = lib.filterAttrs (_: s: s.enable) cfg.servers;
 
+  # Exact allowlist for the polkit rule: this module's own units plus any
+  # externally-declared ones (nix-minecraft's minecraft-server-<name>.service).
+  # NEVER a prefix match — manage-units also gates StartTransientUnit, so a
+  # `minecraft-` prefix would let `mc` systemd-run an arbitrary ROOT unit named
+  # "minecraft-…". Same fix the sandbox module documents (system/sandbox.nix).
+  managedUnits =
+    map (n: "minecraft-${n}.service") (lib.attrNames enabledServers) ++ cfg.extraManagedUnits;
+  allowedUnitsJson = builtins.toJSON managedUnits;
+
 in
 {
   options.modules.apps.${appName} = {
@@ -341,6 +350,20 @@ in
       type = lib.types.attrsOf (lib.types.submodule serverOpts);
       default = { };
       description = "Minecraft server instances";
+    };
+
+    extraManagedUnits = lib.mkOption {
+      type = lib.types.listOf lib.types.str;
+      default = [ ];
+      example = [ "minecraft-server-lobby.service" ];
+      description = ''
+        Additional EXACT unit names the `mc` user may start/stop/restart via the
+        polkit rule, beyond this module's own minecraft-<name>.service units.
+        Used for units declared by other frameworks that AutoServer also drives —
+        notably nix-minecraft's minecraft-server-<name>.service. Must be exact
+        names with the .service suffix: the polkit rule is an exact allowlist, so a
+        typo silently drops the grant (it never widens it).
+      '';
     };
 
     operators = lib.mkOption {
@@ -396,18 +419,28 @@ in
     # attach to a server console: `tmux -S /run/minecraft/<name>.sock attach`.
     environment.systemPackages = [ pkgs.tmux ];
 
-    # Let the `mc` user manage minecraft-* units without sudo. This is what
+    # Let the `mc` user manage its Minecraft units without sudo. This is what
     # AutoServer (running inside Velocity as `mc`) uses to start/stop backends.
-    # Matches both `minecraft-<name>` (this module) and `minecraft-server-<name>`
-    # (nix-minecraft). With system services, PrivateUsers keeps the mc identity
-    # intact (only other users collapse to nobody), so the rule applies.
+    # Covers both `minecraft-<name>` (this module) and, via extraManagedUnits,
+    # `minecraft-server-<name>` (nix-minecraft). With system services, PrivateUsers
+    # keeps the mc identity intact (only other users collapse to nobody).
+    #   - EXACT allowlist, not a `minecraft-` prefix match: manage-units also gates
+    #     StartTransientUnit, so a prefix would let mc systemd-run an arbitrary root
+    #     unit named "minecraft-…" (a root escalation). Only the real declared units
+    #     are permitted.
+    #   - Verb pinned to start/stop/restart/ref (AutoServer's on-demand lifecycle;
+    #     `--wait` adds ref). Everything else manage-units gates — set-property,
+    #     kill, freeze, clean, … — falls through to the admin default.
     security.polkit.enable = true;
     security.polkit.extraConfig = ''
       polkit.addRule(function(action, subject) {
         if (action.id == "org.freedesktop.systemd1.manage-units" &&
             subject.user == "mc") {
+          var allowed = ${allowedUnitsJson};
           var unit = action.lookup("unit");
-          if (unit && unit.indexOf("minecraft-") == 0) {
+          var verb = action.lookup("verb");
+          if (unit && allowed.indexOf(unit) >= 0 &&
+              (verb == "start" || verb == "stop" || verb == "restart" || verb == "ref")) {
             return polkit.Result.YES;
           }
         }

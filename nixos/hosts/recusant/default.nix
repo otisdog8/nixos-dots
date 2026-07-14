@@ -93,8 +93,12 @@
   # (the global trustedInterfaces = [ "tailscale0" ] makes 2049 belt-and-
   # suspenders, but keep it declared for clarity).
   services.nfs.server.enable = true;
+  # Scope to Tailscale's CGNAT range (100.64.0.0/10), not 100.0.0.0/8 — /8 also
+  # covers public 100.0.0.0–100.63.255.255, so a spoofed/off-tailnet source in that
+  # band would match. Tighten further to exact node IPs if the k8s node set is
+  # stable. Export is a dedicated dir (/export/k8s), never a system path.
   services.nfs.server.exports = ''
-    /export/k8s  100.0.0.0/8(rw,nohide,insecure,no_subtree_check,all_squash)
+    /export/k8s  100.64.0.0/10(rw,nohide,insecure,no_subtree_check,all_squash)
   '';
   networking.firewall.allowedTCPPorts = [ 2049 ];
 

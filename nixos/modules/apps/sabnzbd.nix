@@ -63,7 +63,11 @@ in
         User = cfg.user;
         Group = cfg.group;
         StateDirectory = "sabnzbd";
-        ExecStart = "${lib.getBin cfg.package}/bin/sabnzbd -d -f ${cfg.configFile}";
+        # Pin the listener to loopback (--server overrides the persisted ini's
+        # host/port). nginx proxies to 127.0.0.1:8080, so this forces ALL access
+        # through the TLS/auth reverse proxy — a tailnet peer can't hit the raw
+        # backend directly even though tailscale0 is a trusted firewall interface.
+        ExecStart = "${lib.getBin cfg.package}/bin/sabnzbd -d -f ${cfg.configFile} --server 127.0.0.1:8080";
       };
     };
 

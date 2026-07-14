@@ -119,10 +119,16 @@ let
   # Flatpak app-id — scopes the cross-uid doc bind to this app's by-app/<appId>.
   appId = innerNix.appId;
 
-  # WAYLAND_DISPLAY is the only session var we can't state as a Nix literal, so it
-  # is globbed at runtime (Nix-controlled, no jrt input). Done for dedicated and
-  # for same-uid `defaults` mode; same-uid `inject` gets it from the env file.
-  needsGlob = dedicated || cfg.sandbox.envMode == "defaults";
+  # WAYLAND_DISPLAY is PINNED to the compositor's real socket name (Hyprland uses
+  # wayland-1) rather than globbed wayland-* + first-match. Globbing was a
+  # confused-deputy hole: a compromised jrt could pre-create a lexically-earlier
+  # socket (e.g. wayland-0) in its own runtime dir and the launcher (root) would
+  # bind/select it, letting jrt intercept a dedicated app's live display/input.
+  # Pinning the known name closes that. Set for dedicated and same-uid `defaults`
+  # mode; same-uid `inject` gets it from the env file. If the compositor is ever
+  # reconfigured to a different socket name, update `waylandSocket` below.
+  needsWaylandDisplay = dedicated || cfg.sandbox.envMode == "defaults";
+  waylandSocket = "wayland-1";
 
   runScript = pkgs.writeShellScript "sandbox-run-${appName}" ''
     set -eu
@@ -137,12 +143,13 @@ let
       ${co}/mkdir -p "${runtimeDir}"
       ${co}/chown "${appUser}" "${runtimeDir}" 2>/dev/null || true
       ${co}/chmod 700 "${runtimeDir}"
-      for __s in ${jrtRuntime}/wayland-* ${jrtRuntime}/pipewire-* ${jrtRuntime}/pulse; do
+      for __s in ${jrtRuntime}/${waylandSocket} ${jrtRuntime}/pipewire-* ${jrtRuntime}/pulse; do
         [ -e "$__s" ] || continue
         # Refuse a symlink or a non-socket/dir: a compromised jrt could plant one in
         # its own runtime dir to trick root into bind-mounting an arbitrary host file
         # (e.g. /etc/shadow) into the app's runtime as "wayland-1". Only relay the
-        # real sockets (and the pulse dir) we expect.
+        # real sockets (and the pulse dir) we expect. The wayland name is pinned (not
+        # globbed) so jrt can't win by planting a lexically-earlier socket.
         [ -L "$__s" ] && continue
         { [ -S "$__s" ] || [ -d "$__s" ]; } || continue
         __n="$(${co}/basename "$__s")"
@@ -176,9 +183,9 @@ let
         ${ul}/mount --bind "${bridgeSock}" "${runtimeDir}/bus" 2>/dev/null || true
       fi
     ''}
-    ${lib.optionalString needsGlob ''
-      __w=$(${co}/ls ${jrtRuntime}/wayland-* 2>/dev/null | ${co}/head -1 || true)
-      if [ -n "''${__w:-}" ]; then export WAYLAND_DISPLAY="$(${co}/basename "$__w")"; fi
+    ${lib.optionalString needsWaylandDisplay ''
+      # Pinned, not globbed — see the waylandSocket comment above.
+      if [ -e "${jrtRuntime}/${waylandSocket}" ]; then export WAYLAND_DISPLAY=${waylandSocket}; fi
     ''}
     ${lib.concatMapStringsSep "\n" (
       e:
@@ -562,7 +569,7 @@ in
           # directly to the socket skips the runtime-dir setup entirely.
           "PULSE_SERVER=unix:${runtimeDir}/pulse/native"
         ]
-        ++ lib.optionals needsGlob [
+        ++ lib.optionals needsWaylandDisplay [
           "XDG_RUNTIME_DIR=${runtimeDir}"
           "DBUS_SESSION_BUS_ADDRESS=unix:path=${runtimeDir}/bus"
         ]

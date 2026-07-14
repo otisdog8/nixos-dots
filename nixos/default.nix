@@ -134,8 +134,11 @@
 
   # Security
   security.rtkit.enable = true;
+  # sudo tickets expire after 1h (was -1 = never expire, so a single sudo left the
+  # session root-capable indefinitely). 60 min balances convenience vs. a stolen
+  # ticket's blast radius.
   security.sudo.extraConfig = ''
-    Defaults        timestamp_timeout=-1
+    Defaults        timestamp_timeout=60
   '';
 
   #systemd.coredump.enable = false;
@@ -159,7 +162,11 @@
     extraGroups = [
       "wheel"
       "tss"
-      "input"
+      # NB: no "input". Membership grants raw read/write on /dev/input/* (keylogging
+      # + input injection, bypassing logind's per-session device ACLs). Hyprland
+      # gets input via logind/seatd seat management on the active session, not this
+      # group, so jrt doesn't need it. Apps that genuinely need /dev/input (e.g.
+      # prismlauncher) get it on their own dedicated uid, not via jrt.
       "audio"
       "video"
       "kvm"

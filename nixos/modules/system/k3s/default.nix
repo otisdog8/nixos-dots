@@ -108,6 +108,7 @@ in
         6443 # k3s: required so that pods can reach the API server (running on port 6443 by default)
         2379 # k3s, etcd clients: required if using a "High Availability Embedded etcd" configuration
         2380 # k3s, etcd peers: required if using a "High Availability Embedded etcd" configuration
+        2381 # k3s, etcd metrics: --etcd-expose-metrics binds the metrics listener here (Prometheus scrape)
       ];
 
       allowedUDPPorts = [
@@ -142,6 +143,13 @@ in
         "--kube-apiserver-arg default-unreachable-toleration-seconds=60"
         "--kube-controller-manager-arg node-monitor-grace-period=20s"
         "--kubelet-arg node-status-update-frequency=2s"
+        # Expose embedded-etcd metrics for Prometheus. Boolean flag: moves etcd's
+        # listen-metrics-urls off loopback (http://127.0.0.1:2381) onto this node's
+        # bind-address, so metrics are scrapable at http://<node-ip>:2381/metrics
+        # (node-ip is the tailnet IP set per host in extraFlags). Server-only; set
+        # on every server so each embedded-etcd member is scraped. Reached over the
+        # trusted tailscale0 interface (2381 also listed in the firewall below).
+        "--etcd-expose-metrics"
         # Image GC (thresholds + age-based eviction) lives in kubeletConfig above,
         # because imageMaximumGCAge is config-file-only. k3s ships no kubelet
         # config of its own, so pointing --config here is safe (flags still win

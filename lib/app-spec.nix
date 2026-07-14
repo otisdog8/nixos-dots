@@ -38,12 +38,12 @@
       description = "org.freedesktop.Application D-Bus name (or prefix) for URL forwarding to a running instance.";
     };
 
-    # Default sandbox backend (Layer-2). Apps opt into v2 by setting this to
-    # nixpak/systemd/vm (or "none" for unsandboxed v2); the generated
-    # sandbox.backend option defaults to it. "legacy" keeps the pre-v2 path.
-    # This lives in the app-spec (independent eval) rather than being set via
-    # customConfig, so reading the effective backend never forces the outer
-    # config mid-merge.
+    # The app's sandbox backend (Layer-2). Apps opt into v2 by setting this to
+    # nixpak/systemd/vm (or "none" for unsandboxed v2); "legacy" keeps the pre-v2
+    # path. This IS the effective backend — there is no per-host sandbox.backend
+    # override (it would be inert; see lib/apps.nix). It lives in the app-spec
+    # (independent eval) rather than being set via customConfig, so reading the
+    # effective backend never forces the outer config mid-merge.
     defaultBackend = lib.mkOption {
       type = lib.types.enum [
         "legacy"

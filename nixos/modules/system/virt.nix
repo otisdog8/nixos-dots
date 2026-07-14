@@ -23,8 +23,16 @@ in
       virt-manager
     ];
 
-    # Enable libvirtd daemon
-    virtualisation.libvirtd.enable = true;
+    # Enable libvirtd daemon. Run guest QEMU processes as the unprivileged
+    # qemu-libvirtd user, NOT root (upstream's default): membership in libvirtd
+    # otherwise = effective root, since a client can launch a root QEMU with host
+    # paths / block devices attached — which would also defeat the dedicated-uid
+    # sandboxes' "protect jrt-compromise" goal (jrt is in libvirtd). With
+    # runAsRoot = false a compromised guest/client is confined to that uid's DAC.
+    virtualisation.libvirtd = {
+      enable = true;
+      qemu.runAsRoot = false;
+    };
 
     # Enable virt-manager
     programs.virt-manager.enable = true;

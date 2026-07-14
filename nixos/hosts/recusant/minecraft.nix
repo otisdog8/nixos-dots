@@ -718,6 +718,13 @@ in
     operators = globalOperators;
     whitelist = backendWhitelist; # only godman180 on the modded backends for now
     environmentFile = config.sops.templates."minecraft.env".path; # forwarding secret
+    # nix-minecraft units (velocity, lobby, sdfs, …) that AutoServer also drives,
+    # for the exact-allowlist polkit grant. Derived from the declared servers so it
+    # tracks additions automatically — nix-minecraft names its units
+    # minecraft-server-<name>.service.
+    extraManagedUnits = map (n: "minecraft-server-${n}.service") (
+      lib.attrNames config.services.minecraft-servers.servers
+    );
     servers = lib.mapAttrs (_: b: {
       enable = true;
       autoStart = false; # started on connect by AutoServer

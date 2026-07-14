@@ -68,8 +68,7 @@
     # off the encrypted backing swap. Defaults: 20% pool, swappiness 30.
     system.zswap.enable = true;
 
-    # System hardening baseline (k3s-node profile leaves /tmp on disk, which
-    # matters here because arquitens NFS-exports /tmp to the tailnet).
+    # System hardening baseline.
     system.hardening = {
       enable = true;
       profile = "k3s-node";
@@ -88,11 +87,10 @@
     };
   };
 
-  # NFS server
-  services.nfs.server.enable = true;
-  services.nfs.server.exports = ''
-    /tmp 100.0.0.0/8(rw,nohide,insecure,no_subtree_check,all_squash)
-  '';
+  # NFS server removed: it exported /tmp rw to the whole 100.0.0.0/8 with
+  # insecure + all_squash — a world-writable system dir served to the tailnet (and
+  # then some, given the /8). Nothing mounts it. Re-add as a dedicated export dir
+  # scoped to exact node IPs if arquitens ever needs to serve storage.
 
   # Firewall deferred — see DNS.md (rollout) for the per-host flip recipe.
   networking.firewall.enable = lib.mkForce false;

@@ -162,6 +162,50 @@ let
   envFileContent =
     inst: lib.concatStringsSep "\n" (lib.mapAttrsToList (k: v: "${k}=${v}") inst.environment);
 
+  # Config + env seeding, lifted from upstream's activation script — but run as
+  # the AGENT uid, not root. The old root activation script wrote (mkdir/chown/
+  # chmod/merge/touch/install/cat) through stateDir/.hermes, which the agent OWNS
+  # (0750 agent:agent): a compromised agent could swap any of those paths for a
+  # symlink and root would follow it — chown'ing or writing an arbitrary target
+  # (a direct root escalation). Running as the agent removes the confused deputy:
+  # every write below can only reach files the agent's own uid can already reach
+  # (a swapped symlink is DAC-denied off-tree). Dirs are pre-created symlink-safely
+  # by systemd-tmpfiles; sops secrets arrive via systemd LoadCredential (root reads
+  # them into a per-uid $CREDENTIALS_DIRECTORY — the agent never opens the sops
+  # paths and root never writes through the agent's tree).
+  setupScript =
+    name: inst:
+    pkgs.writeShellScript "hermes-setup-${name}" ''
+      set -eu
+      hermesHome=${lib.escapeShellArg "${inst.stateDir}/.hermes"}
+
+      # Merge Nix settings over the live config.yaml (Nix keys win, agent/runtime
+      # keys survive).
+      ${configMergeScript} ${generatedConfigFile name inst} "$hermesHome/config.yaml"
+      chmod 0640 "$hermesHome/config.yaml"
+
+      # Managed-mode marker: hermes refuses config-mutating CLI paths.
+      : > "$hermesHome/.managed"
+      chmod 0644 "$hermesHome/.managed"
+
+      # Seed .env: declared non-secret env, then sops secrets from systemd creds.
+      umask 0137
+      {
+      cat <<'HERMES_NIX_ENV_EOF'
+      ${envFileContent inst}
+      HERMES_NIX_ENV_EOF
+      ${lib.concatStringsSep "\n" (
+        lib.imap0 (i: _f: ''
+          if [ -f "$CREDENTIALS_DIRECTORY/env${toString i}" ]; then
+            printf '\n'
+            cat "$CREDENTIALS_DIRECTORY/env${toString i}"
+          fi
+        '') inst.environmentFiles
+      )}
+      } > "$hermesHome/.env"
+      chmod 0640 "$hermesHome/.env"
+    '';
+
   # Shared unit scaffolding for gateway + dashboard: identity, env, hardening.
   baseUnit = name: inst: {
     after = [ "network-online.target" ];
@@ -244,50 +288,37 @@ in
       ]) instances
     );
 
-    # Config + env seeding, lifted from upstream's activation script. Runs
-    # after sops secrets are decrypted so environmentFiles are readable.
-    system.activationScripts."hermes-agents-setup" =
-      lib.stringAfter
-        ([ "users" ] ++ lib.optional (config.system.activationScripts ? setupSecrets) "setupSecrets")
-        (
-          lib.concatStrings (
-            lib.mapAttrsToList (name: inst: ''
-              # ── instance: ${name} ──
-              mkdir -p ${inst.stateDir}/.hermes ${inst.workingDirectory}
-              chown ${name}:${name} ${inst.stateDir} ${inst.stateDir}/.hermes ${inst.workingDirectory}
-              chmod 0750 ${inst.stateDir} ${inst.stateDir}/.hermes ${inst.workingDirectory}
-
-              # Merge Nix settings over the live config.yaml (Nix keys win,
-              # agent/runtime-added keys survive).
-              ${configMergeScript} ${generatedConfigFile name inst} ${inst.stateDir}/.hermes/config.yaml
-              chown ${name}:${name} ${inst.stateDir}/.hermes/config.yaml
-              chmod 0640 ${inst.stateDir}/.hermes/config.yaml
-
-              # Managed-mode marker: hermes refuses config-mutating CLI paths.
-              touch ${inst.stateDir}/.hermes/.managed
-              chown ${name}:${name} ${inst.stateDir}/.hermes/.managed
-              chmod 0644 ${inst.stateDir}/.hermes/.managed
-
-              # Seed .env: declared non-secret env, then sops files appended.
-              _envfile="${inst.stateDir}/.hermes/.env"
-              install -o ${name} -g ${name} -m 0640 /dev/null "$_envfile"
-              cat > "$_envfile" <<'HERMES_NIX_ENV_EOF'
-              ${envFileContent inst}
-              HERMES_NIX_ENV_EOF
-              ${lib.concatMapStrings (f: ''
-                if [ -f "${f}" ]; then
-                  echo "" >> "$_envfile"
-                  cat "${f}" >> "$_envfile"
-                fi
-              '') inst.environmentFiles}
-            '') instances
-          )
-        );
-
     systemd.services = lib.mkMerge (
       lib.mapAttrsToList (
         name: inst:
         {
+          # Seed config.yaml/.managed/.env as the agent uid before the gateway
+          # (and dashboard) start. Required-by + before makes them fail closed if
+          # seeding fails, and re-runs on every gateway (re)start — matching the
+          # old activation-script's "re-seed each activation" behaviour. Secrets
+          # come in as systemd credentials, never root-written through the tree.
+          "${name}-setup" = {
+            description = "Hermes config/env seeding (${name})";
+            after = [ "systemd-tmpfiles-setup.service" ];
+            before = [
+              "${serviceName name}.service"
+            ]
+            ++ lib.optional inst.dashboard.enable "${serviceName name}-dashboard.service";
+            requiredBy = [
+              "${serviceName name}.service"
+            ]
+            ++ lib.optional inst.dashboard.enable "${serviceName name}-dashboard.service";
+            restartTriggers = [ (generatedConfigFile name inst) ];
+            serviceConfig = {
+              Type = "oneshot";
+              User = name;
+              Group = name;
+              UMask = "0027";
+              LoadCredential = lib.imap0 (i: f: "env${toString i}:${f}") inst.environmentFiles;
+              ExecStart = setupScript name inst;
+            };
+          };
+
           "${serviceName name}" = lib.mkMerge [
             (baseUnit name inst)
             {

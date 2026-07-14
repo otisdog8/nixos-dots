@@ -17,14 +17,20 @@ in
     ../../modules/apps/sabnzbd.nix
   ];
 
+  # No openFirewall: nginx reaches both backends over loopback (127.0.0.1, never
+  # firewalled), and the tailnet already reaches them via the global
+  # trustedInterfaces = [ "tailscale0" ]. openFirewall's ONLY effect was exposing
+  # the raw backend ports on LAN/WAN, letting a client bypass nginx's TLS + auth —
+  # exactly what we don't want. SAB is additionally pinned to loopback (see
+  # sabnzbd.nix) so even a tailnet peer must go through nginx.
   modules.apps.jellyfin = {
     enable = true;
-    openFirewall = true;
+    openFirewall = false;
   };
 
   modules.apps.sabnzbd = {
     enable = true;
-    openFirewall = true;
+    openFirewall = false;
   };
 
   services.nginx.virtualHosts."jellyfin.rooty.dev" = {

@@ -74,29 +74,22 @@
           description = "Whether to enable cache for ${appName}";
         };
 
+        # There is deliberately NO sandbox.backend override option: the effective
+        # backend is app.defaultBackend (app-spec, independent eval). Dispatch can't
+        # read a cfg.sandbox.* option in the mkIf conditions below without forcing
+        # the outer merge mid-collect → infinite recursion (see the backendResult
+        # comment). A per-host override would therefore be inert and misleading, so
+        # it isn't offered — set app.defaultBackend in the app module.
         sandbox = {
+          # Legacy in-session nixpak wrap toggle (defaultBackend = "legacy" apps).
+          # v2 apps ignore it — their backend is app.defaultBackend — but the app
+          # bundles still drive it via `enableSandboxing`, and it's the real sandbox
+          # switch for the remaining legacy app (slipstream). Retire it only after
+          # the last legacy app is migrated and the bundles stop setting it.
           enable = lib.mkOption {
             type = lib.types.bool;
             default = false;
-            description = "Whether to sandbox ${appName} using nixpak (legacy path)";
-          };
-
-          backend = lib.mkOption {
-            type = lib.types.enum [
-              "legacy"
-              "none"
-              "nixpak"
-              "systemd"
-              "vm"
-            ];
-            default = appCfg.defaultBackend;
-            description = ''
-              Sandbox backend (Layer-2 lowering). "legacy" = the untouched pre-v2
-              path driven by persistence.user.* + sandbox.enable. "none" = v2 but
-              unsandboxed (storage at its home location). nixpak/systemd/vm =
-              sandboxed. Defaults to app.defaultBackend; converted apps set that
-              and declare app.storage.
-            '';
+            description = "Sandbox ${appName} using the legacy in-session nixpak wrap (defaultBackend = \"legacy\" apps only).";
           };
 
           dedicatedUser = lib.mkOption {
@@ -174,8 +167,10 @@
           type = lib.types.package;
           readOnly = true;
           description = ''
-            The final package to use (sandboxed if sandbox.enable is true, otherwise the base package).
-            This is what gets installed in environment.systemPackages and should be used in customConfig.
+            The final package emitted by the app's backend: the base package, or a
+            sandbox wrapper (nixpak/systemd, or the legacy in-session wrap when
+            sandbox.enable is set). This is what gets installed in
+            environment.systemPackages and should be used in customConfig.
           '';
         };
 
@@ -191,7 +186,7 @@
       # Generate config from the app spec
       config =
         let
-          # Create sandboxed package if enabled
+          # Legacy in-session sandbox wrap (defaultBackend = "legacy" + sandbox.enable).
           sandboxedPackage =
             if cfg.sandbox.enable then
               let
@@ -263,12 +258,13 @@
           customCfg = appCfg.customConfig { inherit config lib pkgs; };
 
           # ── v2 backend dispatch (Layer 2) ─────────────────────────────────
-          # The effective backend comes from the app-spec (independent eval), NOT
-          # from reading cfg.sandbox.backend. Reading a cfg.sandbox.* option in a
-          # mkIf *condition* below would force the outer module merge to resolve
-          # that option while it is still collecting the very definitions the mkIf
-          # guards → infinite recursion. app.defaultBackend has no such dependency.
-          # Legacy apps (defaultBackend = "legacy") are entirely untouched.
+          # The effective backend comes from the app-spec (independent eval). It is
+          # NOT a cfg.sandbox.* option (and that's why no such override option is
+          # offered — see the sandbox options comment above): reading a cfg.sandbox.*
+          # option in a mkIf *condition* below would force the outer module merge to
+          # resolve that option while it is still collecting the very definitions the
+          # mkIf guards → infinite recursion. app.defaultBackend has no such
+          # dependency. Legacy apps (defaultBackend = "legacy") are untouched.
           effectiveBackend = appCfg.defaultBackend;
           isLegacy = effectiveBackend == "legacy";
           storage = import ./storage.nix { inherit lib; } {
