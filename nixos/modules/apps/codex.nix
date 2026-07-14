@@ -21,7 +21,10 @@
     config.app = {
       name = "codex";
       packageName = "codex";
-      package = pkgs.codex;
+      # Track the fresher nixos-unstable-small channel so codex updates land
+      # sooner than the main nixos-unstable pin (still binary-cached), matching
+      # claude-code.
+      package = pkgs.unstable-small.codex;
 
       defaultBackend = "nixpak";
 
