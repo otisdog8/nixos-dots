@@ -801,7 +801,14 @@ in
       enable = true;
       autoStart = true;
       openFirewall = false; # HAProxy owns the public port (see services.haproxy)
-      package = pkgs.velocityServers.velocity;
+      # PINNED to the latest STABLE 3.x, not the `velocity` alias. nix-minecraft's
+      # alias advanced to 4.0.0-SNAPSHOT (the Velocity 4.0 rewrite), which (a) needs
+      # Java 25 while nix-minecraft launches it with jre_headless = Java 21 →
+      # UnsupportedClassVersionError (class 69.0 vs max 65.0), a startup crashloop,
+      # and (b) has a new plugin API that would break our 3.x plugins (AutoServer,
+      # ambassador, owo-velocity, the prometheus exporter). 3.5.1 runs on the
+      # existing Java 21 and keeps plugin compat. Re-pin on nix-minecraft bumps.
+      package = pkgs.velocityServers.velocity-3_5_1-build_615;
       # Bumped known-packs cap for heavily-modded backends (default 64 can crash
       # the proxy during 1.20.5+ known-pack negotiation).
       #
