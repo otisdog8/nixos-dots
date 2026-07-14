@@ -170,7 +170,11 @@
       "audio"
       "video"
       "kvm"
-      "libvirtd"
+      # NB: no "libvirtd". A system-mode libvirt r/w connection is ≈ a root shell
+      # (define a domain with any host disk / <qemu:commandline> and start it), so
+      # the group is effectively root and would undercut the dedicated-uid sandbox
+      # threat model. qemu.runAsRoot = false (virt.nix) contains the guest, not the
+      # client. Manage system VMs with sudo, or a rootless qemu:///session.
       "networkmanager"
     ];
     packages = with pkgs; [

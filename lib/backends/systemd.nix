@@ -251,30 +251,23 @@ let
         ${ul}/mount --bind "${e.stashPath}" "$__t"
       ''
     ) stashEntries}
-    ${lib.optionalString (appCfg.dbusName != "") ''
-      # URL/file args the launcher stashed for this fresh launch (null-delimited; only
-      # dbusName apps stash them). Read as ARGS (not env — safe to source from jrt) and
-      # pass to the post-drop app.
-      __args=()
-      if [ -r "${jrtRuntime}/sandbox-${appName}.args" ]; then
-        while IFS= read -r -d "" __a; do __args+=("$__a"); done < "${jrtRuntime}/sandbox-${appName}.args"
-      fi
-    ''}
     ${
-      let
-        # NB: normal "…" string, NOT ''…'' — an indented string's leading space is
-        # stripped as common indentation, which would glue the binary to its first arg
-        # (`zen-beta--name`). The leading space here is load-bearing.
-        appArgs = lib.optionalString (appCfg.dbusName != "") " \"\${__args[@]}\"";
-      in
+      # No cold-launch argv forwarding. URLs reach an ALREADY-RUNNING instance via
+      # the launcher's OpenURL path below; we deliberately do NOT read a jrt-owned
+      # .args file here. Reading it as root (pre-drop) was a file-read oracle: jrt
+      # could symlink the path to /proc/<root-service>/environ and leak the root
+      # phase's env secrets into the app's argv (observable via procfs), or point it
+      # at /dev/zero/a FIFO for memory-exhaustion/hang. A cold launch just starts the
+      # app with no args; the URL isn't forwarded (accepted tradeoff — click again
+      # once it's up).
       if dedicated then
         ''
           __u=$(${co}/id -u ${appUser}); __g=$(${co}/id -g ${appUser})
-          exec ${ul}/setpriv --reuid="$__u" --regid="$__g" --init-groups ${innerPkg}/bin/${binName}${appArgs}
+          exec ${ul}/setpriv --reuid="$__u" --regid="$__g" --init-groups ${innerPkg}/bin/${binName}
         ''
       else
         ''
-          exec ${ul}/setpriv --reuid=${uid} --regid=${gid} --init-groups ${innerPkg}/bin/${binName}${appArgs}
+          exec ${ul}/setpriv --reuid=${uid} --regid=${gid} --init-groups ${innerPkg}/bin/${binName}
         ''
     }
   '';
@@ -341,10 +334,9 @@ let
         fi
         exit 0
       fi
-      # Fresh launch: stash args (null-delimited) for the runScript to pass to the app.
-      ${co}/rm -f "${jrtRuntime}/sandbox-${appName}.args"
-      ${co}/touch "${jrtRuntime}/sandbox-${appName}.args"
-      for __a in "$@"; do ${co}/printf '%s\0' "$__a" >> "${jrtRuntime}/sandbox-${appName}.args"; done
+      # Not running: fall through to start the service. Cold-launch URL/file args are
+      # intentionally NOT forwarded — the old jrt-owned .args stash was a root-read
+      # oracle (see runScript). The app opens; click the link again once it's up.
     ''}
     ${
       if dedicated then
