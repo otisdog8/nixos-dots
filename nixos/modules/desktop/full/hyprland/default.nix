@@ -56,7 +56,6 @@ let
     -- Autostart
     -----------------------------------------------------------------
     hl.on("hyprland.start", function()
-      hl.exec_cmd("1password --silent")
       hl.exec_cmd("kwalletd6")
       hl.exec_cmd("systemctl --user start hyprpolkitagent")
       hl.exec_cmd("polkit-agent-helper-1")
