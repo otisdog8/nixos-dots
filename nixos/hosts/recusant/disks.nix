@@ -4,7 +4,14 @@
 }:
 {
 
-  boot.initrd.luks.devices."luks".device = "/dev/disk/by-uuid/1d7cd1ea-6803-42bd-bbfd-659abfa846e2";
+  boot.initrd.luks.devices."luks" = {
+    device = "/dev/disk/by-uuid/1d7cd1ea-6803-42bd-bbfd-659abfa846e2";
+    # TRIM passthrough so the weekly fstrim (services.fstrim, on by default here)
+    # and btrfs's own discards actually reach the SSD — dm-crypt drops them
+    # otherwise. Trade-off: this reveals which ciphertext blocks are unused (not
+    # their contents), the standard SSD-vs-LUKS compromise the other nodes accept.
+    allowDiscards = true;
+  };
 
   fileSystems = {
     "/" = {
@@ -135,7 +142,15 @@
   swapDevices = [
     {
       device = "/dev/disk/by-partuuid/db8f005c-41f6-4d38-8f6c-36985f60a6dd";
-      randomEncryption.enable = true;
+      randomEncryption = {
+        enable = true;
+        # TRIM freed swap slots (fstrim can't reach swap) so zswap's backing
+        # device doesn't accumulate stale blocks on the SSD. On a randomEncryption
+        # swap this reveals *which* blocks are unused (not their contents); an
+        # acceptable trade for a scratch swap with no hibernation image.
+        allowDiscards = true;
+      };
+      discardPolicy = "both";
     }
   ];
 
