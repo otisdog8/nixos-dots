@@ -46,7 +46,7 @@
 
   # ── Secrets ────────────────────────────────────────────────────────────────
   # Whole-file dotenv (key = "" means "the entire file is the secret").
-  # sops base config (defaultSopsFile + host age key) lives in ./minecraft.nix.
+  # sops base config (defaultSopsFile + host age key) lives in ./default.nix.
   sops.secrets."agent-auth/env" = {
     format = "dotenv";
     sopsFile = ./secrets/agent-auth.env;

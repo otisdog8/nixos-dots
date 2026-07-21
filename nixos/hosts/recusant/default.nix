@@ -39,6 +39,7 @@
 
   imports = [
     inputs.disko.nixosModules.disko
+    inputs.sops-nix.nixosModules.sops
     ./disks.nix
     ./garage.nix
     ./attic.nix
@@ -63,6 +64,13 @@
     # Desktop environment
     ../../modules/desktop/full
   ];
+
+  # Host-wide sops-nix base config; per-secret declarations live next to their
+  # consumers (minecraft.nix, ddns.nix, attic.nix, agent-auth.nix, ...).
+  sops = {
+    defaultSopsFile = ./secrets/recusant.yaml;
+    age.sshKeyPaths = [ "/etc/ssh/ssh_host_ed25519_key" ];
+  };
 
   # Enable full desktop environment
   modules.desktop.full.enable = true;

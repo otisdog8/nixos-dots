@@ -10,7 +10,7 @@
 # loads it via systemd LoadCredential and expects JUST the token (NOT the legacy
 # `CLOUDFLARE_API_TOKEN=...` env form — it errors out on that), so we point
 # apiTokenFile straight at the decrypted sops secret. sops base config
-# (defaultSopsFile + host age key) is declared in ./minecraft.nix.
+# (defaultSopsFile + host age key) is declared in ./default.nix.
 #
 # ── One-time bootstrap on recusant ───────────────────────────────────────────
 #   1. Create a Cloudflare API token (or reuse an existing rooty.dev DNS token)

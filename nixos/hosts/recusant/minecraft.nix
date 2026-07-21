@@ -608,14 +608,11 @@ in
   imports = [
     ../../modules/apps/minecraft-server.nix
     inputs.nix-minecraft.nixosModules.minecraft-servers
-    inputs.sops-nix.nixosModules.sops
   ];
 
-  # ── Secrets (sops-nix, recusant only) ─────────────────────────────────────
+  # ── Secrets ───────────────────────────────────────────────────────────────
+  # sops base config (defaultSopsFile + host age key) lives in ./default.nix.
   sops = {
-    defaultSopsFile = ./secrets/recusant.yaml;
-    age.sshKeyPaths = [ "/etc/ssh/ssh_host_ed25519_key" ];
-
     secrets."minecraft-forwarding-secret" = {
       owner = "mc";
       group = "mc";

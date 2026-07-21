@@ -49,7 +49,7 @@ in
   # ── Secret ─────────────────────────────────────────────────────────────────
   # Whole-file dotenv (key = "" means "the entire file is the secret"): holds
   # ATTIC_SERVER_TOKEN_RS256_SECRET_BASE64 + the Garage S3 access key. sops base
-  # config (defaultSopsFile + host age key) lives in ./minecraft.nix.
+  # config (defaultSopsFile + host age key) lives in ./default.nix.
   sops.secrets."atticd/env" = {
     format = "dotenv";
     sopsFile = ./secrets/atticd.env;
