@@ -169,6 +169,20 @@ in
       "ceph"
     ];
 
+    # Ceph OSD drives: the Micron 5300 PRO SATA SSDs have power-loss protection,
+    # so the volatile write cache buys nothing — every OSD sync write just pays
+    # for a cache flush. Switching to "write through" lets the drive ack fsync
+    # from its capacitor-backed buffer: measured 2x on arquitens (fio 4k
+    # randwrite fsync=1: 10.2k -> 20.4k IOPS, avg sync latency 91us -> 43us).
+    # cache_type resets on power cycle, hence udev. The glob stays specific to
+    # the 5300 PRO 1.92TB — broader Micron globs (MTFDDAK*) would also catch
+    # non-PLP client drives, where this would tank write performance. sysfs
+    # space-pads the model to 16 chars, so the trailing * is load-bearing.
+    # Verify after reboot: cat /sys/class/scsi_disk/*/cache_type
+    services.udev.extraRules = ''
+      ACTION=="add|change", SUBSYSTEM=="scsi_disk", ATTR{device/model}=="MTFDDAK1T9TDS*", ATTR{cache_type}="write through"
+    '';
+
     # Old layout only: nodes with a dedicated raw Ceph partition (cephLoopback =
     # false) let rook claim the partition directly and drop this entirely.
     systemd.services.k3sloop = lib.mkIf cfg.cephLoopback {
