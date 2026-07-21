@@ -117,7 +117,7 @@
     # new LUKS and a known-good boot, recapture with
     #   sudo systemd-analyze pcrs 15 --json=short
     # and paste the new sha256 here, then rebuild.
-    expectedPcr15 = "b4074ce9edb24552602ca6dd4eb01d8b74d1a374ca3945795e2403d56dabab44";
+    expectedPcr15 = "922711f9130d4337d945560c9e8b764a1faf3563ca27f1dcb9637b3fc2ed5dea";
   };
 
   # NFS server for k8s storage. Export and firewall both pin to the tailnet
