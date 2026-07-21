@@ -38,6 +38,7 @@
   };
 
   imports = [
+    inputs.disko.nixosModules.disko
     ./disks.nix
     ./garage.nix
     ./attic.nix
@@ -101,6 +102,13 @@
   # into expectedPcr15, rebuild, and reboot.
   modules.system.pcr-verification = {
     enable = true;
+    # New drive = new LUKS mapper name (see disks.nix) so disko can format it live.
+    deviceName = "cryptrecusant";
+    # STALE after the drive swap: PCR15 is measured off the new LUKS volume, so
+    # this hash won't match on the migrated drive. After re-enrolling TPM2 on the
+    # new LUKS and a known-good boot, recapture with
+    #   sudo systemd-analyze pcrs 15 --json=short
+    # and paste the new sha256 here, then rebuild.
     expectedPcr15 = "b4074ce9edb24552602ca6dd4eb01d8b74d1a374ca3945795e2403d56dabab44";
   };
 
