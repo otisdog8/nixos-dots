@@ -4,7 +4,14 @@ keys:
   # Admin workstation (constitution host key). Lets you edit secrets directly
   # from constitution without SSHing to a host that holds a recipient key.
   - &constitution_host age1850lrhfzq39frupln50mgqwxhgzlv78kzmgwxadk0wszxgxlhausq86luv
+  - &excelsior_host age1a3h89x7vayasxmrvjhvqws2da6ck8jnpe8gxhjfutke9u7x83anqnls6u4
 creation_rules:
+  # Excelsior: borg backup passphrase (borgbase).
+  - path_regex: .*excelsior\.yaml
+    age:
+      - *excelsior_host
+      - *galaxy_host
+      - *constitution_host
   - path_regex: .*recusant\.yaml
     age:
       - *recusant_host
