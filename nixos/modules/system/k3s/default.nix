@@ -143,6 +143,10 @@ in
         "--kube-apiserver-arg default-unreachable-toleration-seconds=60"
         "--kube-controller-manager-arg node-monitor-grace-period=20s"
         "--kubelet-arg node-status-update-frequency=2s"
+        # Double the kubelet's default per-node pod ceiling (110 -> 220). Purely a
+        # scheduling cap; the CIDR pod-network sizing is unaffected here since
+        # flannel is disabled and Cilium owns IPAM.
+        "--kubelet-arg max-pods=220"
         # Expose embedded-etcd metrics for Prometheus. Boolean flag: moves etcd's
         # listen-metrics-urls off loopback (http://127.0.0.1:2381) onto this node's
         # bind-address, so metrics are scrapable at http://<node-ip>:2381/metrics
