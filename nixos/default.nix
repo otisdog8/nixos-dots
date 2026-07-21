@@ -38,6 +38,7 @@
     modules/system/ydotool.nix
 
     # System modules (conditionally enabled)
+    modules/system/ceph-osd-disk.nix
     modules/system/cli.nix
     modules/system/developer-tools.nix
     modules/system/dns.nix

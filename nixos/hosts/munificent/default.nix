@@ -61,6 +61,14 @@
       ];
     };
 
+    # Dedicated PLP SATA SSD for the Ceph OSD (drive not installed yet — enable
+    # ships the write-cache udev rule now; uncomment device with the drive's
+    # by-id when it arrives, then run the module's imperative bootstrap).
+    system.cephOsdDisk = {
+      enable = true;
+      # device = "/dev/disk/by-id/ata-MTFDDAK1T9TDS_<serial>";
+    };
+
     # Compressed swap (zswap). Backing LV lives in vg (see disks.nix), already
     # encrypted. writeback disabled on system.slice keeps the k3s/etcd cold pages
     # off the encrypted backing swap. Defaults: 20% pool, swappiness 60.

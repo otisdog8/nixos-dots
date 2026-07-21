@@ -65,6 +65,14 @@
       ];
     };
 
+    # Dedicated PLP SATA SSD for the Ceph OSD: LUKS2 (cryptceph, keyfile on
+    # /persist) -> vgceph/ceph bare LV consumed by Rook. See the module for the
+    # one-time imperative bootstrap (blkdiscard/luksFormat/lvcreate).
+    system.cephOsdDisk = {
+      enable = true;
+      device = "/dev/disk/by-id/ata-MTFDDAK1T9TDS_221436ADEA78";
+    };
+
     # Compressed swap (zswap). Backing LV lives in vg (see disks.nix), already
     # encrypted. writeback disabled on system.slice keeps the k3s/etcd cold pages
     # off the encrypted backing swap. Defaults: 20% pool, swappiness 30.
