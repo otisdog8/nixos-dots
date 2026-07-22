@@ -3,16 +3,26 @@
 {
   plugins.render-markdown = {
     enable = true;
-    
+
     settings = {
-      file_types = [ "markdown" "codecompanion" ];
-      
+      file_types = [
+        "markdown"
+        "codecompanion"
+      ];
+
       # Heading rendering
       heading = {
         enabled = true;
-        icons = [ "󰲡 " "󰲣 " "󰲥 " "󰲧 " "󰲩 " "󰲫 " ];
+        icons = [
+          "󰲡 "
+          "󰲣 "
+          "󰲥 "
+          "󰲧 "
+          "󰲩 "
+          "󰲫 "
+        ];
       };
-      
+
       # Code block rendering
       code = {
         enabled = true;
@@ -20,13 +30,18 @@
         position = "left";
         width = "block";
       };
-      
+
       # Bullet rendering
       bullet = {
         enabled = true;
-        icons = [ "●" "○" "◆" "◇" ];
+        icons = [
+          "●"
+          "○"
+          "◆"
+          "◇"
+        ];
       };
-      
+
       # Checkbox rendering
       checkbox = {
         unchecked = {

@@ -61,13 +61,15 @@
         }
       ];
 
-      # Enable input devices for game controllers
+      # Controller support via uinput only. /dev/input is intentionally NOT
+      # bound: it exposes every evdev node (keyboards included = keylogging), and
+      # the sandbox runs as jrt. If a specific physical controller needs raw evdev
+      # later, add a udev-scoped rule for that device rather than all of /dev/input.
       nixpakModules = [
         (
           { lib, sloth, ... }:
           {
             bubblewrap.bind.dev = [
-              "/dev/input"
               "/dev/uinput"
             ];
 

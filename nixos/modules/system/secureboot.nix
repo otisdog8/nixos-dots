@@ -18,8 +18,7 @@ let
   cfg = config.modules.system.secureboot;
 in
 {
-  options.modules.system.secureboot.enable =
-    lib.mkEnableOption "lanzaboote secure boot + TPM2";
+  options.modules.system.secureboot.enable = lib.mkEnableOption "lanzaboote secure boot + TPM2";
 
   config = lib.mkIf cfg.enable {
     # TPM2 configuration

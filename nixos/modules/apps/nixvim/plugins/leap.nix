@@ -3,7 +3,7 @@
 {
   plugins.leap = {
     enable = true;
-    
+
     settings = {
       # Reduce visual noise in preview
       preview = lib.nixvim.mkRaw ''
@@ -14,7 +14,7 @@
           )
         end
       '';
-      
+
       # Equivalence classes for brackets and quotes
       equivalence_classes = [
         " \t\r\n"
@@ -24,12 +24,16 @@
       ];
     };
   };
-  
+
   # Keybindings
   keymaps = [
     # Basic leap motions
     {
-      mode = [ "n" "x" "o" ];
+      mode = [
+        "n"
+        "x"
+        "o"
+      ];
       key = "s";
       action = "<Plug>(leap)";
       options.desc = "Leap forward";
@@ -40,10 +44,13 @@
       action = "<Plug>(leap-from-window)";
       options.desc = "Leap from window";
     }
-    
+
     # Remote operations
     {
-      mode = [ "n" "o" ];
+      mode = [
+        "n"
+        "o"
+      ];
       key = "gs";
       action = lib.nixvim.mkRaw ''
         function()
@@ -55,7 +62,7 @@
       options.desc = "Leap remote action";
     }
   ];
-  
+
   # Repeat keys configuration
   extraConfigLua = ''
     -- Use traversal keys to repeat previous motion

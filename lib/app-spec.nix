@@ -249,7 +249,6 @@
       # `git rev-parse --show-toplevel` (a runtime helper in the wrapper), not a
       # static bind. Pick the semantics before implementing.
 
-
       gitConfig = lib.mkOption {
         type = lib.types.bool;
         default = false;

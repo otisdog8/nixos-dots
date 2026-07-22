@@ -28,5 +28,6 @@ final: prev: {
   # errors on uni0424 during variable-font generation with afdko 5.0.1). The
   # nixpkgs-unstable branch has the fixed rebuild; pin from there. A font is
   # leaf data so cross-pinning is safe. Drop once the fix reaches nixos-unstable.
-  cantarell-fonts = inputs.nixpkgs-unstable.legacyPackages.${final.stdenv.hostPlatform.system}.cantarell-fonts;
+  cantarell-fonts =
+    inputs.nixpkgs-unstable.legacyPackages.${final.stdenv.hostPlatform.system}.cantarell-fonts;
 }

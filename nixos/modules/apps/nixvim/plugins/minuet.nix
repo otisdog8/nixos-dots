@@ -3,27 +3,27 @@
 {
   plugins.minuet = {
     enable = true;
-    
+
     settings = {
       # Provider configuration
       provider = "openai_compatible";
-      
+
       # Performance settings
       request_timeout = 3;
       throttle = 1000;
       debounce = 400;
-      
+
       # Context window - 16k characters ~ 4k tokens
       context_window = 16000;
       context_ratio = 0.75;
-      
+
       # Number of completions to request
       n_completions = 3;
       add_single_line_entry = true;
-      
+
       # Notification level
       notify = "warn";
-      
+
       # Provider options for OpenRouter with Kimi
       provider_options = {
         openai_compatible = {
@@ -44,7 +44,7 @@
       };
     };
   };
-  
+
   # Keymaps for manual completion toggle
   keymaps = [
     {

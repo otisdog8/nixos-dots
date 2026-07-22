@@ -92,7 +92,9 @@ let
     interRules ++ [ leafRule ];
 
   stashTiers = lib.unique (map (e: e.tier) stashEntries);
-  appRootRules = map (t: "d ${tierMount.${t}}/sandbox/${appName} ${appDirMode} root root -") stashTiers;
+  appRootRules = map (
+    t: "d ${tierMount.${t}}/sandbox/${appName} ${appDirMode} root root -"
+  ) stashTiers;
 
   tmpfilesRules = lib.unique (appRootRules ++ lib.concatMap mkEntryRules stashEntries);
 
@@ -113,7 +115,13 @@ let
           };
         };
     in
-    lib.mkMerge (map mkTier [ "persist" "large" "cache" ]);
+    lib.mkMerge (
+      map mkTier [
+        "persist"
+        "large"
+        "cache"
+      ]
+    );
 
   # (#3) Parent-first ordering. Nested bind TARGETS (e.g. a chromium cache dir
   # inside a persisted profile) must bind parent-before-child, so backends bind in
@@ -156,9 +164,8 @@ let
         && !(lib.elem "." comps)
         && builtins.match "[a-zA-Z0-9._/ -]+" e.path != null;
     in
-    lib.optional (
-      !ok
-    ) "sandbox app '${appName}': invalid storage path '${e.path}'. Must be a normalized home-relative path (no leading '/', no '.'/'..' components, chars in [A-Za-z0-9._/ -])."
+    lib.optional (!ok)
+      "sandbox app '${appName}': invalid storage path '${e.path}'. Must be a normalized home-relative path (no leading '/', no '.'/'..' components, chars in [A-Za-z0-9._/ -])."
   ) entries;
   assertions = map (m: {
     assertion = false;

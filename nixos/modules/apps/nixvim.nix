@@ -74,9 +74,12 @@ helper.mkApp (
                   (sloth.concat' sloth.homeDir "/.cache/opencode")
                   (sloth.concat' sloth.homeDir "/.opam")
                   (sloth.concat' sloth.homeDir "/.cache/dune")
-                  # Git repositories and operations
-                  (sloth.concat' sloth.homeDir "/.config/git") # Git configuration directory
-                  (sloth.concat' sloth.homeDir "/.ssh") # Git configuration directory
+                  # Git config (identity/signing). NOT ~/.ssh — private keys must
+                  # never enter the sandbox. Git-over-SSH auth goes through the
+                  # ssh-agent socket bound below; the agent holds the keys, the
+                  # sandbox only gets a socket to request signatures.
+                  (sloth.concat' sloth.homeDir "/.config/git")
+                  (sloth.concat' (sloth.envOr "XDG_RUNTIME_DIR" "/") "/ssh-agent")
                 ];
                 ro = [
                   "/bin" # Required for nixd LSP to access nix store and evaluate nix expressions
@@ -86,6 +89,10 @@ helper.mkApp (
                   "/etc/passwd" # Required for nixd LSP to access nix configuration
                   "/etc/localtime" # Required for nixd LSP to access nix configuration
                   "/etc/zoneinfo" # Required for nixd LSP to access nix configuration
+                  # Host verification only (public data): known_hosts + ssh config.
+                  # No private keys — those stay with the agent.
+                  (sloth.concat' sloth.homeDir "/.ssh/known_hosts")
+                  (sloth.concat' sloth.homeDir "/.ssh/config")
                 ];
                 lastArg = true;
               };

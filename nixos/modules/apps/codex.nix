@@ -31,7 +31,10 @@
       storage = [
         # Parent catches auth/config/state (goals/memories/state sqlite, skills,
         # sessions, models_cache.json) + anything codex writes we don't carve out.
-        { path = ".codex"; tier = "persist"; }
+        {
+          path = ".codex";
+          tier = "persist";
+        }
         # 24M of churny SQLite logs — keep locally, out of backups.
         # NOTE: filename is versioned (logs_2 → may bump). If codex rotates to
         # logs_3.sqlite this carve goes stale (new logs land in the persist parent);
@@ -41,18 +44,29 @@
           tier = "large";
           type = "file";
         }
-        { path = ".codex/plugins"; tier = "large"; } # ~27M, re-installable
-        { path = ".codex/cache"; tier = "cache"; }
-        { path = ".codex/.tmp"; tier = "cache"; }
+        {
+          path = ".codex/plugins";
+          tier = "large";
+        } # ~27M, re-installable
+        {
+          path = ".codex/cache";
+          tier = "cache";
+        }
+        {
+          path = ".codex/.tmp";
+          tier = "cache";
+        }
       ];
 
-      # $PWD comes from cwd.nix; the stash binds provide ~/.codex. Only the shared
-      # host /tmp remains (preserved from the legacy config).
+      # $PWD comes from cwd.nix; the stash binds provide ~/.codex. /tmp is a
+      # PRIVATE tmpfs (not the shared host /tmp) so scratch files are per-app and
+      # invisible to other sandboxes/the host; TMPDIR is pinned into it.
       nixpakModules = [
         (
           { ... }:
           {
-            bubblewrap.bind.rw = [ "/tmp" ];
+            bubblewrap.tmpfs = [ "/tmp" ];
+            bubblewrap.env.TMPDIR = "/tmp";
           }
         )
       ];

@@ -36,6 +36,7 @@
     modules/system/networking.nix
     modules/system/secureboot.nix
     modules/system/ydotool.nix
+    modules/system/storage-health.nix
 
     # System modules (conditionally enabled)
     modules/system/ceph-osd-disk.nix
@@ -78,6 +79,9 @@
       remote-access.enable = lib.mkDefault true;
       virt.enable = lib.mkDefault true;
       hardware.openrazer.enable = lib.mkDefault false;
+      # Disk-health hygiene (scrubs/TRIM/SMART). Every piece is a no-op on hosts
+      # lacking the relevant hardware/filesystem, so it's on by default fleet-wide.
+      storage-health.enable = lib.mkDefault true;
     };
     apps = {
       jellyfin.enable = lib.mkDefault false;
@@ -101,6 +105,11 @@
     dates = "daily";
     options = "--delete-older-than 30d";
   };
+
+  # Deduplicate the store on a schedule (hard-links identical files). Cheaper than
+  # auto-optimise-store's per-build hashing, and meaningful given the daily GC
+  # churn across many closures.
+  nix.optimise.automatic = true;
 
   # Don't garbage collect flake inputs
   system.extraDependencies =
@@ -181,6 +190,18 @@
     packages = with pkgs; [
       tree
     ];
+  };
+
+  # Hardware watchdog, fleet-wide. `softdog` guarantees a /dev/watchdog exists
+  # even on boards without an exposed hardware timer (AMD SoCs expose sp5100_tco,
+  # but the software fallback makes this uniform). systemd pings it every
+  # RuntimeWatchdogSec; if the manager wedges, the box hard-reboots. The k3s
+  # module already pins RebootWatchdogSec to a plain value, which overrides the
+  # mkDefault here on those nodes.
+  boot.kernelModules = [ "softdog" ];
+  systemd.settings.Manager = {
+    RuntimeWatchdogSec = lib.mkDefault "60s";
+    RebootWatchdogSec = lib.mkDefault "3min";
   };
 
   # Services

@@ -55,10 +55,12 @@ in
         };
       };
 
-      # Suspend on lid close when unplugged (hypridle file trigger)
-      # Disable USB/PCIe wakeup to prevent battery drain during suspend
+      # Suspend on AC-unplug when already idle: the flag under jrt's runtime dir
+      # (uid 1001) is written by hypridle/lid-switch when idle; if present, cat
+      # exits 0 and we suspend. Path must match hypridle.nix's $XDG_RUNTIME_DIR/
+      # idle-suspend. Also disable USB/PCIe wakeup to prevent suspend battery drain.
       udev.extraRules = ''
-        SUBSYSTEM=="power_supply", ATTR{online}=="0", RUN+="${pkgs.bash}/bin/bash -c \"cat /tmp/10midle && systemctl suspend\""
+        SUBSYSTEM=="power_supply", ATTR{online}=="0", RUN+="${pkgs.bash}/bin/bash -c \"cat /run/user/1001/idle-suspend && systemctl suspend\""
         ACTION=="add", SUBSYSTEM=="usb", TEST=="power/wakeup", ATTR{power/wakeup}="disabled"
         ACTION=="add", SUBSYSTEM=="pci", TEST=="power/wakeup", ATTR{power/wakeup}="disabled"
       '';

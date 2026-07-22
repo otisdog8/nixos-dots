@@ -35,8 +35,11 @@ in
               "hyprland/window"
             ];
             "modules-right" = [
+              "privacy"
               "cpu"
+              "temperature"
               "memory"
+              "disk"
               "backlight"
               "pulseaudio"
               "battery"
@@ -61,6 +64,40 @@ in
             "cpu" = {
               "interval" = 1;
               "format" = "CPU = {usage}%";
+            };
+
+            # In-use indicators for microphone and screen sharing (icons only
+            # appear while active). Camera has no native waybar type, so it isn't
+            # shown here. audio-in = mic, screenshare = active screencast/portal.
+            "privacy" = {
+              "icon-spacing" = 6;
+              "icon-size" = 14;
+              "transition-duration" = 250;
+              "modules" = [
+                {
+                  "type" = "screenshare";
+                  "tooltip" = true;
+                }
+                {
+                  "type" = "audio-in";
+                  "tooltip" = true;
+                }
+              ];
+            };
+
+            "temperature" = {
+              "interval" = 5;
+              "critical-threshold" = 85;
+              "format" = " {temperatureC}°C";
+              "format-critical" = " {temperatureC}°C";
+              "tooltip" = true;
+            };
+
+            "disk" = {
+              "interval" = 60;
+              "path" = "/";
+              "format" = " {percentage_used}%";
+              "tooltip-format" = "{used} / {total} used on {path}";
             };
 
             "memory" = {

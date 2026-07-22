@@ -31,11 +31,26 @@
       defaultBackend = "nixpak";
 
       storage = [
-        { path = ".local/state/opencode"; tier = "persist"; }
-        { path = ".local/share/opencode"; tier = "persist"; }
-        { path = ".config/opencode"; tier = "persist"; }
-        { path = ".opencode"; tier = "persist"; }
-        { path = ".cache/opencode"; tier = "cache"; }
+        {
+          path = ".local/state/opencode";
+          tier = "persist";
+        }
+        {
+          path = ".local/share/opencode";
+          tier = "persist";
+        }
+        {
+          path = ".config/opencode";
+          tier = "persist";
+        }
+        {
+          path = ".opencode";
+          tier = "persist";
+        }
+        {
+          path = ".cache/opencode";
+          tier = "cache";
+        }
       ];
     };
   }

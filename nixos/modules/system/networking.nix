@@ -8,8 +8,7 @@
 let
   # Sandboxed ungoogled-chromium (tmpfs homedir, no persistence) if the
   # apps module enabled it; otherwise the plain package as a fallback.
-  cbBrowserPkg =
-    config.modules.apps.ungoogled-chromium.finalPackage or pkgs.ungoogled-chromium;
+  cbBrowserPkg = config.modules.apps.ungoogled-chromium.finalPackage or pkgs.ungoogled-chromium;
 in
 {
   networking.useDHCP = lib.mkDefault true;

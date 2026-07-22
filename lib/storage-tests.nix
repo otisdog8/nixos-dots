@@ -8,14 +8,12 @@
 let
   storage = import ./storage.nix { inherit lib; };
 
-  mkEntry =
-    path: tier:
-    {
-      inherit path tier;
-      location = "stash";
-      type = "dir";
-      mode = "0700";
-    };
+  mkEntry = path: tier: {
+    inherit path tier;
+    location = "stash";
+    type = "dir";
+    mode = "0700";
+  };
 
   # (#3) Parent-first ordering: a child target must sort after its parent so the
   # backend binds the parent first (cross-tier profile + cache is the real case).
@@ -26,10 +24,11 @@ let
       (mkEntry ".config/app" "persist")
     ];
   };
-  test3_parentFirst = (map (e: e.path) ord.entries) == [
-    ".config/app"
-    ".config/app/Cache"
-  ];
+  test3_parentFirst =
+    (map (e: e.path) ord.entries) == [
+      ".config/app"
+      ".config/app/Cache"
+    ];
 
   # (#2) Same-tier nesting is illegal → a failing assertion is produced.
   sameTier = storage {

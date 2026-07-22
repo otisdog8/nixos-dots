@@ -31,19 +31,53 @@
       storage = [
         # Parent catches auth + real state (projects, history.jsonl, plans, tasks,
         # backups) and anything else claude writes under ~/.claude.
-        { path = ".claude"; tier = "persist"; }
-        { path = ".claude.json"; tier = "persist"; type = "file"; }
+        {
+          path = ".claude";
+          tier = "persist";
+        }
+        {
+          path = ".claude.json";
+          tier = "persist";
+          type = "file";
+        }
         # Big non-regenerable-but-not-backup-worthy → /large (local snapshots only).
-        { path = ".claude/security"; tier = "large"; } # ~282M
-        { path = ".claude/file-history"; tier = "large"; } # ~19M edit-undo history
-        { path = ".claude/plugins"; tier = "large"; } # ~8.8M, re-installable
+        {
+          path = ".claude/security";
+          tier = "large";
+        } # ~282M
+        {
+          path = ".claude/file-history";
+          tier = "large";
+        } # ~19M edit-undo history
+        {
+          path = ".claude/plugins";
+          tier = "large";
+        } # ~8.8M, re-installable
         # Disposable → /cache.
-        { path = ".claude/cache"; tier = "cache"; }
-        { path = ".claude/paste-cache"; tier = "cache"; }
-        { path = ".claude/shell-snapshots"; tier = "cache"; }
-        { path = ".claude/jobs"; tier = "cache"; }
-        { path = ".claude/daemon"; tier = "cache"; }
-        { path = ".claude/telemetry"; tier = "cache"; }
+        {
+          path = ".claude/cache";
+          tier = "cache";
+        }
+        {
+          path = ".claude/paste-cache";
+          tier = "cache";
+        }
+        {
+          path = ".claude/shell-snapshots";
+          tier = "cache";
+        }
+        {
+          path = ".claude/jobs";
+          tier = "cache";
+        }
+        {
+          path = ".claude/daemon";
+          tier = "cache";
+        }
+        {
+          path = ".claude/telemetry";
+          tier = "cache";
+        }
         {
           path = ".claude/stats-cache.json";
           tier = "cache";
@@ -52,12 +86,16 @@
       ];
 
       # $PWD comes from cwd.nix; the stash binds provide ~/.claude and
-      # ~/.claude.json. Only the shared host /tmp remains (preserved from legacy).
+      # ~/.claude.json. /tmp is a PRIVATE tmpfs (not the shared host /tmp): a
+      # per-app scratch dir so nothing this agent writes to /tmp is visible to
+      # other sandboxes or the host, and nothing on the host /tmp is visible to
+      # it. TMPDIR is pinned so tools that honour it land inside that tmpfs.
       nixpakModules = [
         (
           { ... }:
           {
-            bubblewrap.bind.rw = [ "/tmp" ];
+            bubblewrap.tmpfs = [ "/tmp" ];
+            bubblewrap.env.TMPDIR = "/tmp";
           }
         )
       ];

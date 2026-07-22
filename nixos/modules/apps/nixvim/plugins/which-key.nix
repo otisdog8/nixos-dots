@@ -57,13 +57,17 @@
           __unkeyed-1 = "<leader>/";
           group = "Search in Buffer";
         }
-      ] ++ lib.optionals config.plugins.codecompanion.enable [
+      ]
+      ++ lib.optionals config.plugins.codecompanion.enable [
         # AI Assistant group
         {
           __unkeyed-1 = "<leader>a";
           group = "[A]I Assistant";
           icon = "";
-          mode = [ "n" "v" ];
+          mode = [
+            "n"
+            "v"
+          ];
         }
       ];
 

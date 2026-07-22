@@ -39,7 +39,7 @@ in
           auth.enable = lib.mkDefault true;
           plymouth.enable = lib.mkDefault true;
         };
-        
+
         # Enable desktop shared modules
         shared = {
           base.enable = lib.mkDefault true;

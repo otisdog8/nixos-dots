@@ -182,7 +182,7 @@ in
         Type = "oneshot";
         User = "root";
         RemainAfterExit = "yes";
-        ExecStart = ''${pkgs.util-linux}/bin/losetup -f /large/disk.img'';
+        ExecStart = "${pkgs.util-linux}/bin/losetup -f /large/disk.img";
         # Detach the loop before /large is unmounted. After=large.mount makes
         # systemd stop us first at shutdown, so the backing file is still
         # reachable when losetup -d runs. Without this, systemd-shutdown's

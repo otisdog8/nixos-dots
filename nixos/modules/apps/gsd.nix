@@ -32,7 +32,11 @@
       name = "gsd-pi-package-lock.json";
       src = gsd-pi-src;
       sourceRoot = "package";
-      nativeBuildInputs = [ pkgs.nodejs_22 pkgs.python3 pkgs.cacert ];
+      nativeBuildInputs = [
+        pkgs.nodejs_22
+        pkgs.python3
+        pkgs.cacert
+      ];
       buildPhase = ''
         export HOME=$(mktemp -d)
         export SSL_CERT_FILE=${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt
@@ -107,7 +111,10 @@
       # Empty on disk today. $PWD comes from cwd.nix; the stash bind provides
       # ~/.gsd. Carve a cache tier if/when gsd starts writing one.
       storage = [
-        { path = ".gsd"; tier = "persist"; }
+        {
+          path = ".gsd";
+          tier = "persist";
+        }
       ];
     };
   }

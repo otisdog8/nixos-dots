@@ -190,8 +190,7 @@
           sandboxedPackage =
             if cfg.sandbox.enable then
               let
-                nixpakLib =
-                  inputs.nixpak or (builtins.throw "nixpak not available - add nixpak to flake inputs");
+                nixpakLib = inputs.nixpak or (builtins.throw "nixpak not available - add nixpak to flake inputs");
                 mkNixPak = nixpakLib.lib.nixpak {
                   inherit lib pkgs;
                 };
@@ -277,8 +276,7 @@
                 (if cfg.sandbox.dedicatedUser then "dedicated" else "root")
               else
                 "user";
-            forceHome =
-              (config.modules.sandbox.forceHomeLocation or false) || effectiveBackend == "none";
+            forceHome = (config.modules.sandbox.forceHomeLocation or false) || effectiveBackend == "none";
           };
           # Guard the registry lookup: the module system forces mkIf *content*
           # while computing unmatchedDefns even when the condition is false, so a
@@ -361,49 +359,51 @@
             # imports still sets persistence.user.* (e.g. chromium.nix on tetrio),
             # emitting these too would double-mount against the stash binds — the
             # very cross-authority desync this redesign removes.
-            (lib.optionals isLegacy (lib.flatten (
-              map (username: [
-                # User persistence - /persist directories
-                (lib.mkIf (cfg.enable && cfg.persistConfig && appCfg.persistence.user.persist != [ ]) {
-                  environment.persistence."/persist".users.${username}.directories = appCfg.persistence.user.persist;
-                })
+            (lib.optionals isLegacy (
+              lib.flatten (
+                map (username: [
+                  # User persistence - /persist directories
+                  (lib.mkIf (cfg.enable && cfg.persistConfig && appCfg.persistence.user.persist != [ ]) {
+                    environment.persistence."/persist".users.${username}.directories = appCfg.persistence.user.persist;
+                  })
 
-                # User persistence - /persist files
-                (lib.mkIf (cfg.enable && cfg.persistConfig && appCfg.persistence.user.persistFiles != [ ]) {
-                  environment.persistence."/persist".users.${username}.files = appCfg.persistence.user.persistFiles;
-                })
+                  # User persistence - /persist files
+                  (lib.mkIf (cfg.enable && cfg.persistConfig && appCfg.persistence.user.persistFiles != [ ]) {
+                    environment.persistence."/persist".users.${username}.files = appCfg.persistence.user.persistFiles;
+                  })
 
-                # User persistence - /large directories
-                (lib.mkIf (cfg.enable && cfg.persistData && appCfg.persistence.user.large != [ ]) {
-                  environment.persistence."/large".users.${username}.directories = appCfg.persistence.user.large;
-                })
+                  # User persistence - /large directories
+                  (lib.mkIf (cfg.enable && cfg.persistData && appCfg.persistence.user.large != [ ]) {
+                    environment.persistence."/large".users.${username}.directories = appCfg.persistence.user.large;
+                  })
 
-                # User persistence - /large files
-                (lib.mkIf (cfg.enable && cfg.persistData && appCfg.persistence.user.largeFiles != [ ]) {
-                  environment.persistence."/large".users.${username}.files = appCfg.persistence.user.largeFiles;
-                })
+                  # User persistence - /large files
+                  (lib.mkIf (cfg.enable && cfg.persistData && appCfg.persistence.user.largeFiles != [ ]) {
+                    environment.persistence."/large".users.${username}.files = appCfg.persistence.user.largeFiles;
+                  })
 
-                # User persistence - /cache directories
-                (lib.mkIf (cfg.enable && cfg.enableCache && appCfg.persistence.user.cache != [ ]) {
-                  environment.persistence."/cache".users.${username}.directories = appCfg.persistence.user.cache;
-                })
+                  # User persistence - /cache directories
+                  (lib.mkIf (cfg.enable && cfg.enableCache && appCfg.persistence.user.cache != [ ]) {
+                    environment.persistence."/cache".users.${username}.directories = appCfg.persistence.user.cache;
+                  })
 
-                # User persistence - /cache files
-                (lib.mkIf (cfg.enable && cfg.enableCache && appCfg.persistence.user.cacheFiles != [ ]) {
-                  environment.persistence."/cache".users.${username}.files = appCfg.persistence.user.cacheFiles;
-                })
+                  # User persistence - /cache files
+                  (lib.mkIf (cfg.enable && cfg.enableCache && appCfg.persistence.user.cacheFiles != [ ]) {
+                    environment.persistence."/cache".users.${username}.files = appCfg.persistence.user.cacheFiles;
+                  })
 
-                # User persistence - /baked directories
-                (lib.mkIf (cfg.enable && appCfg.persistence.user.baked != [ ]) {
-                  environment.persistence."/baked".users.${username}.directories = appCfg.persistence.user.baked;
-                })
+                  # User persistence - /baked directories
+                  (lib.mkIf (cfg.enable && appCfg.persistence.user.baked != [ ]) {
+                    environment.persistence."/baked".users.${username}.directories = appCfg.persistence.user.baked;
+                  })
 
-                # User persistence - /baked files
-                (lib.mkIf (cfg.enable && appCfg.persistence.user.bakedFiles != [ ]) {
-                  environment.persistence."/baked".users.${username}.files = appCfg.persistence.user.bakedFiles;
-                })
-              ]) appCfg.defaultUsernames
-            )))
+                  # User persistence - /baked files
+                  (lib.mkIf (cfg.enable && appCfg.persistence.user.bakedFiles != [ ]) {
+                    environment.persistence."/baked".users.${username}.files = appCfg.persistence.user.bakedFiles;
+                  })
+                ]) appCfg.defaultUsernames
+              )
+            ))
         );
     };
 }

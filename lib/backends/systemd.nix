@@ -92,7 +92,14 @@ let
     # dedicated: expose the relayed doc FUSE at jrt's identity path inside the
     # sandbox (the portal returns jrt-absolute doc:// paths). Same-uid apps use
     # nixpak's own mountDocumentPortal (same uid, no relay needed).
-    docBind = if dedicated then [ "${runtimeDir}/doc" "${jrtRuntime}/doc" ] else null;
+    docBind =
+      if dedicated then
+        [
+          "${runtimeDir}/doc"
+          "${jrtRuntime}/doc"
+        ]
+      else
+        null;
     # dedicated: inner proxy transparent; the jrt-side bridge is the single filter.
     transparentDbus = dedicated;
     # Expose jrt's X socket + DISPLAY to the inner sandbox (the xhost grant that makes
@@ -104,7 +111,9 @@ let
   innerPkg = innerNix.package;
   # Bridge filter: the app's own dbus policies (--talk/--own/...) + --filter, applied
   # to the jrt-side bridge. Only meaningful for dedicated (inner is transparent then).
-  bridgeFilterArgs = lib.concatMapStringsSep " " lib.escapeShellArg (innerNix.dbusArgs ++ [ "--filter" ]);
+  bridgeFilterArgs = lib.concatMapStringsSep " " lib.escapeShellArg (
+    innerNix.dbusArgs ++ [ "--filter" ]
+  );
   # nixpak's .flatpak-info for this app — bound onto the bridge below (dedicated).
   # The portal's flatpak app-info parser REQUIRES an [Instance] group, but nixpak's
   # writeINI infoFile only emits [Application]/[Context]/[Session Bus Policy]. Append
@@ -247,7 +256,9 @@ let
         # jrt planted it) would make this bind follow to an attacker-chosen host path.
         # Require the real expected type, never a symlink.
         if [ -L "${e.stashPath}" ]; then echo "sandbox-${appName}: stash '${e.stashPath}' is a symlink; refusing" >&2; exit 1; fi
-        if [ ! -${if e.type == "file" then "f" else "d"} "${e.stashPath}" ]; then echo "sandbox-${appName}: stash '${e.stashPath}' is not a ${e.type}; refusing" >&2; exit 1; fi
+        if [ ! -${
+          if e.type == "file" then "f" else "d"
+        } "${e.stashPath}" ]; then echo "sandbox-${appName}: stash '${e.stashPath}' is not a ${e.type}; refusing" >&2; exit 1; fi
         ${ul}/mount --bind "${e.stashPath}" "$__t"
       ''
     ) stashEntries}
@@ -360,10 +371,9 @@ let
               ${acl}/setfacl -R -x "u:${appUser}" "${sharedHome}/${p}" 2>/dev/null || true
               ${acl}/setfacl -x "u:${appUser}" "$(${co}/dirname "${sharedHome}/${p}")" 2>/dev/null || true
             '') (lib.filter (p: !(lib.hasPrefix "/" p) && !(lib.hasPrefix "." p)) cfg.sandbox.extraBinds)}
-            ${lib.optionalString
-              ((lib.filter (p: !(lib.hasPrefix "/" p) && !(lib.hasPrefix "." p)) cfg.sandbox.extraBinds) != [ ])
-              ''${acl}/setfacl -x "u:${appUser}" "${sharedHome}" 2>/dev/null || true''
-            }
+            ${lib.optionalString (
+              (lib.filter (p: !(lib.hasPrefix "/" p) && !(lib.hasPrefix "." p)) cfg.sandbox.extraBinds) != [ ]
+            ) ''${acl}/setfacl -x "u:${appUser}" "${sharedHome}" 2>/dev/null || true''}
           }
           # Grant app-${appUser} rw on ONLY the specific session sockets (which the
           # runScript binds into the app's own runtime dir). No ACL on jrt's
@@ -438,8 +448,10 @@ let
           done
         ''
     }
-    trap '${lib.optionalString (dedicated && cfg.sandbox.x11Forward)
-      "${xhost} -SI:localuser:${appUser} >/dev/null 2>&1 || true; "
+    trap '${
+      lib.optionalString (
+        dedicated && cfg.sandbox.x11Forward
+      ) "${xhost} -SI:localuser:${appUser} >/dev/null 2>&1 || true; "
     }${lib.optionalString dedicated "__revoke_acls; "}if [ -n "$__dbus_pid" ]; then kill "$__dbus_pid" 2>/dev/null || true; fi; ${pkgs.systemd}/bin/systemctl stop ${unitName}.service >/dev/null 2>&1 || true' EXIT INT TERM
     ${lib.optionalString (dedicated && cfg.sandbox.x11Forward) ''
       # Grant the dedicated app uid access to jrt's X server via server-interpreted
@@ -502,7 +514,9 @@ in
       # chmod 0755 (which tmpfiles re-runs every activation) would clamp the mask to
       # r-x and strip the app's ACL write bit. 0775 keeps the mask rwx (group = users,
       # effectively just jrt; other stays r-x) so the app's write survives resetups.
-      ++ lib.optional (dedicated && cfg.sandbox.sharedDownloads) "d ${sharedHome}/Downloads/${appName} 0775 ${username} users -";
+      ++ lib.optional (
+        dedicated && cfg.sandbox.sharedDownloads
+      ) "d ${sharedHome}/Downloads/${appName} 0775 ${username} users -";
     environment.persistence = storage.homePersistence;
     assertions = storage.assertions ++ ptraceAssertion ++ injectAssertion;
     # Explicit unit name for the polkit start/stop/ref allowlist (sandbox.nix) —

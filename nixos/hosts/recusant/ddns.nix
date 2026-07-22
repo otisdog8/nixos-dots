@@ -14,7 +14,9 @@
 #
 # ── One-time bootstrap on recusant ───────────────────────────────────────────
 #   1. Create a Cloudflare API token (or reuse an existing rooty.dev DNS token)
-#      with Zone:DNS:Edit + Zone:Zone:Read scoped to the rooty.dev zone:
+#      scoped to the rooty.dev zone. ddns needs only DNS:Edit, but this same
+#      token is ALSO reused for ACME (secrets.nix), which additionally needs
+#      Zone:Read — so grant BOTH DNS:Edit and Zone:Read to avoid a second token:
 #        https://dash.cloudflare.com/profile/api-tokens
 #   2. Add it to the host sops file (value is the bare token, no prefix):
 #        nix shell nixpkgs#sops

@@ -104,6 +104,10 @@
     protectedSlices = [ ];
   };
 
+  # Disk-health scrubs (btrfs + the ~150TB bcachefs media/k8s pool) are on by
+  # default via modules.system.storage-health and auto-detect this host's mounts;
+  # nothing host-specific to set.
+
   # Post-unlock PCR 15 verification for TPM2 LUKS unlock.
   # Bootstrap pass: measurement only, no enforcement. After a known-good boot,
   # capture with `sudo systemd-analyze pcrs 15 --json=short`, paste the sha256

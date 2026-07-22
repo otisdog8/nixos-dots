@@ -16,7 +16,7 @@ in
     ./mixins/cli
     # Desktop config now managed by NixOS modules (modules/desktop/*)
   ];
-  
+
   home = {
     inherit username stateVersion;
     homeDirectory = "/home/${username}";

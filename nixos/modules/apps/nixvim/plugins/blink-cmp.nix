@@ -1,5 +1,10 @@
 # Blink completion
-{ config, lib, pkgs, ... }:
+{
+  config,
+  lib,
+  pkgs,
+  ...
+}:
 {
   plugins.blink-cmp = {
     enable = true;
@@ -13,9 +18,9 @@
         # Manual Minuet completion trigger
         "<A-y>" = lib.nixvim.mkRaw "require('minuet').make_blink_map()";
       };
-      
+
       appearance.nerd_font_variant = "mono";
-      
+
       completion = {
         documentation = {
           auto_show = true;
@@ -24,10 +29,10 @@
         # Recommended: avoid unnecessary requests
         trigger.prefetch_on_insert = false;
       };
-      
+
       signature.enabled = true;
       fuzzy.implementation = "lua";
-      
+
       # Sources configuration
       sources = {
         default = [
@@ -37,11 +42,11 @@
           "buffer"
           "minuet" # AI completion
         ];
-        
+
         per_filetype = {
           codecompanion = [ "codecompanion" ];
         };
-        
+
         providers = {
           # Minuet AI completion
           minuet = {

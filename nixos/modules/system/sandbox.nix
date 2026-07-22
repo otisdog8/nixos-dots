@@ -66,13 +66,20 @@ let
           # declared tier first, then the others; take the first that exists. Each
           # candidate test is fully quoted, so paths with spaces (Electron's
           # "Code Cache") are safe.
-          candidateTiers = [ e.tier ] ++ (lib.filter (t: t != e.tier) [ "persist" "large" "cache" ]);
+          candidateTiers = [
+            e.tier
+          ]
+          ++ (lib.filter (t: t != e.tier) [
+            "persist"
+            "large"
+            "cache"
+          ]);
           srcPick = lib.concatMapStringsSep "\n" (
             t:
             let
               c = "${tierMount.${t}}/home/${m.user}/${e.path}";
             in
-            ''            if [ -z "$__src" ] && [ -e "${c}" ]; then __src="${c}"; fi''
+            ''if [ -z "$__src" ] && [ -e "${c}" ]; then __src="${c}"; fi''
           ) candidateTiers;
         in
         ''
@@ -94,19 +101,21 @@ let
             else
               echo "  skip ${e.path} (target non-empty)"
             fi
-          fi${lib.optionalString (e.tier == "cache") ''
+          fi${
+            lib.optionalString (e.tier == "cache") ''
 
-          # Cache is disposable: after migrating the canonical copy, delete any
-          # stale duplicates of this EXACT declared path left under the other tiers
-          # (the persist/cache desync), so the persist parent move can't sweep them
-          # into the backed-up stash. Bounded to declared cache entries only.
-          ${lib.concatMapStringsSep "\n" (
-            t:
-            let
-              c = "${tierMount.${t}}/home/${m.user}/${e.path}";
-            in
-            ''          if __safe "${c}"; then echo "  rm stale cache ${c}"; ${co}/rm -rf "${c}"; fi''
-          ) candidateTiers}''}''
+              # Cache is disposable: after migrating the canonical copy, delete any
+              # stale duplicates of this EXACT declared path left under the other tiers
+              # (the persist/cache desync), so the persist parent move can't sweep them
+              # into the backed-up stash. Bounded to declared cache entries only.
+              ${lib.concatMapStringsSep "\n" (
+                t:
+                let
+                  c = "${tierMount.${t}}/home/${m.user}/${e.path}";
+                in
+                ''if __safe "${c}"; then echo "  rm stale cache ${c}"; ${co}/rm -rf "${c}"; fi''
+              ) candidateTiers}''
+          }''
       ) (lib.reverseList m.entries); # deepest-first: extract carved children before the parent moves
       # Reconcile ownership every run (not gated by the stamp): mv preserves the
       # old jrt ownership, and flipping an app same-uid <-> dedicated changes the

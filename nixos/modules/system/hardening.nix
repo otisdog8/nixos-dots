@@ -375,14 +375,16 @@ in
     # wrappers dir (/run/wrappers/bin, setuid sudo) is added separately with a
     # higher priority and is NOT part of environment.profiles, so it remains
     # first regardless. Mirrors the current nixpkgs default set, reversed.
-    environment.profiles = lib.mkIf cfg.preferSystemBinaries (lib.mkForce [
-      "/run/current-system/sw"
-      "/nix/var/nix/profiles/default"
-      "/etc/profiles/per-user/$USER"
-      "$HOME/.nix-profile"
-      "/nix/profile"
-      "$HOME/.local/state/nix/profile"
-    ]);
+    environment.profiles = lib.mkIf cfg.preferSystemBinaries (
+      lib.mkForce [
+        "/run/current-system/sw"
+        "/nix/var/nix/profiles/default"
+        "/etc/profiles/per-user/$USER"
+        "$HOME/.nix-profile"
+        "/nix/profile"
+        "$HOME/.local/state/nix/profile"
+      ]
+    );
 
     # Mount-option hardening: tmpfs /tmp gets nosuid,nodev automatically via
     # systemd's tmp.mount. Intentionally NOT noexec (Steam/Wine/PyCharm break).

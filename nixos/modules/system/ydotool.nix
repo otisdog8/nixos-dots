@@ -1,4 +1,12 @@
-# ydotool - Generic Linux command-line automation tool
+# ydotool - generic command-line input automation (used by scripts/hotkeys).
+#
+# ydotool injects through /dev/uinput (writing a virtual device); it does NOT
+# need to READ /dev/hidraw*. The old config added jrt to a `hidraw` group and
+# opened ALL /dev/hidraw* (which includes physical keyboards) to it — a
+# keylogging surface that also leaked into in-session sandboxed apps (they run
+# as jrt and inherit its groups). That's removed: uinput access comes from the
+# `ydotool` group that programs.ydotool wires up, and FIDO keys stay reachable
+# via their per-device `uaccess` ACL, not a blanket group.
 {
   config,
   lib,
@@ -9,17 +17,6 @@
 {
   programs.ydotool.enable = true;
 
-  # Create the 'hidraw' group for ydotool
-  users.groups.hidraw = { };
-
-  # Add user to necessary groups for ydotool
-  users.users.${username}.extraGroups = [
-    "ydotool"
-    "hidraw"
-  ];
-
-  # Provide custom udev rules for hidraw devices
-  services.udev.extraRules = ''
-    KERNEL=="hidraw*", SUBSYSTEM=="hidraw", GROUP="hidraw", MODE="0660"
-  '';
+  # uinput injection only. No hidraw group, no all-HID udev rule.
+  users.users.${username}.extraGroups = [ "ydotool" ];
 }

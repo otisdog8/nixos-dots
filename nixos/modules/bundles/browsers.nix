@@ -50,7 +50,7 @@ in
       default = true;
       description = "Enable Ungoogled Chromium (ephemeral, tmpfs homedir)";
     };
-};
+  };
 
   config = lib.mkIf cfg.enable {
     modules.apps = {

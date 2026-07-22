@@ -3,14 +3,14 @@
 {
   plugins.codecompanion = {
     enable = true;
-    
+
     lazyLoad.settings.cmd = [
       "CodeCompanion"
       "CodeCompanionChat"
       "CodeCompanionActions"
       "CodeCompanionAdd"
     ];
-    
+
     settings = {
       # Strategy configuration - use OpenCode ACP
       strategies = {
@@ -24,7 +24,7 @@
           adapter = "opencode";
         };
       };
-      
+
       # Display settings
       display = {
         action_palette = {
@@ -35,7 +35,7 @@
           show_token_count = true;
         };
       };
-      
+
       # Options
       opts = {
         send_code = true; # Include code context by default
@@ -45,7 +45,7 @@
       };
     };
   };
-  
+
   # Keybindings
   keymaps = lib.optionals config.plugins.codecompanion.enable [
     # Toggle chat
@@ -55,7 +55,7 @@
       action = "<cmd>CodeCompanionChat Toggle<CR>";
       options.desc = "AI: Toggle chat";
     }
-    
+
     # New chat
     {
       mode = "n";
@@ -63,15 +63,18 @@
       action = "<cmd>CodeCompanionChat<CR>";
       options.desc = "AI: New chat";
     }
-    
+
     # Actions palette
     {
-      mode = [ "n" "v" ];
+      mode = [
+        "n"
+        "v"
+      ];
       key = "<leader>aa";
       action = "<cmd>CodeCompanionActions<CR>";
       options.desc = "AI: Actions";
     }
-    
+
     # Inline assistant
     {
       mode = "v";
@@ -79,7 +82,7 @@
       action = "<cmd>CodeCompanion<CR>";
       options.desc = "AI: Inline assistant";
     }
-    
+
     # Quick prompts
     {
       mode = "n";
@@ -87,15 +90,18 @@
       action = "<cmd>CodeCompanion /commit<CR>";
       options.desc = "AI: Quick commit";
     }
-    
+
     # Add to chat
     {
-      mode = [ "n" "v" ];
+      mode = [
+        "n"
+        "v"
+      ];
       key = "<leader>ar";
       action = "<cmd>CodeCompanionAdd<CR>";
       options.desc = "AI: Add to chat";
     }
-    
+
     # Change adapter
     {
       mode = "n";

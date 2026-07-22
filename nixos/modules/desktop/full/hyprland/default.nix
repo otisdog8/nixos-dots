@@ -58,7 +58,6 @@ let
     hl.on("hyprland.start", function()
       hl.exec_cmd("kwalletd6")
       hl.exec_cmd("systemctl --user start hyprpolkitagent")
-      hl.exec_cmd("polkit-agent-helper-1")
       hl.exec_cmd("${pkgs.kdePackages.kwallet-pam}/libexec/pam_kwallet_init")
       hl.exec_cmd("waybar")
       hl.exec_cmd("nm-applet")
@@ -71,8 +70,6 @@ let
     -- Keybindings
     -----------------------------------------------------------------
     hl.bind(mod .. " + V", hl.dsp.exec_cmd("cliphist list | fuzzel --dmenu | cliphist decode | wl-copy"))
-    hl.bind(mod .. " + n", hl.dsp.exec_cmd("nix-search-fuzzel"))
-    hl.bind(mod .. " + SHIFT + n", hl.dsp.exec_cmd("nix-search-clipboard"))
     hl.bind("CTRL + ALT + l", hl.dsp.exec_cmd("loginctl lock-session"))
     hl.bind("CTRL + ALT + t", hl.dsp.exec_cmd("kitty"))
     hl.bind("CTRL + Space", hl.dsp.exec_cmd("rofi -show drun"))
@@ -94,29 +91,40 @@ let
     hl.bind(mod .. " + SHIFT + b", hl.dsp.exec_cmd("hyprshade toggle blue-light-filter"))
     hl.bind(mod .. " + r", hl.dsp.layout("togglesplit"))
     hl.bind(mod .. " + w", hl.dsp.exec_cmd("killall -SIGUSR1 waybar"))
+    -- Screenshot: region copy+save (no annotation)
     hl.bind("CTRL + SHIFT + Space", hl.dsp.exec_cmd("grimblast --freeze copysave area"))
+    -- Screenshot: region -> annotate in satty, then save to the screenshots dir
+    hl.bind(mod .. " + SHIFT + s", hl.dsp.exec_cmd(
+      "grimblast --freeze save area - | satty --filename - --output-filename " ..
+      home .. "/Pictures/Screenshots/satty-$(date +%Y%m%d-%H%M%S).png"
+    ))
     hl.bind("XF86PowerOff", hl.dsp.exec_cmd("wlogout -b 2 -c 0 -r 0 -m 0 --protocol layer-shell"))
-    hl.bind("XF86MonBrightnessUp", hl.dsp.exec_cmd("brightnessctl s +5%"))
-    hl.bind("XF86MonBrightnessDown", hl.dsp.exec_cmd("brightnessctl s 5%-"))
+    -- Brightness/volume OSD via swayosd (shows a bar; also drives the change).
+    hl.bind("XF86MonBrightnessUp", hl.dsp.exec_cmd("swayosd-client --brightness raise"))
+    hl.bind("XF86MonBrightnessDown", hl.dsp.exec_cmd("swayosd-client --brightness lower"))
     hl.bind("XF86AudioStop", hl.dsp.exec_cmd("playerctl stop"))
     hl.bind("XF86AudioMedia", hl.dsp.exec_cmd("playerctl play-pause"))
     hl.bind("XF86AudioPlay", hl.dsp.exec_cmd("playerctl play-pause"))
     hl.bind("XF86AudioPrev", hl.dsp.exec_cmd("playerctl previous"))
     hl.bind("XF86AudioNext", hl.dsp.exec_cmd("playerctl next"))
     hl.bind("SHIFT + XF86AudioNext", hl.dsp.exec_cmd("playerctl previous"))
-    hl.bind("XF86AudioMute", hl.dsp.exec_cmd("wpctl set-mute @DEFAULT_AUDIO_SINK@ toggle"))
+    hl.bind("XF86AudioMute", hl.dsp.exec_cmd("swayosd-client --output-volume mute-toggle"))
+    hl.bind("XF86AudioMicMute", hl.dsp.exec_cmd("swayosd-client --input-volume mute-toggle"))
 
-    -- Volume (repeat while held)
-    hl.bind("XF86AudioRaiseVolume", hl.dsp.exec_cmd("wpctl set-volume -l 1.4 @DEFAULT_AUDIO_SINK@ 5%+"), { repeating = true })
-    hl.bind("XF86AudioLowerVolume", hl.dsp.exec_cmd("wpctl set-volume -l 1.4 @DEFAULT_AUDIO_SINK@ 5%-"), { repeating = true })
+    -- Volume (repeat while held) — swayosd shows the OSD and applies the change,
+    -- capped at 140% to match the old wpctl -l 1.4 ceiling.
+    hl.bind("XF86AudioRaiseVolume", hl.dsp.exec_cmd("swayosd-client --output-volume raise --max-volume 140"), { repeating = true })
+    hl.bind("XF86AudioLowerVolume", hl.dsp.exec_cmd("swayosd-client --output-volume lower --max-volume 140"), { repeating = true })
 
     -- Mouse move/resize
     hl.bind(mod .. " + mouse:272", hl.dsp.window.drag(), { mouse = true })
     hl.bind(mod .. " + mouse:273", hl.dsp.window.resize(), { mouse = true })
 
-    -- Lid switch: lock + conditionally suspend on battery
+    -- Lid switch: lock + conditionally suspend on battery. Only laptops emit a
+    -- Lid Switch event, so this never fires on desktops. Supply glob (A*) and
+    -- the per-user idle flag match hypridle.nix / laptop.nix.
     hl.bind("switch:on:Lid Switch", hl.dsp.exec_cmd(
-      "loginctl lock-session && touch /tmp/10midle && test $(cat /sys/class/power_supply/AC0/online) = 0 && sleep 1 && systemctl suspend"
+      "loginctl lock-session && touch $XDG_RUNTIME_DIR/idle-suspend && test \"$(cat /sys/class/power_supply/A*/online 2>/dev/null | head -n1)\" = 0 && sleep 1 && systemctl suspend"
     ), { locked = true })
 
     -- Workspaces 1..10 (per-monitor via hyprsplit)
@@ -170,6 +178,7 @@ in
     environment.systemPackages = with pkgs; [
       grim
       slurp
+      satty # screenshot annotation editor (SUPER+SHIFT+s)
       hyprpicker
       hyprland-qtutils # renders the permission (ask) dialogs
       cliphist
@@ -210,11 +219,30 @@ in
       wlogout.enable = lib.mkDefault true;
     };
 
+    # Lock before the machine sleeps, on EVERY suspend path (lid, wlogout,
+    # `systemctl suspend`, hypridle) — not just the idle timer. This oneshot runs
+    # Before=sleep.target and signals every session to lock (hypridle catches the
+    # logind Lock signal and runs hyprlock), closing the "suspend-then-resume
+    # unlocked" gap.
+    systemd.services.lock-before-sleep = {
+      description = "Lock all sessions before sleep";
+      before = [ "sleep.target" ];
+      wantedBy = [ "sleep.target" ];
+      serviceConfig = {
+        Type = "oneshot";
+        ExecStart = "${pkgs.systemd}/bin/loginctl lock-sessions";
+      };
+    };
+
     # Home-manager Hyprland configuration
     home-manager.users.${username} = {
       imports = [
         inputs.hyprland.homeManagerModules.default
       ];
+
+      # On-screen display for volume/brightness/caps-lock (swayosd-client is
+      # driven from the XF86 keybinds above). Runs swayosd-server as a user unit.
+      services.swayosd.enable = true;
 
       # Hyprshade shaders
       xdg.configFile."hypr/shaders/grayscale.glsl".source = ./shaders/grayscale.glsl;

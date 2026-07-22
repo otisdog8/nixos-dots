@@ -25,16 +25,21 @@
       # Empty on disk today, so just the config/creds dir on the backed-up tier.
       # Carve a cache tier if/when gemini starts writing one under ~/.gemini.
       storage = [
-        { path = ".gemini"; tier = "persist"; }
+        {
+          path = ".gemini";
+          tier = "persist";
+        }
       ];
 
-      # $PWD comes from cwd.nix; the stash bind provides ~/.gemini. Only the
-      # shared host /tmp remains (preserved from the legacy config).
+      # $PWD comes from cwd.nix; the stash bind provides ~/.gemini. /tmp is a
+      # PRIVATE tmpfs (not the shared host /tmp) so scratch files are per-app and
+      # invisible to other sandboxes/the host; TMPDIR is pinned into it.
       nixpakModules = [
         (
           { ... }:
           {
-            bubblewrap.bind.rw = [ "/tmp" ];
+            bubblewrap.tmpfs = [ "/tmp" ];
+            bubblewrap.env.TMPDIR = "/tmp";
           }
         )
       ];

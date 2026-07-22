@@ -57,7 +57,7 @@
               icon = " ";
               key = "f";
               desc = "Find File";
-              action = lib.nixvim.mkRaw ''function() Snacks.dashboard.pick('files') end'';
+              action = lib.nixvim.mkRaw "function() Snacks.dashboard.pick('files') end";
             }
             {
               icon = " ";
@@ -69,19 +69,19 @@
               icon = " ";
               key = "g";
               desc = "Find Text";
-              action = lib.nixvim.mkRaw ''function() Snacks.dashboard.pick('live_grep') end'';
+              action = lib.nixvim.mkRaw "function() Snacks.dashboard.pick('live_grep') end";
             }
             {
               icon = " ";
               key = "r";
               desc = "Recent Files";
-              action = lib.nixvim.mkRaw ''function() Snacks.dashboard.pick('oldfiles') end'';
+              action = lib.nixvim.mkRaw "function() Snacks.dashboard.pick('oldfiles') end";
             }
             {
               icon = " ";
               key = "c";
               desc = "Config";
-              action = lib.nixvim.mkRaw ''function() Snacks.dashboard.pick('files', {cwd = vim.fn.stdpath('config')}) end'';
+              action = lib.nixvim.mkRaw "function() Snacks.dashboard.pick('files', {cwd = vim.fn.stdpath('config')}) end";
             }
             {
               icon = " ";

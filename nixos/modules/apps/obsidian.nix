@@ -30,16 +30,34 @@
       defaultBackend = "systemd";
 
       storage = [
-        { path = ".config/obsidian"; tier = "persist"; } # profile (hidden stash)
+        {
+          path = ".config/obsidian";
+          tier = "persist";
+        } # profile (hidden stash)
         # Chromium caches → /cache tier (disposable, cross-tier so not nested).
-        { path = ".config/obsidian/Cache"; tier = "cache"; }
-        { path = ".config/obsidian/GPUCache"; tier = "cache"; }
-        { path = ".config/obsidian/Code Cache"; tier = "cache"; }
-        { path = ".config/obsidian/DawnCache"; tier = "cache"; }
+        {
+          path = ".config/obsidian/Cache";
+          tier = "cache";
+        }
+        {
+          path = ".config/obsidian/GPUCache";
+          tier = "cache";
+        }
+        {
+          path = ".config/obsidian/Code Cache";
+          tier = "cache";
+        }
+        {
+          path = ".config/obsidian/DawnCache";
+          tier = "cache";
+        }
         # Vault (notes + the executable .obsidian/plugins) → app-obsidian-owned
         # stash, so a compromised jrt can neither read the notes nor plant a
         # plugin that obsidian would run as app-obsidian.
-        { path = "Documents/obsidian"; tier = "persist"; }
+        {
+          path = "Documents/obsidian";
+          tier = "persist";
+        }
       ];
 
       customOptions = config: {

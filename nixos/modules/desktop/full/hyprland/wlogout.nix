@@ -111,7 +111,9 @@ in
         layout = [
           {
             "label" = "lock";
-            "action" = "~/.scripts/lock";
+            # loginctl lock-session -> hypridle catches the logind Lock signal and
+            # runs hyprlock (matches the CTRL+ALT+l bind and the idle-lock path).
+            "action" = "loginctl lock-session";
             "text" = "Lock";
             "keybind" = "l";
           }
