@@ -14,8 +14,9 @@
 
   imports = [
     ./disks.nix
-    ./secrets.nix
     ./backups.nix
+    ./snapshots.nix
+    inputs.sops-nix.nixosModules.sops
 
     # Hardware
     inputs.nixos-hardware.nixosModules.common-cpu-intel
@@ -32,6 +33,14 @@
     # Gaming bundle
     ../../modules/bundles/gaming.nix
   ];
+
+  # Host-wide sops-nix base config; per-secret declarations live next to their
+  # consumers (e.g. ./backups.nix). Decryption uses the SSH host ed25519 key,
+  # persisted under /persist by remote-access.nix (enabled by default).
+  sops = {
+    defaultSopsFile = ./secrets/constitution.yaml;
+    age.sshKeyPaths = [ "/etc/ssh/ssh_host_ed25519_key" ];
+  };
 
   # Enable full desktop environment
   modules.desktop.full.enable = true;

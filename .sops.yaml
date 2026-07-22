@@ -6,6 +6,11 @@ keys:
   - &constitution_host age1850lrhfzq39frupln50mgqwxhgzlv78kzmgwxadk0wszxgxlhausq86luv
   - &excelsior_host age1a3h89x7vayasxmrvjhvqws2da6ck8jnpe8gxhjfutke9u7x83anqnls6u4
 creation_rules:
+  # Constitution: borg backup passphrase (borgbase).
+  - path_regex: .*constitution\.yaml
+    age:
+      - *constitution_host
+      - *galaxy_host
   # Galaxy: borg backup passphrase (borgbase).
   - path_regex: .*galaxy\.yaml
     age:
