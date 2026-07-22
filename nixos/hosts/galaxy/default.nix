@@ -16,6 +16,8 @@
 
   imports = [
     ./disks.nix
+    ./backups.nix
+    inputs.sops-nix.nixosModules.sops
 
     # Hardware
     inputs.nixos-hardware.nixosModules.common-cpu-amd
@@ -31,6 +33,14 @@
     # System modules
     ../../modules/system/hardware/nvidia.nix
   ];
+
+  # Host-wide sops-nix base config; per-secret declarations live next to their
+  # consumers (e.g. ./backups.nix). Decryption uses the SSH host ed25519 key,
+  # persisted under /persist by remote-access.nix (enabled by default).
+  sops = {
+    defaultSopsFile = ./secrets/galaxy.yaml;
+    age.sshKeyPaths = [ "/etc/ssh/ssh_host_ed25519_key" ];
+  };
 
   # Enable full desktop environment
   # This automatically enables: browsers, communication, productivity, media bundles
