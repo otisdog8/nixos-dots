@@ -221,19 +221,30 @@ in
     # the end — the unit reports failure while every healthy bucket still
     # synced. No --checksum: crypt can't pass MD5/ETags through, so rclone
     # compares size+modtime (crypt preserves original modtimes in metadata).
+    # --log-level INFO + per-phase exit codes: rclone was observed exiting
+    # non-zero with NOTHING logged at the default NOTICE level, so surface
+    # everything. rclone exit codes: 3=dir not found, 5=temporary error,
+    # 6=less-serious errors, 7=fatal. (rc capture via ||: the NixOS script
+    # wrapper runs under set -e, so a bare failing command would abort the
+    # whole loop.)
     script = ''
       fail=0
       for bucket in ${lib.escapeShellArgs garageBuckets}; do
-        if ! rclone sync "GARAGE:$bucket" "S4CRYPT:$bucket/current" \
-            --backup-dir "S4CRYPT:$bucket/archive/$(date +%F)" \
-            --fast-list --transfers 8 --stats-log-level NOTICE; then
-          echo "sync of bucket $bucket failed" >&2
+        rc=0
+        rclone sync "GARAGE:$bucket" "S4CRYPT:$bucket/current" \
+          --backup-dir "S4CRYPT:$bucket/archive/$(date +%F)" \
+          --fast-list --transfers 8 \
+          --log-level INFO --stats 1m --stats-log-level NOTICE || rc=$?
+        if [ "$rc" -ne 0 ]; then
+          echo "sync of bucket $bucket failed (rclone exit $rc)" >&2
           fail=1
         fi
         # Age out the archive; --rmdirs clears the emptied date dirs.
-        if ! rclone delete "S4CRYPT:$bucket/archive" \
-            --min-age ${archiveMaxAge} --rmdirs; then
-          echo "archive prune of bucket $bucket failed" >&2
+        rc=0
+        rclone delete "S4CRYPT:$bucket/archive" \
+          --min-age ${archiveMaxAge} --rmdirs --log-level INFO || rc=$?
+        if [ "$rc" -ne 0 ]; then
+          echo "archive prune of bucket $bucket failed (rclone exit $rc)" >&2
           fail=1
         fi
       done
