@@ -15,7 +15,7 @@ in
   programs = {
     git = {
       enable = true;
-      signing.signByDefault = true;
+      signing.signByDefault = false;
       lfs.enable = true;
       signing.key = "~/.ssh/id_ed25519.pub";
       settings = {
