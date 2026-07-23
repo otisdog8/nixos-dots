@@ -47,6 +47,7 @@
     ./media.nix
     ./secrets.nix
     ./backups.nix
+    ./s4-backups.nix
     ./ddns.nix
     ./agent-auth.nix
     ./hindsight.nix

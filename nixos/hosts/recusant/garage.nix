@@ -3,9 +3,12 @@
 # Tenancy model: one bucket per purpose, one access key per purpose, each key
 # scoped read+write to ONLY its bucket. A leaked Attic push token can never
 # touch backups, and vice versa. Buckets:
-#   nix-cache    — Attic binary cache backend (key: attic-rw)      [in use]
-#   k8s-backups  — future backup target for the k3s cluster        [reserved]
-#                  (velero/restic/k8up on arquitens; not wired yet)
+#   nix-cache     — Attic binary cache backend (key: attic-rw)     [in use]
+#   velero        — k3s cluster backups (velero)                   [in use]
+#   cnpg-backups  — k3s CloudNativePG WAL/base backups             [in use]
+#   gitea-rgw     — k3s Gitea object storage                       [in use]
+# The three k8s buckets are mirrored off-site to MEGA S4 with a read-only
+# key (backup-sync-ro) — see s4-backups.nix.
 #
 # Exposure: the S3 API binds recusant's tailscale IP so both the local Attic
 # server AND the k8s backup tenant on arquitens can reach it over the tailnet.
@@ -15,9 +18,9 @@
 # API at https://garage.recusant.rooty.dev for a TLS endpoint with a stable
 # hostname — still tailnet-only (nginx binds the tailscale IP).
 #
-# Durability note: replication_factor = 1 means no redundancy. Fine for the
-# regenerable nix-cache; when k8s-backups is wired, add off-host replication —
-# recusant is a single point of failure for anything stored here.
+# Durability note: replication_factor = 1 means no redundancy on the node
+# itself. Fine for the regenerable nix-cache; the k8s buckets get their
+# off-host copy via the daily rclone mirror to MEGA S4 (s4-backups.nix).
 #
 # The GARAGE_RPC_SECRET is sops-managed (secrets/garage.env) and read via
 # systemd EnvironmentFile — no manual /persist file, so a rebuild alone brings
@@ -32,10 +35,11 @@
 #        garage bucket create nix-cache
 #        garage key create attic-rw          # note the Key ID + Secret
 #        garage bucket allow --read --write nix-cache --key attic-rw
-#   3. k8s-backups: create the bucket + its own key ONLY when wiring backups:
-#        garage bucket create k8s-backups
-#        garage key create k8s-backup-rw
-#        garage bucket allow --read --write k8s-backups --key k8s-backup-rw
+#   3. Per-tenant buckets (velero/cnpg-backups/gitea-rgw) follow the same shape:
+#        garage bucket create <bucket>
+#        garage key create <tenant>-rw
+#        garage bucket allow --read --write <bucket> --key <tenant>-rw
+#      (Off-site mirroring of these adds a read-only key — see s4-backups.nix.)
 {
   config,
   lib,

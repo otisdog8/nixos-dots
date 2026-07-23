@@ -53,3 +53,9 @@ creation_rules:
       - *recusant_host
       - *galaxy_host
       - *constitution_host
+  # Off-site S4 backups: restic + rclone S3 credentials (dotenv).
+  - path_regex: .*recusant/secrets/s4-backups.*
+    age:
+      - *recusant_host
+      - *galaxy_host
+      - *constitution_host
