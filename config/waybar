@@ -65,7 +65,6 @@ window#waybar.hidden {
 
 #custom-cputemp.critical {
     background-color: #b54f4f;
-    animation: blink 0.5s linear infinite alternate;
 }
 
 @keyframes blink {
