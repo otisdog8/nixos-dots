@@ -17,6 +17,7 @@
   imports = [
     ./disks.nix
     ./backups.nix
+    ./llm.nix
     inputs.sops-nix.nixosModules.sops
 
     # Hardware

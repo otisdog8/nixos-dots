@@ -1,4 +1,7 @@
-# Off-site borg backups for galaxy (borgbase), mirroring excelsior's setup.
+# Galaxy snapshot + off-site backup configuration.
+#
+# ── Borg (borgbase) ──────────────────────────────────────────────────────────
+# Mirrors excelsior's setup.
 # Both the passphrase and the repo URL are managed by sops-nix so neither
 # lands in the world-readable nix store: borgmatic reads the passphrase at
 # runtime via encryption_passcommand, and the repo path is a ''${BORG_REPO}
@@ -21,8 +24,24 @@
 { config, ... }:
 {
   imports = [
+    ../../modules/system/snapshots.nix
     ../../modules/system/backups.nix
   ];
+
+  # Local BTRFS snapshots (hourly btrbk, module defaults for schedule and
+  # retention). `nix` is reproducible and `cache`/`baked` are scratch, so only
+  # the stateful subvolumes are covered. Snapshots land in
+  # /mnt/btrfs_root/btrbk_snapshots per the module default — btrbk does not
+  # create that directory itself; one-time on galaxy:
+  #   sudo mkdir -p /mnt/btrfs_root/btrbk_snapshots
+  modules.system.snapshots = {
+    enable = true;
+    subvolumes = [
+      "persist"
+      "large"
+      "dots"
+    ];
+  };
 
   sops.secrets."borg-passphrase" = { };
   # Single line of the form BORG_REPO=ssh://... — dotenv-style so it can be
