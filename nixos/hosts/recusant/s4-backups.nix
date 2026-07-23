@@ -191,6 +191,13 @@ in
       pkgs.coreutils
     ];
     environment = {
+      # DynamicUser has no home and the sandbox has no getent, so rclone can't
+      # resolve its default config/cache dirs (it logs a startup ERROR triple
+      # and falls back to cwd=/, read-only under ProtectSystem=strict). We are
+      # deliberately configless — pin the config to /dev/null and give the
+      # cache/home fallbacks the unit-private /tmp.
+      RCLONE_CONFIG = "/dev/null";
+      HOME = "/tmp";
       RCLONE_CONFIG_GARAGE_TYPE = "s3";
       # rclone has no Garage provider; "Other" is the documented choice.
       RCLONE_CONFIG_GARAGE_PROVIDER = "Other";
