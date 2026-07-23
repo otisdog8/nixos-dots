@@ -40,7 +40,9 @@ window#waybar.hidden {
 
 #battery,
 #cpu,
+#custom-cputemp,
 #memory,
+#disk,
 #backlight,
 #network,
 #pulseaudio,
@@ -57,6 +59,11 @@ window#waybar.hidden {
 }
 
 #battery.critical:not(.charging) {
+    background-color: #b54f4f;
+    animation: blink 0.5s linear infinite alternate;
+}
+
+#custom-cputemp.critical {
     background-color: #b54f4f;
     animation: blink 0.5s linear infinite alternate;
 }
