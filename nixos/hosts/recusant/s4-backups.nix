@@ -208,6 +208,13 @@ in
       RCLONE_CONFIG_S4_PROVIDER = "Mega";
       RCLONE_CONFIG_S4_ENDPOINT = s4Endpoint;
       RCLONE_CONFIG_S4_FORCE_PATH_STYLE = "true";
+      # The S4 key is bucket-scoped and its policy denies CreateBucket. rclone
+      # otherwise tries a bucket-existence Mkdir (= CreateBucket) on the first
+      # write of each remote instance — the --backup-dir instance hit this with
+      # a 403 on every archive move, so overwrites/deletes could never archive
+      # and the sync failed each run. no_check_bucket is rclone's switch for
+      # exactly this restricted-key setup; the bucket pre-exists (bootstrap 1).
+      RCLONE_CONFIG_S4_NO_CHECK_BUCKET = "true";
       # If SigV4 errors mention a region mismatch, additionally set
       # RCLONE_CONFIG_S4_REGION to the region id the S4 console shows.
       # Client-side encryption layer over the S4 bucket — contents and names
