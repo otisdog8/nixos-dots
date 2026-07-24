@@ -152,19 +152,43 @@ let
       ${co}/mkdir -p "${runtimeDir}"
       ${co}/chown "${appUser}" "${runtimeDir}" 2>/dev/null || true
       ${co}/chmod 700 "${runtimeDir}"
-      for __s in ${jrtRuntime}/${waylandSocket} ${jrtRuntime}/pipewire-* ${jrtRuntime}/pulse; do
+      for __s in ${jrtRuntime}/${waylandSocket} ${jrtRuntime}/pipewire-*; do
         [ -e "$__s" ] || continue
-        # Refuse a symlink or a non-socket/dir: a compromised jrt could plant one in
+        # Refuse a symlink or a non-socket: a compromised jrt could plant one in
         # its own runtime dir to trick root into bind-mounting an arbitrary host file
         # (e.g. /etc/shadow) into the app's runtime as "wayland-1". Only relay the
-        # real sockets (and the pulse dir) we expect. The wayland name is pinned (not
-        # globbed) so jrt can't win by planting a lexically-earlier socket.
+        # real sockets we expect. The wayland name is pinned (not globbed) so jrt
+        # can't win by planting a lexically-earlier socket.
         [ -L "$__s" ] && continue
-        { [ -S "$__s" ] || [ -d "$__s" ]; } || continue
+        [ -S "$__s" ] || continue
         __n="$(${co}/basename "$__s")"
-        if [ -d "$__s" ]; then ${co}/mkdir -p "${runtimeDir}/$__n"; else ${co}/touch "${runtimeDir}/$__n"; fi
+        ${co}/touch "${runtimeDir}/$__n"
         ${ul}/mount --bind "$__s" "${runtimeDir}/$__n" 2>/dev/null || true
       done
+      # Pulse: bind ONLY the native socket FILE, never jrt's pulse dir. Reaching a
+      # file bound at the app's own path needs no permission on jrt's dir — which
+      # matters because jrt-side libpulse clients (pavucontrol, waybar, swayosd)
+      # redo libpulse's "secure directory" setup and chmod jrt's pulse dir back to
+      # 0700; on a dir carrying ACLs, chmod resets the ACL mask to ---, silently
+      # cutting off every dedicated app's grant (transient no-audio: cubeb EACCES).
+      # The socket inode itself is 0666, so the bind alone suffices — no ACL.
+      # Trade-off: a file bind pins the inode, so a pipewire-pulse restart needs an
+      # app relaunch (same as the pipewire-0 bind above; the old dir bind tracked
+      # socket recreation but had the mask problem).
+      __pn="${jrtRuntime}/pulse/native"
+      if [ -d "${jrtRuntime}/pulse" ] && [ ! -L "${jrtRuntime}/pulse" ]; then
+        # Session start can race the socket unit: give native a moment to appear
+        # (the file bind can't pick it up later the way the old dir bind did).
+        for __i in $(${co}/seq 1 40); do [ -e "$__pn" ] && break; ${co}/sleep 0.05; done
+        # Same symlink/type paranoia as above, on the jrt-controlled leaf.
+        if [ -S "$__pn" ] && [ ! -L "$__pn" ]; then
+          ${co}/mkdir -p "${runtimeDir}/pulse"
+          ${co}/chown "${appUser}" "${runtimeDir}/pulse" 2>/dev/null || true
+          ${co}/chmod 700 "${runtimeDir}/pulse"
+          ${co}/touch "${runtimeDir}/pulse/native"
+          ${ul}/mount --bind "$__pn" "${runtimeDir}/pulse/native" 2>/dev/null || true
+        fi
+      fi
       # Cross-uid document portal: jrt's doc FUSE lives under jrt's 0700 runtime dir
       # (the app can't traverse there), so root relays it into the app's own runtime
       # dir. Scoped to this app's by-app/<appId> subtree (NOT the whole FUSE) so the
@@ -378,7 +402,11 @@ let
           # Grant app-${appUser} rw on ONLY the specific session sockets (which the
           # runScript binds into the app's own runtime dir). No ACL on jrt's
           # runtime dir itself → app-${appUser} can't list/create/delete there.
-          for __s in "${jrtRuntime}"/wayland-* "${jrtRuntime}"/pipewire-* "${jrtRuntime}/pulse"; do
+          # Pulse is NOT here: the runScript binds pulse/native (a 0666 socket)
+          # directly, and an ACL on jrt's pulse DIR is a trap — jrt-side libpulse
+          # clients chmod that dir 0700, zeroing the ACL mask (see runScript).
+          # (__revoke_acls still sweeps pulse to clean entries from older builds.)
+          for __s in "${jrtRuntime}"/wayland-* "${jrtRuntime}"/pipewire-*; do
             [ -e "$__s" ] || continue
             # Mirror the root-side relay checks: never ACL a symlink or a non-socket/
             # non-dir (a compromised jrt could plant one to widen the ACL's reach).
