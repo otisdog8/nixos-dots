@@ -147,6 +147,10 @@ in
         extract_backend = "firecrawl";
       };
 
+      # Run this trusted homelab ops agent in YOLO/no-approval mode. User-defined
+      # deny rules still apply even when approvals are off.
+      approvals.mode = "off";
+
       # Allow the Alertmanager cron triage job to open the known-good local
       # homelab endpoint without blocking on Tirith's generic .dev lookalike-TLD
       # warning. Keep this narrow: only the local browser command for this host,
