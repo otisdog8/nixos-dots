@@ -258,7 +258,12 @@ in
       DynamicUser = true;
       NoNewPrivileges = true;
       CapabilityBoundingSet = [ "" ];
+      # AF_UNIX is NOT optional: rclone detects systemd via $JOURNAL_STREAM and
+      # logs to the native journald socket (a unix datagram socket) instead of
+      # stderr — without AF_UNIX every log line after startup is silently
+      # dropped at connect(), which made failing syncs completely mute.
       RestrictAddressFamilies = [
+        "AF_UNIX"
         "AF_INET"
         "AF_INET6"
       ];
