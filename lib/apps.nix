@@ -287,6 +287,39 @@
                   ;
               };
           finalPkg = backendResult.package;
+
+          # Some command-line apps expose an explicit, more-privileged GPU
+          # entry point while keeping their normal launcher GPU-less. Reuse the
+          # same package, storage, and capabilities, changing only `gpu = true`,
+          # then give the resulting sandbox wrapper a distinct command name.
+          gpuCommandPkg =
+            if appCfg.gpuCommandName == null then
+              null
+            else if effectiveBackend != "nixpak" then
+              builtins.throw "${appName}: gpuCommandName is currently supported only by the nixpak backend"
+            else
+              let
+                gpuAppCfg = appCfg // {
+                  capabilities = appCfg.capabilities // {
+                    gpu = true;
+                  };
+                };
+                gpuBackend = (import ./backends/default.nix).nixpak {
+                  inherit
+                    appName
+                    cfg
+                    config
+                    lib
+                    pkgs
+                    inputs
+                    storage
+                    ;
+                  appCfg = gpuAppCfg;
+                };
+              in
+              pkgs.writeShellScriptBin appCfg.gpuCommandName ''
+                exec ${gpuBackend.package}/bin/${appCfg.packageName} "$@"
+              '';
         in
         lib.mkMerge (
           [
@@ -297,7 +330,7 @@
 
             # Base config - always applied when enabled
             (lib.mkIf cfg.enable {
-              environment.systemPackages = [ finalPkg ];
+              environment.systemPackages = [ finalPkg ] ++ lib.optional (gpuCommandPkg != null) gpuCommandPkg;
             })
 
             # v2: backend-emitted system config (tmpfiles, persistence, units).

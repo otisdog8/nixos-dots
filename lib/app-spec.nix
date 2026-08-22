@@ -20,6 +20,16 @@
       description = "Binary name within the package (for sandboxing)";
     };
 
+    gpuCommandName = lib.mkOption {
+      type = lib.types.nullOr lib.types.str;
+      default = null;
+      description = ''
+        Optional command that launches a second copy of the app sandbox with the
+        GPU capability enabled. The regular command remains GPU-less. Currently
+        supported by the nixpak backend.
+      '';
+    };
+
     desktopFileName = lib.mkOption {
       type = lib.types.nullOr lib.types.str;
       default = null;

@@ -18,6 +18,7 @@
       ../../../lib/features/nix-store.nix
       ../../../lib/features/bin-sh.nix
       ../../../lib/features/agent-peers.nix
+      ../../../lib/features/agent-gpu-command.nix
     ];
 
     config.app = {

@@ -14,6 +14,7 @@
       ../../../lib/features/cwd.nix
       ../../../lib/features/git.nix
       ../../../lib/features/agent-peers.nix
+      ../../../lib/features/agent-gpu-command.nix
     ];
 
     config.app = {
