@@ -16,12 +16,23 @@ let
   # falls back to a build-time git clone, which the Nix sandbox forbids.
   # Upstream dropped the constraint on main (91f29f2, no code changes needed);
   # backport that one-liner here. Drop on the next hyprland input bump.
-  hyprlandPkg = inputs.hyprland.packages.${system}.hyprland.overrideAttrs (old: {
-    postPatch = (old.postPatch or "") + ''
-      substituteInPlace CMakeLists.txt \
-        --replace-fail "find_package(glaze 7...<8 QUIET)" "find_package(glaze QUIET)"
-    '';
-  });
+  # guiutils forces GCC 15 upstream, but its hyprtoolkit dependency uses the
+  # followed nixpkgs default compiler. When those libstdc++ ABIs differ the
+  # guiutils executables fail to link, so build both with this package set's
+  # stdenv and pass the corrected dependency into Hyprland.
+  hyprlandGuiutilsPkg =
+    inputs.hyprland.inputs.hyprland-guiutils.packages.${system}.hyprland-guiutils.override
+      { stdenv = pkgs.stdenv; };
+  hyprlandPkg =
+    (inputs.hyprland.packages.${system}.hyprland.override {
+      hyprland-guiutils = hyprlandGuiutilsPkg;
+    }).overrideAttrs
+      (old: {
+        postPatch = (old.postPatch or "") + ''
+          substituteInPlace CMakeLists.txt \
+            --replace-fail "find_package(glaze 7...<8 QUIET)" "find_package(glaze QUIET)"
+        '';
+      });
   hyprlandPortalPkg = inputs.hyprland.packages.${system}.xdg-desktop-portal-hyprland.override {
     hyprland = hyprlandPkg;
   };
