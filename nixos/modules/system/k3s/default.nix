@@ -83,6 +83,10 @@ in
   };
 
   config = lib.mkIf cfg.enable {
+    # Keep cluster nodes on the explicitly selected kernel series instead of
+    # following the fleet-wide linuxPackages_latest default.
+    boot.kernelPackages = lib.mkOverride 90 pkgs.linuxPackages_7_1;
+
     # tailscale0 is trusted globally in networking.nix, so these allow-lists
     # are only needed if a host ever drops trustedInterfaces. Keep them
     # declared as documentation + a safety net.
