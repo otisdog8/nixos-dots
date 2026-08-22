@@ -88,6 +88,22 @@ final: prev: {
       };
     };
 
+  # nixos-unstable still has 1.39.1, while the nixpkgs-unstable input has
+  # bcachefs-tools 1.39.2. Pull the newer package from there and carry the
+  # packed-bkey assertion fix from bcachefs-tools PR #868 until it is merged.
+  # https://github.com/koverstreet/bcachefs-tools/pull/868
+  bcachefs-tools =
+    inputs.nixpkgs-unstable.legacyPackages.${final.stdenv.hostPlatform.system}.bcachefs-tools.overrideAttrs
+      (oldAttrs: {
+        patches = (oldAttrs.patches or [ ]) ++ [
+          (final.fetchpatch {
+            name = "0001-bcachefs-tools-debug-copy-packed-bkey-fields-before-asserting.patch";
+            url = "https://evilpiepirate.org/git/bcachefs-tools.git/patch/?id=79f119c4cd6900ab9ea27b0aa671f68300d9d38e";
+            hash = "sha256-ACrpad93wrZOXhc73otnXBNQvyoDeZSfgtwze5nKaUE=";
+          })
+        ];
+      });
+
   # cantarell-fonts 0.311 fails to build on the nixos-* channels (otfautohint
   # errors on uni0424 during variable-font generation with afdko 5.0.1). The
   # nixpkgs-unstable branch has the fixed rebuild; pin from there. A font is
