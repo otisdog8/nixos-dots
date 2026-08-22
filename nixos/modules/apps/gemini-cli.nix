@@ -19,8 +19,10 @@
 
     config.app = {
       name = "gemini-cli";
-      packageName = "gemini";
-      package = pkgs.gemini-cli;
+      # Google retired Gemini CLI in favor of Antigravity CLI. Keep the app
+      # identity stable so existing sandbox state and module options survive.
+      packageName = "agy";
+      package = pkgs.antigravity-cli;
 
       defaultBackend = "nixpak";
 

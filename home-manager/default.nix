@@ -8,9 +8,6 @@
   username,
   ...
 }:
-let
-  inherit (pkgs.stdenv) isDarwin isLinux;
-in
 {
   imports = [
     ./mixins/cli

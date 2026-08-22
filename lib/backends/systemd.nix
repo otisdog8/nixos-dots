@@ -54,7 +54,7 @@ let
   acl = "${pkgs.acl}/bin";
   bwrap = "${pkgs.bubblewrap}/bin/bwrap";
   busctl = "${pkgs.systemd}/bin/busctl";
-  xhost = "${pkgs.xorg.xhost}/bin/xhost";
+  xhost = "${pkgs.xhost}/bin/xhost";
   gdbus = "${pkgs.glib}/bin/gdbus";
   grep = "${pkgs.gnugrep}/bin/grep";
   # Patched proxy (drops the in-band AUTH EXTERNAL uid) — see the

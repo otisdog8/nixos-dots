@@ -8,9 +8,6 @@
   username,
   ...
 }:
-let
-  inherit (pkgs.stdenv) isDarwin isLinux;
-in
 {
   programs = {
     git = {
@@ -38,7 +35,7 @@ in
     ssh = {
       enable = true;
       enableDefaultConfig = false;
-      matchBlocks."*".addKeysToAgent = "yes";
+      settings."*".AddKeysToAgent = "yes";
     };
     zsh = {
       enable = true;
