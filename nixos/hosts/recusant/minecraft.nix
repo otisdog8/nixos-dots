@@ -560,15 +560,30 @@ let
     dontBuild = true;
     installPhase = "install -Dm755 mc-monitor $out/bin/mc-monitor";
   };
-  monitorTargets = lib.concatStringsSep "," (
-    map (p: "127.0.0.1:${toString p}") (
-      [
-        25565
-        lobbyPort
-      ]
-      ++ lib.mapAttrsToList (_: b: b.port) (backends // nixBackends)
-    )
-  );
+  # One mc-monitor process per server gives Prometheus a stable target/metric
+  # label. A single exporter accepts only anonymous host:port values and emits
+  # every server as server_host="127.0.0.1", which made Grafana unusable.
+  monitorTargets = {
+    velocity = 25565;
+    lobby = lobbyPort;
+  }
+  // lib.mapAttrs (_: b: b.port) (backends // nixBackends);
+  monitorPorts = {
+    velocity = 9150;
+    lobby = 9151;
+    atm9 = 9152;
+    atm10 = 9153;
+    bettermc = 9154;
+    evolution = 9155;
+    ob2 = 9156;
+    sb4 = 9157;
+    skies2 = 9158;
+    p2haustian = 9159;
+    dungeonheroes = 9160;
+    integratedmc = 9161;
+    abyssalascent = 9162;
+    sdfs = 9163;
+  };
 
   # Velocity-specific proxy exporter (player connects/disconnects/kicks, per-server
   # distribution, online players + latency). JVM metrics are off here since the
@@ -673,41 +688,50 @@ in
   # Only the direct path is public; 25601 rides the trusted tailnet.
   networking.firewall.allowedTCPPorts = [ 25565 ];
 
-  # mc-monitor: pings every server (proxy, lobby, all backends) and exports
-  # loader-agnostic up/down + player counts on :9150 (tailnet-only via the
-  # firewall). The on-demand backends read as down until AutoServer starts them.
-  systemd.services.mc-monitor = {
-    description = "mc-monitor Prometheus exporter";
-    wantedBy = [ "multi-user.target" ];
-    after = [ "network.target" ];
-    serviceConfig = {
-      ExecStart = "${mcMonitor}/bin/mc-monitor export-for-prometheus -port 9150 -servers ${monitorTargets}";
-      # Unprivileged + sandboxed: a transient user with no real account, and it's
-      # a pure network client/server, so lock everything else down.
-      DynamicUser = true;
-      Restart = "on-failure";
-      RestartSec = "30s";
-      NoNewPrivileges = true;
-      CapabilityBoundingSet = [ "" ];
-      RestrictAddressFamilies = [
-        "AF_INET"
-        "AF_INET6"
-      ];
-      ProtectSystem = "strict";
-      ProtectHome = true;
-      PrivateTmp = true;
-      PrivateDevices = true;
-      ProtectKernelTunables = true;
-      ProtectKernelModules = true;
-      ProtectControlGroups = true;
-      RestrictNamespaces = true;
-      RestrictRealtime = true;
-      RestrictSUIDSGID = true;
-      LockPersonality = true;
-      MemoryDenyWriteExecute = true;
-      SystemCallArchitectures = "native";
+  # Each process monitors exactly one local port. The matching VMStaticScrape
+  # target has the same stable `server` label, instead of exposing a list of
+  # indistinguishable 127.0.0.1 targets from one exporter.
+  systemd.services =
+    (lib.mapAttrs (name: serverPort: {
+      description = "mc-monitor ${name} Prometheus exporter";
+      wantedBy = [ "multi-user.target" ];
+      after = [ "network.target" ];
+      serviceConfig = {
+        ExecStart = "${mcMonitor}/bin/mc-monitor export-for-prometheus -port ${toString monitorPorts.${name}} -servers 127.0.0.1:${toString serverPort}";
+        # Unprivileged + sandboxed: a transient user with no real account, and it's
+        # a pure network client/server, so lock everything else down.
+        DynamicUser = true;
+        Restart = "on-failure";
+        RestartSec = "30s";
+        NoNewPrivileges = true;
+        CapabilityBoundingSet = [ "" ];
+        RestrictAddressFamilies = [
+          "AF_INET"
+          "AF_INET6"
+        ];
+        ProtectSystem = "strict";
+        ProtectHome = true;
+        PrivateTmp = true;
+        PrivateDevices = true;
+        ProtectKernelTunables = true;
+        ProtectKernelModules = true;
+        ProtectControlGroups = true;
+        RestrictNamespaces = true;
+        RestrictRealtime = true;
+        RestrictSUIDSGID = true;
+        LockPersonality = true;
+        MemoryDenyWriteExecute = true;
+        SystemCallArchitectures = "native";
+      };
+    }) monitorTargets)
+    // {
+      # Like the custom-module backends: don't let a rebuild restart the running
+      # nix-minecraft servers (Velocity/lobby/sdfs) and kick everyone.
+      # nix-minecraft defaults to restartIfChanged = true, so restart manually.
+      "minecraft-server-velocity".restartIfChanged = lib.mkForce false;
+      "minecraft-server-lobby".restartIfChanged = lib.mkForce false;
+      "minecraft-server-sdfs".restartIfChanged = lib.mkForce false;
     };
-  };
 
   # ── CurseForge/Forge backends (custom module, on-demand) ──────────────────
   modules.apps.minecraft-server = {
@@ -915,10 +939,4 @@ in
     };
   };
 
-  # Like the custom-module backends: don't let a rebuild restart the running
-  # nix-minecraft servers (Velocity/lobby/sdfs) and kick everyone. nix-minecraft
-  # defaults to restartIfChanged = true, so force it off; restart manually.
-  systemd.services."minecraft-server-velocity".restartIfChanged = lib.mkForce false;
-  systemd.services."minecraft-server-lobby".restartIfChanged = lib.mkForce false;
-  systemd.services."minecraft-server-sdfs".restartIfChanged = lib.mkForce false;
 }
