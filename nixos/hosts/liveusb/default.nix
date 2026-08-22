@@ -72,8 +72,8 @@
     };
   };
 
-  # captive-browser is configured in networking.nix; the browsers bundle (via
-  # desktop.full) supplies the chromium it launches.
+  # captive-browser is configured in networking.nix, which also enables its
+  # purpose-built sandboxed Chromium instance.
   programs.captive-browser.enable = true;
 
   # ---- Universal open GPU (Intel + AMD); NVIDIA added by the module above ----

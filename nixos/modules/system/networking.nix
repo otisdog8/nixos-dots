@@ -2,15 +2,14 @@
 {
   config,
   lib,
-  pkgs,
   ...
 }:
 let
-  # Sandboxed ungoogled-chromium (tmpfs homedir, no persistence) if the
-  # apps module enabled it; otherwise the plain package as a fallback.
-  cbBrowserPkg = config.modules.apps.ungoogled-chromium.finalPackage or pkgs.ungoogled-chromium;
+  cbBrowserPkg = config.modules.apps.captive-browser-chromium.finalPackage;
 in
 {
+  imports = [ ../apps/captive-browser-chromium.nix ];
+
   networking.useDHCP = lib.mkDefault true;
 
   networking.networkmanager = {
@@ -28,31 +27,21 @@ in
     checkReversePath = "loose";
   };
 
-  # captive-browser: SOCKS5 + sandboxed ungoogled-chromium for portal auth.
-  # cbBrowserPkg is ungoogled-chromium's framework finalPackage (a dedicated-uid systemd
-  # sandbox with a tmpfs home), so portal auth runs the contained browser, not a raw one
-  # — the `or pkgs.ungoogled-chromium` fallback only bites on a host that has
-  # captive-browser but not the app enabled.
+  # captive-browser: SOCKS5 + a purpose-built sandboxed Chromium instance for
+  # portal auth. The systemd sandbox launcher intentionally cannot forward cold
+  # launch arguments, so chromium-captive has the matching proxy/browser flags
+  # baked into its package and this command passes no arguments at all.
   # bindInterface=false lets the upstream default dhcp-dns query every
   # device, so we don't have to hardcode wlan0/wlp3s0 per host.
   programs.captive-browser = {
     bindInterface = false;
     interface = "auto"; # unused with bindInterface=false; satisfies types.str
-    browser = lib.concatStringsSep " " [
-      ''env XDG_CONFIG_HOME="$PREV_CONFIG_HOME"''
-      "${cbBrowserPkg}/bin/chromium"
-      "--user-data-dir=\${XDG_DATA_HOME:-$HOME/.local/share}/chromium-captive"
-      ''--proxy-server="socks5://$PROXY"''
-      ''--host-resolver-rules="MAP * ~NOTFOUND , EXCLUDE localhost"''
-      "--no-first-run"
-      "--new-window"
-      "--incognito"
-      "-no-default-browser-check"
-      # Plain HTTP so portals can intercept; cache.nixos.org because some
-      # portals resolve example.com to 127.0.0.1.
-      "http://cache.nixos.org/"
-    ];
+    # Keep this synchronized with the proxy flag in captive-browser-chromium.nix.
+    socks5-addr = "localhost:1666";
+    browser = "${cbBrowserPkg}/bin/chromium-captive";
   };
+
+  modules.apps.captive-browser-chromium.enable = config.programs.captive-browser.enable;
 
   # Persistence for networking
   environment.persistence."/persist" = {
