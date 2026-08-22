@@ -13,7 +13,12 @@ helper.mkApp (
     nixvimInput = inputs.nixvim or config._module.args.inputs.nixvim;
     inherit (pkgs.stdenv.hostPlatform) system;
     nixvimPackage = nixvimInput.legacyPackages.${system}.makeNixvimWithModule {
-      module = import ./nixvim;
+      module = {
+        imports = [ ./nixvim ];
+        # This input intentionally follows the system nixpkgs. Declaring the
+        # source makes that choice explicit to Nixvim's nixpkgs module.
+        nixpkgs.source = inputs.nixpkgs;
+      };
     };
   in
   {
