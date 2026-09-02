@@ -38,8 +38,8 @@ let
     # dns.rooty.dev — two stamps: -cf via Cloudflare anycast,
     # -origin direct to IONOS. Both in rotation, so if one path is
     # blocked the other keeps DoH working.
-    dns-rooty-dev-cf = "sdns://AgAAAAAAAAAAETE3Mi42Ny4xODQuOTY6NDQzAA1kbnMucm9vdHkuZGV2Ci9kbnMtcXVlcnk";
-    dns-rooty-dev-origin = "sdns://AgAAAAAAAAAAETc0LjIwOC40NS4xODE6NDQzAA1kbnMucm9vdHkuZGV2Ci9kbnMtcXVlcnk";
+    # dns-rooty-dev-cf = "sdns://AgAAAAAAAAAAETE3Mi42Ny4xODQuOTY6NDQzAA1kbnMucm9vdHkuZGV2Ci9kbnMtcXVlcnk";
+    #dns-rooty-dev-origin = "sdns://AgAAAAAAAAAAETc0LjIwOC40NS4xODE6NDQzAA1kbnMucm9vdHkuZGV2Ci9kbnMtcXVlcnk";
   };
 
   # Runtime DNS control — no nixos-rebuild needed, and no full restart.
