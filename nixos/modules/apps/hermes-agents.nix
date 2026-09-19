@@ -34,7 +34,25 @@
 let
   cfg = config.modules.apps.hermes-agents;
 
-  defaultPackage = inputs.hermes-agent.packages.${pkgs.stdenv.hostPlatform.system}.default;
+  # Upstream builds against its own un-overlaid nixpkgs instance, so our
+  # overlay's cached nodejs_26 (overlays/custom-packages.nix) never reaches it
+  # and node gets compiled locally. Re-wire upstream's callPackage to the same
+  # package set with only nodejs_26 swapped. Drop (back to the bare `.default`)
+  # together with the overlay's nodejs_26 pin.
+  defaultPackage =
+    let
+      inherit (pkgs.stdenv.hostPlatform) system;
+      # callPackage is in the set itself so upstream's nested callPackage
+      # calls (lib.nix → npm) see the swapped node too.
+      callPackage = lib.callPackageWith (
+        inputs.nixpkgs.legacyPackages.${system}
+        // {
+          inherit (pkgs) nodejs_26;
+          inherit callPackage;
+        }
+      );
+    in
+    inputs.hermes-agent.packages.${system}.default.override { inherit callPackage; };
   configMergeScript = pkgs.callPackage "${inputs.hermes-agent}/nix/configMergeScript.nix" { };
 
   # Upstream's deep-merge settings type: attrsets from multiple definitions

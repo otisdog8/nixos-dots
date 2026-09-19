@@ -95,6 +95,15 @@ final: prev: {
   agent-browser =
     inputs.nixpkgs-agent-browser.legacyPackages.${final.stdenv.hostPlatform.system}.agent-browser;
 
+  # nodejs 26.9.0 (pulled in by hermes-agent) has no cache.nixos.org build at the
+  # current nixos-unstable rev, and compiling node locally is very slow. The
+  # nixos-unstable-small channel has the same version cached; take it from
+  # there. Drop once nixos-unstable's nodejs-slim_26 is cached again.
+  inherit (inputs.nixpkgs-unstable-small.legacyPackages.${final.stdenv.hostPlatform.system})
+    nodejs_26
+    nodejs-slim_26
+    ;
+
   # cantarell-fonts 0.311 fails to build on the nixos-* channels (otfautohint
   # errors on uni0424 during variable-font generation with afdko 5.0.1). The
   # nixpkgs-unstable branch has the fixed rebuild; pin from there. A font is
