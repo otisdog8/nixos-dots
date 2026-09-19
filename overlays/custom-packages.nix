@@ -88,6 +88,13 @@ final: prev: {
       };
     };
 
+  # agent-browser 0.38.1 (current nixos-unstable) fails a flaky test
+  # (test_plugin_provider_cleanup_uses_supplied_registry) so Hydra has no cached
+  # build, and it's slow to build locally. Take the cached 0.27.0 from the
+  # pinned nixpkgs-agent-browser snapshot instead. Drop with that input.
+  agent-browser =
+    inputs.nixpkgs-agent-browser.legacyPackages.${final.stdenv.hostPlatform.system}.agent-browser;
+
   # cantarell-fonts 0.311 fails to build on the nixos-* channels (otfautohint
   # errors on uni0424 during variable-font generation with afdko 5.0.1). The
   # nixpkgs-unstable branch has the fixed rebuild; pin from there. A font is

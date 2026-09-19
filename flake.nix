@@ -95,6 +95,11 @@
       inputs.nixpkgs.follows = "nixpkgs-hyprland";
     };
     nixpkgs-hyprland.url = "github:NixOS/nixpkgs/f13ff45afd1bb73e640eaa08a7066dbed07e3238";
+    # Last nixpkgs snapshot whose agent-browser (0.27.0) is on cache.nixos.org;
+    # 0.38.1 fails a flaky test in checkPhase (so Hydra never caches it) and is
+    # slow to build locally. See overlays/custom-packages.nix. Drop once a
+    # cached agent-browser reaches nixos-unstable.
+    nixpkgs-agent-browser.url = "github:NixOS/nixpkgs/34ab99075ac4f7e40cf037eef32cb1c360bb85e9";
     nixvim = {
       url = "github:nix-community/nixvim";
       inputs.nixpkgs.follows = "nixpkgs";
