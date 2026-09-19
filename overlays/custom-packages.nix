@@ -88,17 +88,6 @@ final: prev: {
       };
     };
 
-  # nixos-unstable still has 1.39.1, while the nixpkgs-unstable input has
-  # bcachefs-tools 1.39.2. Pull the newer package from there and carry the
-  # sysfs superblock locking fix from PR #868.
-  # https://github.com/koverstreet/bcachefs-tools/pull/868
-  # https://github.com/koverstreet/bcachefs-tools/commit/62b0aaf82b6b4be350ae1e92d358716159acddaf
-  bcachefs-tools =
-    inputs.nixpkgs-unstable.legacyPackages.${final.stdenv.hostPlatform.system}.bcachefs-tools.overrideAttrs
-      (oldAttrs: {
-        patches = (oldAttrs.patches or [ ]) ++ [ ./bcachefs-tools-pr-868.patch ];
-      });
-
   # cantarell-fonts 0.311 fails to build on the nixos-* channels (otfautohint
   # errors on uni0424 during variable-font generation with afdko 5.0.1). The
   # nixpkgs-unstable branch has the fixed rebuild; pin from there. A font is
