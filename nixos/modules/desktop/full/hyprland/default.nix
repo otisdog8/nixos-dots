@@ -188,6 +188,16 @@ in
 
   options.modules.desktop.full.hyprland = {
     enable = lib.mkEnableOption "Hyprland window manager";
+
+    monitors = lib.mkOption {
+      type = lib.types.listOf lib.types.attrs;
+      default = [ ];
+      description = ''
+        Per-host monitor rules appended after the catch-all. Match on
+        `desc:<description from hyprctl monitors>` rather than connector
+        names so the layout survives port reshuffles.
+      '';
+    };
   };
 
   config = lib.mkIf cfg.enable {
@@ -328,6 +338,8 @@ in
             };
           };
 
+          # Catch-all first; per-host rules (cfg.monitors) win over it because
+          # Hyprland prefers a specific match over the empty-output fallback.
           monitor = [
             {
               output = "";
@@ -336,7 +348,8 @@ in
               scale = 1;
               bitdepth = 8;
             }
-          ];
+          ]
+          ++ cfg.monitors;
 
           gesture = [
             {

@@ -26,6 +26,25 @@ in
 {
   options.modules.desktop.full.hyprland.hypridle = {
     enable = lib.mkEnableOption "Hypridle idle management";
+
+    oledMonitors = lib.mkOption {
+      type = lib.types.listOf lib.types.str;
+      default = [ ];
+      example = [ "desc:ASUSTek COMPUTER INC PG32UCDM3 W4LMAV007023" ];
+      description = ''
+        OLED panels (connector name or `desc:` selector) to power off on a
+        much shorter idle timeout than the global dpms ladder. Powering the
+        panel off is the burn-in protection: emission stops and the monitor's
+        own pixel-refresh/panel-care cycles can run while it is in standby.
+        Any input turns it back on (mouse_move/key_press_enables_dpms).
+      '';
+    };
+
+    oledTimeout = lib.mkOption {
+      type = lib.types.int;
+      default = 150;
+      description = "Seconds of idle before OLED monitors are powered off.";
+    };
   };
 
   config = lib.mkIf cfg.enable {
@@ -53,7 +72,21 @@ in
             after_sleep_cmd = "hyprctl dispatch dpms on";
           };
 
-          listener = [
+          listener =
+            # OLED burn-in guard: blank just the OLED panels well before the
+            # global dpms timeout. hypridle keys off seat-wide idle, so this
+            # cannot catch "static content on the OLED while typing on another
+            # monitor" — it shortens the window where an idle desktop keeps
+            # the panel lit. dpms takes a monitor selector, so only these
+            # outputs go dark; the global `dpms on` on resume relights them.
+            lib.optional (cfg.oledMonitors != [ ]) {
+              timeout = cfg.oledTimeout;
+              on-timeout = lib.concatMapStringsSep " && " (
+                m: ''hyprctl dispatch dpms "off ${m}"''
+              ) cfg.oledMonitors;
+              on-resume = "hyprctl dispatch dpms on";
+            }
+            ++ [
             {
               timeout = 300;
               on-timeout = "loginctl lock-session";
