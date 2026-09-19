@@ -83,8 +83,18 @@
     };
     hyprland = {
       url = "github:hyprwm/Hyprland/v0.56.2?submodules=1";
-      inputs.nixpkgs.follows = "nixpkgs";
+      # The hyprland flake builds nixpkgs' hyprtoolkit (for guiutils, the
+      # permission dialogs) against its own pinned hyprutils 0.14.0. nixpkgs
+      # after ~2026-09 ships hyprtoolkit 0.6.0, which requires hyprutils >=
+      # 0.14.2 — and hyprutils v0.14.2 is gcc16-built, ABI-incompatible with
+      # the rest of this gcc15-built v0.56.2 set. So pin the whole hyprland
+      # set to the last known-good nixpkgs snapshot; this reproduces the
+      # already-running closure exactly (no rebuilds) and keeps the set
+      # self-consistent. Drop this pin (back to follows = "nixpkgs") and the
+      # nixpkgs-hyprland input on the next hyprland version bump.
+      inputs.nixpkgs.follows = "nixpkgs-hyprland";
     };
+    nixpkgs-hyprland.url = "github:NixOS/nixpkgs/f13ff45afd1bb73e640eaa08a7066dbed07e3238";
     nixvim = {
       url = "github:nix-community/nixvim";
       inputs.nixpkgs.follows = "nixpkgs";
