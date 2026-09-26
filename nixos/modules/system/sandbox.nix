@@ -205,6 +205,81 @@ in
       '';
     };
 
+    groups = lib.mkOption {
+      default = { };
+      description = ''
+        Sandbox groups: several apps sharing one sandbox, for apps that work
+        together (e.g. the AI agents, modules.sandbox.agents). In VM mode a group
+        is ONE persistent VM (sandbox-vm-group-<name>) holding every member's
+        storage and capabilities plus the group's projects and shared home paths;
+        each member's command runs in it. In container mode each member keeps its
+        own sandbox and gets the group's projects and shared home paths as extra
+        binds.
+      '';
+      type = lib.types.attrsOf (
+        lib.types.submodule {
+          options = {
+            apps = lib.mkOption {
+              type = lib.types.listOf lib.types.str;
+              description = "Member apps (modules.apps.<name>).";
+            };
+            persistent = lib.mkOption {
+              type = lib.types.bool;
+              default = true;
+              description = "Keep the group's VM running after its last app exits (stop it with `sandbox-vm stop group-<name>`).";
+            };
+            projects = lib.mkOption {
+              type = lib.types.listOf lib.types.str;
+              default = [ ];
+              example = [ "~/Documents/food-tracker" ];
+              description = "Directories (absolute or ~/…) every member can read and write, at the same path. An app started inside one starts there.";
+            };
+            shareHome = lib.mkOption {
+              type = lib.types.listOf lib.types.str;
+              default = [ ];
+              example = [ ".config/gh" ];
+              description = "Home-relative paths shared read-write with every member (e.g. credentials the members all use).";
+            };
+            network = {
+              mode = lib.mkOption {
+                type = lib.types.enum [
+                  "default"
+                  "open"
+                  "internet"
+                  "allowlist"
+                ];
+                default = "default";
+                description = "The group VM's network policy (lib/netpolicy.nix).";
+              };
+              allow = lib.mkOption {
+                type = lib.types.listOf lib.types.str;
+                default = [ ];
+              };
+              deny = lib.mkOption {
+                type = lib.types.listOf lib.types.str;
+                default = [ ];
+              };
+              allowDns = lib.mkOption {
+                type = lib.types.bool;
+                default = true;
+              };
+            };
+            vm = {
+              memory = lib.mkOption {
+                type = lib.types.ints.positive;
+                default = 8192;
+                description = "Guest memory for the group's VM, in MiB.";
+              };
+              vcpus = lib.mkOption {
+                type = lib.types.ints.positive;
+                default = 8;
+              };
+            };
+          };
+        }
+      );
+    };
+
     variants.enable = lib.mkOption {
       type = lib.types.bool;
       default = isDesktop || isLaptop;
@@ -312,6 +387,20 @@ in
   };
 
   config = {
+    # Container mode: a group's members each get its projects and shared home
+    # paths as extra binds (VM mode puts them in the group's one VM instead;
+    # modules/system/sandbox-vm.nix). Not filtered by which apps are enabled:
+    # reading their enable flags here would make modules.apps depend on itself.
+    modules.apps = lib.mkMerge (
+      lib.mapAttrsToList (
+        _: g:
+        lib.genAttrs g.apps (_: {
+          sandbox.extraBinds =
+            map (p: if lib.hasPrefix "~/" p then lib.removePrefix "~/" p else p) g.projects ++ g.shareHome;
+        })
+      ) cfg.groups
+    );
+
     # Shared parents of the per-app stashes. Traversable (0711) but NOT itself a
     # lock: the per-app lock lives on /<tier>/sandbox/<app> (see lib/storage.nix).
     # Locking these 0700 root would deny jrt the search bit and break every

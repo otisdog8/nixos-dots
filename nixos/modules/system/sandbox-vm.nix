@@ -23,6 +23,48 @@ let
     src = inputs.virtio-nvgpu;
   };
 
+  # Groups (modules.sandbox.groups) as VMs: one instance per group, from the
+  # member records of whichever of its apps are enabled here.
+  mkInstance = import ../../../lib/vm/instance.nix { inherit config lib pkgs; };
+  groupMembers = g: map (a: cfg.members.${a}) (lib.filter (a: cfg.members ? ${a}) g.apps);
+  groupsWithMembers = lib.filterAttrs (_: g: groupMembers g != [ ]) config.modules.sandbox.groups;
+  mkGroupInstance =
+    name: g:
+    mkInstance {
+      name = "group-${name}";
+      label = "${name} sandbox";
+      members = groupMembers g;
+      inherit (g) persistent projects;
+      extraBinds = map (p: {
+        path = p;
+        ro = false;
+      }) g.shareHome;
+      inherit (g) network;
+      inherit (g.vm) memory vcpus;
+    };
+
+  # `sandbox-vm list | stop NAME [PROJECT-DIR] | status NAME [PROJECT-DIR]`:
+  # manage running sandbox VMs (units the user may start/stop via polkit).
+  sandboxVmCli = pkgs.writeShellScriptBin "sandbox-vm" ''
+    set -euo pipefail
+    unit_for() {
+      if [ -n "''${2:-}" ]; then
+        printf 'sandbox-vm-%s@%s.service' "$1" "$(${pkgs.systemd}/bin/systemd-escape --path -- "$(${pkgs.coreutils}/bin/realpath -- "$2")")"
+      else
+        printf 'sandbox-vm-%s.service' "$1"
+      fi
+    }
+    case "''${1:-list}" in
+      list)
+        ${pkgs.systemd}/bin/systemctl list-units --no-legend --plain --state=active 'sandbox-vm-*.service' \
+          | ${pkgs.gnugrep}/bin/grep -Ev -- '-(prep|net|wl|gpu|relay|bus)(@.*)?\.service' \
+          | ${pkgs.gawk}/bin/awk '{print $1}' | ${pkgs.gnused}/bin/sed -E 's/^sandbox-vm-//; s/\.service$//' || true ;;
+      stop) ${pkgs.systemd}/bin/systemctl stop "$(unit_for "$2" "''${3:-}")" ;;
+      status) ${pkgs.systemd}/bin/systemctl status --no-pager "$(unit_for "$2" "''${3:-}")" ;;
+      *) echo "usage: sandbox-vm list | stop NAME [PROJECT-DIR] | status NAME [PROJECT-DIR]" >&2; exit 2 ;;
+    esac
+  '';
+
   guest = inputs.nixpkgs.lib.nixosSystem {
     specialArgs.sbxHost = {
       inherit (cfg) user graphics;
@@ -106,6 +148,21 @@ in
       default = guest;
       description = "The evaluated generic guest NixOS system (lib/vm/guest.nix).";
     };
+
+    members = lib.mkOption {
+      type = lib.types.attrsOf lib.types.raw;
+      default = { };
+      internal = true;
+      description = "Every VM-capable app's member record (lib/backends/vm.nix), by app name.";
+    };
+
+    groupInstances = lib.mkOption {
+      type = lib.types.attrsOf lib.types.raw;
+      readOnly = true;
+      internal = true;
+      default = lib.mapAttrs mkGroupInstance groupsWithMembers;
+      description = "Each sandbox group's VM instance (lib/vm/instance.nix).";
+    };
   };
 
   config = {
@@ -114,7 +171,14 @@ in
         assertion = cfg.graphics != "nvgpu" || hasNvidia;
         message = "modules.sandbox.vm.graphics = \"nvgpu\" needs the NVIDIA driver on the host (services.xserver.videoDrivers).";
       }
-    ];
+    ]
+    ++ lib.concatMap (i: i.assertions) (lib.attrValues cfg.groupInstances);
+
+    # The groups' VMs (their members' own VM units aren't generated).
+    systemd.services = lib.mkMerge (map (i: i.services) (lib.attrValues cfg.groupInstances));
+    modules.sandbox.units = lib.concatMap (i: i.polkitUnits) (lib.attrValues cfg.groupInstances);
+
+    environment.systemPackages = [ sandboxVmCli ];
 
     # /run/sandbox-vm/<app>/<id>: per-launch keys, sockets and share mount points,
     # created and removed by each VM's root prep/cleanup (lib/backends/vm.nix).

@@ -1,54 +1,24 @@
-# vm backend — the app runs inside its own crosvm microVM.
+# vm backend — the app runs inside a crosvm microVM.
 #
 # Unlike the container backends this is not chosen by app.defaultBackend: every
 # app evaluates it NEXT TO its container backend (lib/apps.nix), and
 # modules.apps.<name>.sandbox.mode picks which one the app's command runs. Both
-# work on the SAME data, so switching is free:
+# work on the SAME data, so switching is free.
 #
-#   - The VMM runs as the uid that already owns the app's stash (`principal`: the
-#     user, or app-<name> for a systemd dedicatedUser app). Each storage entry is
-#     bind-mounted (by systemd, as root, BindPaths=) into a per-tier tree inside the
-#     unit's private mount namespace, shared over crosvm's jailed virtio-fs device
-#     (sbx-<tier>), and grafted back onto ~/<path> in the guest (lib/vm/guest.nix).
-#     The guest user appears as that uid on the host (single-entry uidmap), so
-#     nothing is chowned when switching between container and vm.
-#   - Apps with capabilities.cwd get one VM per project directory: a template unit
-#     sandbox-vm-<app>@<escaped path>, with the directory shared at the same
-#     absolute path. Everything else gets a single sandbox-vm-<app> unit.
-#   - The guest is the host-wide generic system (modules.sandbox.vm.guest) booting
-#     from the host's read-only /nix/store; the app's spec (a store path on the
-#     kernel command line) tells it what to mount.
-#   - The launcher (the app's command, run as the user) starts the unit through the
-#     polkit allowlist, then runs the app over SSH on vsock with keys generated
-#     fresh by root for every VM start. The last session out stops the VM.
-#   - capabilities.network → a virtio-net NIC backed by passt in its own unit, as
-#     the principal, with IPAddressDeny= keeping the guest off loopback, the LAN
-#     and the tailnet. No network capability → no NIC at all.
-#   - capabilities.wayland (gui.nix) → the app's windows on the host compositor
-#     through a wp_security_context_v1 socket (the -wl unit), carried by
-#     virtio-nvgpu (which also gives the guest the host GPU) or by crosvm's
-#     cross-domain virtio-gpu, per modules.sandbox.vm.graphics. X11 apps get
-#     xwayland-satellite in the guest.
-#   - capabilities.audio → the user's PulseAudio socket, and the container
-#     backend's D-Bus policy → a per-VM filtered xdg-dbus-proxy with the app's
-#     flatpak identity (portals, notifications, OpenURI), both over a vsock relay
-#     that answers only this VM's CID.
+# This file only describes the app as a VM *member* (its storage, binds,
+# capabilities, D-Bus policy, and the uid that owns its data) and picks its
+# instance (lib/vm/instance.nix, where the VM itself is built and documented):
+#   - its own VM (sandbox-vm-<app>, or one per project directory for apps with
+#     capabilities.cwd), or
+#   - its group's VM, when the app is listed in a modules.sandbox.groups.<g>.apps
+#     (sandbox-vm-group-<g>, built once in nixos/modules/system/sandbox-vm.nix
+#     from every member's record in modules.sandbox.vm.members).
 #
 # Not lowered yet (the app still starts, without them): fido, device binds,
 # ./-relative binds, whatever raw nixpakModules add beyond gui/xdg/audio/D-Bus,
 # variantCommands, and file-descriptor passing over D-Bus (so the document
 # portal's file chooser results and screen capture don't work yet). Selecting
 # mode = "vm" for an app that uses any of these emits a warning listing them.
-#
-# Security shape: the app's code runs behind KVM; the host-side attack surface is
-# crosvm (per-device minijail processes with seccomp, the main process confined by
-# the systemd unit below) and passt. The VMM uid can reach only this app's stash
-# and the explicitly shared paths. (BindPaths= sources are resolved against the
-# host root, not the namespace being built — systemd's namespace.c — so hiding
-# /home and /persist from the unit doesn't hide them from its binds.) UNVERIFIED
-# on hardware so far: the unit's syscall filter and MemoryDenyWriteExecute with
-# crosvm's sandbox, and passt's vhost-user mode with crosvm's vhost-user net
-# frontend.
 {
   appName,
   appCfg,
@@ -57,7 +27,8 @@
   lib,
   pkgs,
   storage,
-  # The uid/group that owns the app's data and runs the VMM (see above).
+  # The uid/group that owns the app's data and runs the VMM (the user, or
+  # app-<name> for a systemd dedicatedUser app).
   principal,
   principalGroup,
   # Package whose share/ provides .desktop entries and icons: the container
@@ -71,607 +42,65 @@
 let
   paths = import ../paths.nix { inherit lib; };
   variants = import ../variants.nix { inherit lib pkgs; };
+  mkInstance = import ../vm/instance.nix { inherit config lib pkgs; };
 
   username = builtins.head appCfg.defaultUsernames;
-  home = "/home/${username}";
-  hostUser = config.users.users.${username};
-  guestUid = toString hostUser.uid;
-  guestGid = toString config.users.groups.${hostUser.group}.gid;
-
   bin = appCfg.packageName;
   caps = appCfg.capabilities;
-  vmCfg = cfg.sandbox.vm;
-  guest = config.modules.sandbox.vm.guest.config;
 
-  perCwd = caps.cwd;
-  network = caps.network;
-
-  # ── Display and GPU (modules.sandbox.vm.graphics; guest side in
-  # lib/vm/guest-graphics.nix) ─────────────────────────────────────────────────
-  vmHost = config.modules.sandbox.vm;
-  gui = caps.wayland && vmHost.graphics != "none";
-  x11 = gui && (caps.x11 || cfg.sandbox.x11Forward);
-  # virtio-nvgpu carries both the GPU and the display; GPU-only apps get it too.
-  nvgpu = vmHost.graphics == "nvgpu" && (gui || caps.gpu);
-  crossDomain = vmHost.graphics == "cross-domain" && gui;
-  gpuDevice = nvgpu || crossDomain;
-  crosvmPkg = if nvgpu then vmHost.nvgpu.crosvm else pkgs.crosvm;
-  # The guest's Wayland socket (mirrors guest-graphics.nix) and the host
-  # compositor's, pinned like the systemd backend's.
-  guestWaylandDisplay = if vmHost.graphics == "nvgpu" then "/run/sbx/wl/wayland-0" else "wayland-0";
-  guestRuntimeDir = "/run/user/${guestUid}";
-  hostRuntimeDir = "/run/user/${guestUid}";
-  hostWaylandSocket = "wayland-1";
-  wlSecure = import ./wayland-security-context.nix pkgs;
-
-  netPolicy = (import ../netpolicy.nix { inherit lib; }).lower {
-    policy = cfg.sandbox.network;
-    backendDefault = "internet";
-    dns = vmHost.dns;
-  };
-
-  # ── Host services over vsock (lib/vm/vsock-relay.py) ─────────────────────────
-  # Audio: the user's PulseAudio socket (pipewire-pulse), no shm/memfd since file
-  # descriptors can't cross vsock. D-Bus: a per-VM xdg-dbus-proxy with the app's
-  # own filter (the same policy the container backends apply) and its flatpak
-  # identity, so the portals treat it as that sandboxed app.
-  audio = caps.audio;
-  bus = dbusArgs != null && dbusArgs != [ ];
-  relayServices = lib.optional audio "pulse" ++ lib.optional bus "dbus";
-  relay = relayServices != [ ];
-  vsockRelay = import ../vm/vsock-relay.nix pkgs;
-  guestSockets = {
-    pulse = "/run/sbx/pulse/native";
-    dbus = "/run/sbx/bus/bus";
-  };
-  pulseClientConf = pkgs.writeText "sandbox-vm-pulse-client.conf" ''
-    enable-shm = no
-    enable-memfd = no
-    autospawn = no
-  '';
-  # nixpak's .flatpak-info plus the [Instance] group the portal's parser requires
-  # (as lib/backends/systemd.nix does for its bridge).
-  busInstance = "sandbox-vm-${appName}";
-  busFlatpakInfo = pkgs.runCommand "${unit}-flatpak-info" { } ''
-    cat ${flatpakInfoFile} > "$out"
-    printf '\n[Instance]\ninstance-id=${busInstance}\nsession-bus-proxy=true\nsystem-bus-proxy=true\n' >> "$out"
-  '';
-
-  unit = "sandbox-vm-${appName}";
-  tmpl = lib.optionalString perCwd "@";
-  # Units reference each other per instance; scripts get the project path.
-  ref = u: if perCwd then "${u}@%i.service" else "${u}.service";
-  # %f = the instance unescaped as a path, with its leading "/" (%I drops it).
-  instArg = lib.optionalString perCwd " \"%f\"";
-
-  # /run/sandbox-vm/<app>: <id>/ holds one launch's keys and sockets (root prep,
-  # removed on stop); tree/ and cwd/ are mount points for the unit's private binds
-  # (empty on the host, so concurrent per-project instances can share them).
-  base = "/run/sandbox-vm/${appName}";
-  tree = "${base}/tree";
-  cwdMount = "${base}/cwd";
-
-  co = "${pkgs.coreutils}/bin";
-  crosvm = "${crosvmPkg}/bin/crosvm";
-  systemctl = "${pkgs.systemd}/bin/systemctl";
-  flock = "${pkgs.util-linux}/bin/flock";
-  ssh = "${pkgs.openssh}/bin/ssh";
-
-  # From $dir (the project path, "" for single-VM apps): the launch id, its
-  # runtime dir and the VM's vsock CID. Shared verbatim by the launcher and every
-  # unit script, which is how the launcher finds the VM's keys and address.
-  idPrelude = ''
-    if [ -n "$dir" ]; then
-      id="$(printf '%s' "$dir" | ${co}/sha256sum | ${co}/cut -c1-16)"
-    else
-      id=main
-    fi
-    rt="${base}/$id"
-    cid=$(( 3 + 16#$(printf '%s/%s' ${lib.escapeShellArg appName} "$id" | ${co}/sha256sum | ${co}/cut -c1-7) ))
-  '';
-
-  # ── Storage and binds ────────────────────────────────────────────────────────
-  entries = storage.entries; # parent-first
-  tiers = lib.unique (map (e: e.tier) entries);
-  entrySource = e: if e.location == "stash" then e.stashPath else "${home}/${e.path}";
-
-  bindReqs =
-    lib.optionals caps.gitConfig [
-      {
-        path = ".gitconfig";
-        ro = true;
-      }
-      {
-        path = ".config/git";
-        ro = true;
-      }
-    ]
-    ++ map (p: {
-      path = p;
-      ro = true;
-    }) caps.binds.ro
-    ++ map (p: {
-      path = p;
-      ro = false;
-    }) (caps.binds.rw ++ cfg.sandbox.extraBinds)
-    # GUI apps see the user's toolkit/theme settings, read-only (as gui.nix
-    # binds them for the container backends); the theme files themselves come
-    # from the host's system profile, which the launcher puts on XDG_DATA_DIRS.
-    ++ lib.optionals gui (
-      map
-        (p: {
-          path = p;
+  # This app as a VM member (the record groups are built from).
+  member = {
+    inherit
+      appName
+      bin
+      username
+      principal
+      principalGroup
+      caps
+      dbusArgs
+      flatpakInfoFile
+      ;
+    package = cfg.package;
+    entries = storage.entries;
+    x11Forward = cfg.sandbox.x11Forward;
+    # Home-relative or absolute binds (./-relative ones are dropped with a warning).
+    bindReqs =
+      lib.optionals caps.gitConfig [
+        {
+          path = ".gitconfig";
           ro = true;
-        })
-        [
-          ".config/gtk-2.0"
-          ".config/gtk-3.0"
-          ".config/gtk-4.0"
-          ".config/fontconfig"
-          ".config/dconf"
-          ".config/qt6ct"
-          ".config/Kvantum"
-        ]
-    );
-  pwdBinds = lib.filter (b: paths.isPwdRelative b.path) bindReqs;
-  # Absolute and home-relative binds keep their host path inside the guest.
-  binds = lib.imap0 (
-    i: b:
-    b
-    // {
-      index = i;
-      source = if paths.isAbsolute b.path then b.path else "${home}/${b.path}";
-    }
-  ) (lib.filter (b: !(paths.isPwdRelative b.path)) bindReqs);
-
-  # One BindPaths= entry: "SRC":"DST". systemd splits source and destination on
-  # the ':' BETWEEN words, so each side is quoted separately (paths may contain
-  # spaces) — quoting the whole pair would make it one path. A leading "-" on the
-  # source = skip if missing. Stash entries are hard: tmpfiles guarantees them,
-  # and a missing one must fail the VM rather than silently run it without its data.
-  bindPair = src: dst: ''"${src}":"${dst}"'';
-  storageBinds = map (
-    e:
-    bindPair "${lib.optionalString (e.location == "home") "-"}${entrySource e}" "${tree}/${e.tier}/${e.path}"
-  ) entries;
-  bindTarget = b: "${tree}/binds/${toString b.index}";
-  rwBinds = map (b: bindPair "-${b.source}" (bindTarget b)) (lib.filter (b: !b.ro) binds);
-  roBinds = map (b: bindPair "-${b.source}" (bindTarget b)) (lib.filter (b: b.ro) binds);
-
-  spec = pkgs.writeText "${unit}-spec.json" (
-    builtins.toJSON {
-      app = appName;
-      inherit tiers;
-      entries = map (e: { inherit (e) tier path; }) entries;
-      binds = map (b: {
-        inherit (b) index;
-        target = b.source;
-      }) binds;
-      cwd = perCwd;
-      inherit x11;
-      relay = map (n: {
-        name = n;
-        path = guestSockets.${n};
-      }) relayServices;
-    }
-  );
-
-  # ── Scripts ──────────────────────────────────────────────────────────────────
-  # Root: fresh per-launch runtime dir with this VM's SSH keys (guest host key +
-  # the user's client key, both new on every VM start) and, for per-project VMs,
-  # the project path for the guest. Everything is created in root-owned parents,
-  # so the user can't pre-plant anything the root steps would follow.
-  prepScript = pkgs.writeShellScript "${unit}-prep" ''
-    set -euo pipefail
-    dir="''${1:-}"
-    case "$dir" in "" | /*) ;; *) echo "${unit}: bad project path" >&2; exit 1 ;; esac
-    ${idPrelude}
-    umask 077
-    ${co}/install -d -m 0711 /run/sandbox-vm ${base}
-    ${co}/install -d -m 0755 ${
-      lib.concatStringsSep " " (
-        [ tree ]
-        ++ map (t: "${tree}/${t}") tiers
-        ++ lib.optional (binds != [ ]) "${tree}/binds"
-        ++ lib.optional perCwd cwdMount
-      )
-    }
-    ${co}/rm -rf -- "$rt"
-    ${co}/install -d -m 0711 "$rt"
-    ${co}/install -d -m 0700 -o ${principal} -g ${principalGroup} "$rt/meta" "$rt/ctl" "$rt/net"
-    ${co}/install -d -m 0700 -o ${username} -g ${hostUser.group} "$rt/client"
-    ${lib.optionalString gui ''
-      # The display socket: made by the user's security-context helper (the -wl
-      # unit), used by the GPU unit (the principal; ACL-granted when it differs).
-      ${co}/install -d -m 0711 -o ${username} -g ${hostUser.group} "$rt/wl"
-    ''}
-    ${lib.optionalString gpuDevice ''
-      ${co}/install -d -m 0700 -o ${principal} -g ${principalGroup} "$rt/gpu"
-    ''}
-    ${lib.optionalString bus ''
-      ${co}/install -d -m 0700 -o ${username} -g ${hostUser.group} "$rt/bus"
-    ''}
-    ${pkgs.openssh}/bin/ssh-keygen -q -t ed25519 -N "" -C "sandbox-vm-${appName}" -f "$rt/meta/ssh_host_ed25519_key"
-    ${pkgs.openssh}/bin/ssh-keygen -q -t ed25519 -N "" -C "${username}@sandbox-vm-${appName}" -f "$rt/client/id_ed25519"
-    ${co}/install -m 0644 "$rt/client/id_ed25519.pub" "$rt/meta/authorized_keys"
-    printf 'sandbox-vm %s\n' "$(${co}/cut -d' ' -f1,2 "$rt/meta/ssh_host_ed25519_key.pub")" > "$rt/client/known_hosts"
-    if [ -n "$dir" ]; then printf '%s' "$dir" > "$rt/meta/cwd"; fi
-    printf '%s' "$cid" > "$rt/meta/cid"
-    ${co}/chown ${principal}:${principalGroup} "$rt/meta"/*
-    ${co}/chown ${username}:${hostUser.group} "$rt/client"/*
-  '';
-
-  cleanupScript = pkgs.writeShellScript "${unit}-cleanup" ''
-    set -euo pipefail
-    dir="''${1:-}"
-    ${idPrelude}
-    ${co}/rm -rf -- "$rt"
-  '';
-
-  # Principal: the VMM. crosvm keeps its own sandbox on (per-device minijail
-  # processes with seccomp, user/pid/mount/net namespaces).
-  fsCommon = "type=fs:posix_acl=false:security_ctx=false";
-  guestKernelParams = guest.boot.kernelParams ++ [
-    "init=${guest.system.build.toplevel}/init"
-    "sbx.spec=${spec}"
-  ];
-  runScript = pkgs.writeShellScript "${unit}-run" ''
-    set -euo pipefail
-    dir="''${1:-}"
-    ${idPrelude}
-    eu="$(${co}/id -u)"
-    eg="$(${co}/id -g)"
-    # Writable shares: the guest user (uid ${guestUid}) is this VMM's uid on the host.
-    rw="${fsCommon}:cache=auto:uid=${guestUid}:gid=${guestGid}:uidmap=${guestUid} $eu 1:gidmap=${guestGid} $eg 1"
-    args=(
-      run
-      --name ${lib.escapeShellArg "sbx-${appName}"}
-      --mem size=${toString vmCfg.memory}
-      --cpus num-cores=${toString vmCfg.vcpus}
-      --no-usb
-      --balloon-page-reporting
-      --serial type=stdout,hardware=serial,console=true
-      --vsock "cid=$cid"
-      -s "$rt/ctl/crosvm.sock"
-      --shared-dir "/nix/store:nixstore:${fsCommon}:cache=always:timeout=3600"
-      --shared-dir "$rt/meta:sbx-meta:${fsCommon}:cache=never"
-    )
-    ${lib.concatMapStrings (t: ''
-      args+=(--shared-dir "${tree}/${t}:sbx-${t}:$rw")
-    '') tiers}
-    ${lib.optionalString (binds != [ ]) ''
-      args+=(--shared-dir "${tree}/binds:sbx-binds:$rw")
-    ''}
-    ${lib.optionalString perCwd ''
-      args+=(--shared-dir "${cwdMount}:sbx-cwd:$rw")
-    ''}
-    ${lib.optionalString network ''
-      for _ in $(${co}/seq 1 200); do [ -S "$rt/net/passt.sock" ] && break; ${co}/sleep 0.05; done
-      if [ ! -S "$rt/net/passt.sock" ]; then
-        echo "${unit}: passt never created its socket; see the journal of the matching ${unit}-net unit" >&2
-        exit 1
-      fi
-      args+=(--vhost-user "type=net,socket=$rt/net/passt.sock")
-    ''}
-    ${lib.optionalString gpuDevice ''
-      for _ in $(${co}/seq 1 200); do [ -S "$rt/gpu/gpu.sock" ] && break; ${co}/sleep 0.05; done
-      if [ ! -S "$rt/gpu/gpu.sock" ]; then
-        echo "${unit}: the GPU backend never created its socket; see the journal of the matching ${unit}-gpu unit" >&2
-        exit 1
-      fi
-    ''}
-    ${lib.optionalString nvgpu ''
-      args+=(--vhost-user "type=nvgpu,socket=$rt/gpu/gpu.sock,max-queue-size=256" --no-pci-hotplug-port)
-    ''}
-    ${lib.optionalString crossDomain ''
-      args+=(--vhost-user "type=gpu,socket=$rt/gpu/gpu.sock")
-    ''}
-    for p in ${lib.escapeShellArgs guestKernelParams}; do args+=(-p "$p"); done
-    exec ${crosvm} "''${args[@]}" \
-      --initrd ${guest.system.build.initialRamdisk}/${guest.system.boot.loader.initrdFile} \
-      ${guest.boot.kernelPackages.kernel}/${guest.system.boot.loader.kernelFile}
-  '';
-
-  # ACPI power button → orderly guest shutdown; systemd kills whatever remains.
-  stopScript = pkgs.writeShellScript "${unit}-stop" ''
-    dir="''${1:-}"
-    ${idPrelude}
-    exec ${crosvm} powerbtn "$rt/ctl/crosvm.sock"
-  '';
-
-  # Principal: user-mode networking for the guest (DHCP, DNS, NAT via host
-  # sockets). No inbound forwarding, no route to the host's loopback.
-  netScript = pkgs.writeShellScript "${unit}-net" ''
-    set -euo pipefail
-    dir="''${1:-}"
-    ${idPrelude}
-    exec ${pkgs.passt}/bin/passt --foreground --quiet --vhost-user \
-      --socket "$rt/net/passt.sock" \
-      -t none -u none --no-map-gw \
-      ${lib.concatMapStringsSep " " (d: "--dns ${lib.escapeShellArg d}") config.modules.sandbox.vm.dns}
-  '';
-
-  # The user: a wp_security_context_v1 socket on the user's compositor for this
-  # VM's windows (see wayland-security-context.py), held for the VM's lifetime.
-  # Never the raw compositor socket: sandboxed clients only see Hyprland's
-  # allowlist of ordinary globals (no screencopy, data-control, virtual input…).
-  wlScript = pkgs.writeShellScript "${unit}-wl" ''
-    set -euo pipefail
-    dir="''${1:-}"
-    ${idPrelude}
-    sock="$rt/wl/wayland.sock"
-    ${wlSecure}/bin/wayland-security-context hold "$sock" ${lib.escapeShellArg "sandbox-vm.${appName}"} &
-    pid=$!
-    for _ in $(${co}/seq 1 100); do
-      [ -S "$sock" ] && break
-      kill -0 "$pid" 2>/dev/null || break
-      ${co}/sleep 0.05
-    done
-    if [ ! -S "$sock" ]; then
-      echo "${unit}: no security-context Wayland socket (is the compositor running?)" >&2
-      exit 1
-    fi
-    ${lib.optionalString (principal != username) ''
-      ${pkgs.acl}/bin/setfacl -m "u:${principal}:rw" "$sock"
-    ''}
-    wait "$pid"
-  '';
-
-  # Principal: the VM's GPU device, over vhost-user.
-  #   nvgpu:        virtio-nvgpu's backend (its own sandbox: network namespace,
-  #                 Landlock, seccomp), which is also the host half of the Wayland
-  #                 proxy. Compute (CUDA) only for apps with the gpu capability.
-  #   cross-domain: crosvm's GPU device as a separate process, cross-domain
-  #                 Wayland only (no virgl/venus: no host GPU API at all), its
-  #                 virtual display hidden so no stray window appears.
-  waitForWl = ''
-    for _ in $(${co}/seq 1 200); do [ -S "$rt/wl/wayland.sock" ] && break; ${co}/sleep 0.05; done
-  '';
-  gpuScript = pkgs.writeShellScript "${unit}-gpu" (
-    ''
-      set -euo pipefail
-      dir="''${1:-}"
-      ${idPrelude}
-      ${lib.optionalString gui waitForWl}
-    ''
-    + (
-      if nvgpu then
-        ''
-          exec ${vmHost.nvgpu.backend}/bin/vhost-user-nvgpu --socket "$rt/gpu/gpu.sock" ${lib.optionalString gui ''--wayland-socket "$rt/wl/wayland.sock"''} ${lib.optionalString caps.gpu "--allow-compute"}
-        ''
-      else
-        ''
-          exec ${pkgs.crosvm}/bin/crosvm device gpu --socket-path "$rt/gpu/gpu.sock" \
-            --wayland-sock "$rt/wl/wayland.sock" \
-            --params ${
-              lib.escapeShellArg (
-                builtins.toJSON {
-                  context-types = "cross-domain";
-                  displays = [ { hidden = true; } ];
-                }
-              )
-            }
-        ''
-    )
-  );
-
-  # Host-GPU device nodes for the virtio-nvgpu backend: the host's
-  # modules.sandbox.gpuDevices narrowing when set (multi-GPU hosts), else every
-  # NVIDIA and DRM node.
-  nvgpuDeviceAllow =
-    (
-      if config.modules.sandbox.gpuDevices != null then
-        map (d: if d == "/dev/dri" then "char-drm rw" else "${d} rw") config.modules.sandbox.gpuDevices
-      else
-        [
-          "char-nvidia-frontend rw"
-          "char-drm rw"
-        ]
-    )
-    ++ [
-      "/dev/nvidiactl rw"
-      "/dev/nvidia-modeset rw"
-      "/dev/udmabuf rw"
-    ]
-    ++ lib.optional caps.gpu "/dev/nvidia-uvm rw";
-
-  # The user: this VM's end of the vsock relay, on port = its CID, answering only
-  # that CID, and only for the services it was given.
-  relayScript = pkgs.writeShellScript "${unit}-relay" ''
-    set -euo pipefail
-    dir="''${1:-}"
-    ${idPrelude}
-    exec ${vsockRelay}/bin/vsock-relay host --cid "$cid" ${
-      lib.concatStringsSep " " (
-        lib.optional audio "pulse=${hostRuntimeDir}/pulse/native"
-        ++ lib.optional bus ''dbus="$rt/bus/bus.sock"''
-      )
-    }
-  '';
-
-  # The user: the VM's session bus, filtered by the app's own policy. Wrapped in a
-  # minimal bwrap only to give the proxy the app's /.flatpak-info at its
-  # /proc/root, which is where the portals read a caller's identity from.
-  busScript = pkgs.writeShellScript "${unit}-bus" ''
-    set -euo pipefail
-    dir="''${1:-}"
-    ${idPrelude}
-    # The portal looks up the flatpak instance named in .flatpak-info here.
-    ${co}/mkdir -p "${hostRuntimeDir}/.flatpak/${busInstance}"
-    printf '{"child-pid": 1, "mnt-namespace": 1, "net-namespace": 1, "pid-namespace": 1}' \
-      > "${hostRuntimeDir}/.flatpak/${busInstance}/bwrapinfo.json"
-    ${co}/rm -f "$rt/bus/bus.sock"
-    exec ${pkgs.bubblewrap}/bin/bwrap \
-      --ro-bind-try /etc /etc \
-      --ro-bind /nix/store /nix/store \
-      --bind /run /run \
-      --ro-bind ${busFlatpakInfo} /.flatpak-info \
-      --die-with-parent \
-      -- ${pkgs.xdg-dbus-proxy}/bin/xdg-dbus-proxy "$DBUS_SESSION_BUS_ADDRESS" "$rt/bus/bus.sock" \
-        ${lib.concatMapStringsSep " " lib.escapeShellArg (
-          (if dbusArgs == null then [ ] else dbusArgs) ++ [ "--filter" ]
-        )}
-  '';
-
-  # The user's command. Per-project apps run in the VM for the physical $PWD.
-  launcher = pkgs.writeShellScript "${unit}-launch" ''
-    set -euo pipefail
-    ${
-      if perCwd then
-        ''
-          dir="$(pwd -P)"
-          # The path travels through a unit instance name, a systemd ExecStart line
-          # and the guest, so only plain path characters are accepted.
-          case "$dir" in
-            /)
-              echo "${bin}: sandbox-vm won't attach / (the whole host filesystem) as a project" >&2
-              exit 1 ;;
-            *[!A-Za-z0-9._/@+,=~\ -]*)
-              echo "${bin}: sandbox-vm can't attach '$dir' (supported path characters: A-Z a-z 0-9 . _ / @ + , = ~ - and space)" >&2
-              exit 1 ;;
-          esac
-          unit="${unit}@$(${pkgs.systemd}/bin/systemd-escape --path -- "$dir").service"
-          workdir="$dir"
-        ''
-      else
-        ''
-          dir=""
-          unit="${unit}.service"
-          workdir=${home}
-        ''
-    }
-    ${idPrelude}
-
-    # Session accounting: every launcher holds a shared lock for its lifetime; the
-    # one that can upgrade it to exclusive on the way out is the last, and stops
-    # the VM.
-    lockdir="''${XDG_RUNTIME_DIR:-/run/user/$(${co}/id -u)}/sandbox-vm"
-    ${co}/mkdir -p -m 0700 "$lockdir"
-    exec 9>"$lockdir/${appName}-$id.lock"
-    ${flock} -s 9
-    finish() {
-      ${flock} -u 9
-      if ${flock} -xn 9; then ${systemctl} stop "$unit" >/dev/null 2>&1 || true; fi
-      exit "$1"
-    }
-
-    if ! ${systemctl} start "$unit"; then
-      echo "${bin}: could not start $unit (see: journalctl -u '$unit')" >&2
-      finish 1
-    fi
-
-    ssh_opts=(
-      -F /dev/null
-      -o "ProxyCommand=${pkgs.systemd}/lib/systemd/systemd-ssh-proxy %h %p"
-      -o ProxyUseFdpass=yes
-      -o User=${username}
-      -o IdentityFile="$rt/client/id_ed25519"
-      -o IdentitiesOnly=yes
-      -o UserKnownHostsFile="$rt/client/known_hosts"
-      -o GlobalKnownHostsFile=/dev/null
-      -o HostKeyAlias=sandbox-vm
-      -o StrictHostKeyChecking=yes
-      -o CheckHostIP=no
-      -o BatchMode=yes
-      -o LogLevel=ERROR
-      -o ForwardAgent=no
-      -o ForwardX11=no
-      -o ClearAllForwardings=yes
-      -o PermitLocalCommand=no
-      -o EscapeChar=none
-      -o ServerAliveInterval=15
-    )
-    envs=()
-    [ -n "''${LANG:-}" ] && envs+=("LANG=$LANG")
-    [ -n "''${COLORTERM:-}" ] && envs+=("COLORTERM=$COLORTERM")
-    if [ "''${#envs[@]}" -gt 0 ]; then ssh_opts+=(-o "SetEnv=''${envs[*]}"); fi
-
-    # Wait for the guest's sshd (the unit is up once its keys exist).
-    up=0
-    for _ in $(${co}/seq 1 240); do
-      if ${ssh} "''${ssh_opts[@]}" -o ConnectTimeout=2 -T -- "vsock/$cid" true 2>/dev/null; then
-        up=1
-        break
-      fi
-      ${systemctl} is-active --quiet "$unit" || break
-      ${co}/sleep 0.25
-    done
-    if [ "$up" != 1 ]; then
-      echo "${bin}: the VM did not come up (see: journalctl -u '$unit')" >&2
-      finish 1
-    fi
-
-    # The guest boots from the host store, so the host's system profile (for the
-    # usual CLI tools) is on the guest PATH after the app itself.
-    hostsw="$(${co}/readlink -f /run/current-system/sw)"
-    genv=("PATH=${cfg.package}/bin:/run/current-system/sw/bin:$hostsw/bin")
-    ${lib.optionalString audio ''
-      genv+=("PULSE_SERVER=unix:${guestSockets.pulse}" "PULSE_CLIENTCONFIG=${pulseClientConf}")
-    ''}
-    ${lib.optionalString bus ''
-      genv+=("DBUS_SESSION_BUS_ADDRESS=unix:path=${guestSockets.dbus}")
-    ''}
-    ${lib.optionalString gui ''
-      # GUI session environment. Store paths are valid in the guest as-is; the
-      # host's profile symlinks aren't, so they're resolved first.
-      userprof="$(${co}/readlink -f /etc/profiles/per-user/${username} 2>/dev/null || true)"
-      nixprof="$(${co}/readlink -f "''${HOME:-${home}}/.nix-profile" 2>/dev/null || true)"
-      rewrite() {
-        local v="$1"
-        v="''${v//\/run\/current-system\/sw/$hostsw}"
-        [ -n "$userprof" ] && v="''${v//\/etc\/profiles\/per-user\/${username}/$userprof}"
-        [ -n "$nixprof" ] && v="''${v//''${HOME:-${home}}\/.nix-profile/$nixprof}"
-        printf '%s' "$v"
-      }
-      for v in XDG_DATA_DIRS XDG_CONFIG_DIRS QT_PLUGIN_PATH QML2_IMPORT_PATH \
-               QT_QPA_PLATFORMTHEME QT_STYLE_OVERRIDE QT_QPA_PLATFORM \
-               GDK_PIXBUF_MODULE_FILE GIO_EXTRA_MODULES GTK_PATH GTK_THEME \
-               XCURSOR_THEME XCURSOR_SIZE XCURSOR_PATH HYPRCURSOR_THEME HYPRCURSOR_SIZE \
-               XDG_CURRENT_DESKTOP XDG_SESSION_TYPE XDG_SESSION_DESKTOP DESKTOP_SESSION \
-               NIXOS_OZONE_WL ELECTRON_OZONE_PLATFORM_HINT MOZ_ENABLE_WAYLAND GDK_BACKEND; do
-        val="''${!v:-}"
-        if [ -n "$val" ]; then genv+=("$v=$(rewrite "$val")"); fi
-      done
-      # gui.nix's defaults, for launches from outside the session environment.
-      for kv in NIXOS_OZONE_WL=1 ELECTRON_OZONE_PLATFORM_HINT=wayland MOZ_ENABLE_WAYLAND=1 \
-                "QT_QPA_PLATFORM=wayland;xcb" QT_QPA_PLATFORMTHEME=qt6ct \
-                XDG_CURRENT_DESKTOP=Hyprland XDG_SESSION_TYPE=wayland; do
-        case " ''${genv[*]} " in *" ''${kv%%=*}="*) ;; *) genv+=("$kv") ;; esac
-      done
-      fc="$(${co}/readlink -f /etc/fonts/fonts.conf 2>/dev/null || true)"
-      if [ -n "$fc" ]; then genv+=("FONTCONFIG_FILE=$fc"); fi
-      genv+=(
-        "XDG_RUNTIME_DIR=${guestRuntimeDir}"
-        "WAYLAND_DISPLAY=${guestWaylandDisplay}"
-        ${lib.optionalString x11 ''"DISPLAY=:0"''}
-        ${
-          if nvgpu then
-            # Pin every loader to NVIDIA's files (as virtio-nvgpu's guest does), so
-            # a broken NVIDIA ICD fails loudly instead of falling back to Mesa.
-            ''
-              "VK_DRIVER_FILES=/run/opengl-driver/share/vulkan/icd.d/nvidia_icd.json"
-              "__EGL_VENDOR_LIBRARY_FILENAMES=/run/opengl-driver/share/glvnd/egl_vendor.d/10_nvidia.json"
-              "__GLX_VENDOR_LIBRARY_NAME=nvidia"
-              "GBM_BACKENDS_PATH=/run/opengl-driver/lib/gbm"
-            ''
-          else
-            # No host GPU behind cross-domain: render in software.
-            ''
-              "LIBGL_ALWAYS_SOFTWARE=1"
-              "GALLIUM_DRIVER=llvmpipe"
-            ''
         }
-      )
-    ''}
-    remote="cd $(printf '%q' "$workdir") && exec env $(printf '%q ' "''${genv[@]}" ${cfg.package}/bin/${bin} "$@")"
-    tty=-T
-    if [ -t 0 ] && [ -t 1 ]; then tty=-t; fi
-    set +e
-    ${ssh} "''${ssh_opts[@]}" "$tty" -- "vsock/$cid" "$remote"
-    rc=$?
-    set -e
-    finish "$rc"
-  '';
+        {
+          path = ".config/git";
+          ro = true;
+        }
+      ]
+      ++ map (p: {
+        path = p;
+        ro = true;
+      }) caps.binds.ro
+      ++ map (p: {
+        path = p;
+        ro = false;
+      }) (caps.binds.rw ++ cfg.sandbox.extraBinds);
+  };
+
+  groups = config.modules.sandbox.groups;
+  group = lib.findFirst (g: lib.elem appName groups.${g}.apps) null (lib.attrNames groups);
+
+  instance =
+    if group == null then
+      mkInstance {
+        name = appName;
+        members = [ member ];
+        perCwd = caps.cwd;
+        inherit (cfg.sandbox.vm) persistent memory vcpus;
+        network = cfg.sandbox.network;
+      }
+    else
+      config.modules.sandbox.vm.groupInstances.${group};
+
+  launcher = instance.launcherFor member;
 
   package = pkgs.runCommand "${appName}-sandbox-vm" { } ''
     mkdir -p $out/bin
@@ -690,309 +119,14 @@ let
     done
   '';
 
-  # ── Units ────────────────────────────────────────────────────────────────────
-  vmmDeps = [
-    (ref "${unit}-prep")
-  ]
-  ++ lib.optional network (ref "${unit}-net")
-  ++ lib.optional gpuDevice (ref "${unit}-gpu")
-  # Bound before the VM starts, so nothing else can hold the relay's port.
-  ++ lib.optional relay (ref "${unit}-relay");
-  vmmService = {
-    description = "Sandbox VM: ${appName}";
-    requires = vmmDeps;
-    after = vmmDeps;
-    # Like the systemd backend: a rebuild must not kill a running app. A changed
-    # definition takes effect on the next launch.
-    restartIfChanged = false;
-    stopIfChanged = false;
-    serviceConfig = {
-      Type = "simple";
-      ExecStart = "${runScript}${instArg}";
-      ExecStop = "-${stopScript}${instArg}";
-      TimeoutStopSec = 20;
-      KillMode = "mixed";
-      Restart = "no";
-
-      User = principal;
-      Group = principalGroup;
-      SupplementaryGroups = [ "kvm" ];
-      NoNewPrivileges = true;
-      CapabilityBoundingSet = "";
-      AmbientCapabilities = "";
-
-      # crosvm's own sandbox builds user/pid/mount/net namespaces and pivots its
-      # device processes into empty roots, so those namespace types, the mount
-      # syscalls and seccomp itself must stay available. Never deny @privileged as
-      # a group: pivot_root is in it.
-      RestrictNamespaces = "user pid mnt net";
-      SystemCallFilter = [
-        "@system-service"
-        "@mount"
-        "@sandbox"
-        "~@obsolete @raw-io @reboot @swap @module @cpu-emulation @debug @clock"
-      ];
-      SystemCallArchitectures = "native";
-      SystemCallErrorNumber = "EPERM";
-      LockPersonality = true;
-      RestrictRealtime = true;
-      RestrictSUIDSGID = true;
-      MemoryDenyWriteExecute = true;
-
-      # The host filesystem is read-only and the user's data invisible, apart from
-      # this app's storage/binds (BindPaths, set up by systemd as root) and its
-      # runtime dir.
-      ProtectSystem = "strict";
-      ProtectHome = "tmpfs";
-      InaccessiblePaths = [
-        "-/persist"
-        "-/large"
-        "-/cache"
-      ];
-      BindPaths = storageBinds ++ rwBinds ++ lib.optional perCwd (bindPair "%f" cwdMount);
-      BindReadOnlyPaths = roBinds;
-      ReadWritePaths = [ base ];
-      PrivateTmp = true;
-      PrivateIPC = true;
-      KeyringMode = "private";
-      UMask = "0077";
-      ProtectKernelTunables = true;
-      ProtectKernelModules = true;
-      ProtectKernelLogs = true;
-      ProtectControlGroups = true;
-      ProtectClock = true;
-      ProtectHostname = true;
-      # Not ProcSubset=pid: minijail reads /proc/sys/kernel/cap_last_cap.
-      ProtectProc = "invisible";
-
-      DevicePolicy = "closed";
-      DeviceAllow = [
-        "/dev/kvm rw"
-        "/dev/vhost-vsock rw"
-      ];
-      # No IP at all: the guest's network (if any) is passt, over a unix socket.
-      RestrictAddressFamilies = [
-        "AF_UNIX"
-        "AF_NETLINK"
-      ];
-      IPAddressDeny = "any";
-
-      LimitCORE = 0;
-      MemoryMax = "${toString (vmCfg.memory + 512)}M";
-      MemorySwapMax = 0;
-      TasksMax = 1024;
-      OOMPolicy = "stop";
-    };
-  };
-
-  prepService = {
-    description = "Sandbox VM keys and runtime dir: ${appName}";
-    # Stops (and cleans up) whenever the VM goes down, however it went down.
-    bindsTo = [ (ref unit) ];
-    restartIfChanged = false;
-    stopIfChanged = false;
-    serviceConfig = {
-      Type = "oneshot";
-      RemainAfterExit = true;
-      ExecStart = "${prepScript}${instArg}";
-      ExecStop = "${cleanupScript}${instArg}";
-      PrivateNetwork = true;
-      ProtectHome = true;
-    };
-  };
-
-  netService = {
-    description = "Sandbox VM network (passt): ${appName}";
-    requires = [ (ref "${unit}-prep") ];
-    after = [ (ref "${unit}-prep") ];
-    bindsTo = [ (ref unit) ];
-    restartIfChanged = false;
-    stopIfChanged = false;
-    serviceConfig = {
-      ExecStart = "${netScript}${instArg}";
-      User = principal;
-      Group = principalGroup;
-      # The app's network policy (lib/netpolicy.nix; VMs default to "internet":
-      # not the host, the LAN, the tailnet or container/VM bridges). passt makes
-      # every outbound connection from this unit, so the cgroup filter applies to
-      # all of the guest's traffic.
-      IPAddressAllow = netPolicy.ipAddressAllow;
-      IPAddressDeny = netPolicy.ipAddressDeny;
-      NoNewPrivileges = true;
-      CapabilityBoundingSet = "";
-      ProtectSystem = "strict";
-      ProtectHome = true;
-      ReadWritePaths = [ base ];
-      PrivateTmp = true;
-      PrivateDevices = true;
-      ProtectKernelTunables = true;
-      ProtectKernelModules = true;
-      ProtectKernelLogs = true;
-      ProtectControlGroups = true;
-      ProtectClock = true;
-      LockPersonality = true;
-      RestrictRealtime = true;
-      RestrictSUIDSGID = true;
-      RestrictAddressFamilies = [
-        "AF_UNIX"
-        "AF_INET"
-        "AF_INET6"
-        "AF_NETLINK"
-      ];
-      UMask = "0077";
-      LimitCORE = 0;
-    };
-  };
-
-  wlService = {
-    description = "Sandbox VM display (Wayland security context): ${appName}";
-    requires = [ (ref "${unit}-prep") ];
-    after = [ (ref "${unit}-prep") ];
-    bindsTo = [ (ref unit) ];
-    restartIfChanged = false;
-    stopIfChanged = false;
-    environment = {
-      XDG_RUNTIME_DIR = hostRuntimeDir;
-      WAYLAND_DISPLAY = hostWaylandSocket;
-    };
-    serviceConfig = {
-      ExecStart = "${wlScript}${instArg}";
-      User = username;
-      Group = hostUser.group;
-      NoNewPrivileges = true;
-      CapabilityBoundingSet = "";
-      ProtectSystem = "strict";
-      ReadWritePaths = [ base ];
-      PrivateTmp = true;
-      PrivateNetwork = true;
-      PrivateDevices = true;
-      ProtectKernelTunables = true;
-      ProtectKernelModules = true;
-      ProtectKernelLogs = true;
-      ProtectControlGroups = true;
-      ProtectClock = true;
-      LockPersonality = true;
-      RestrictRealtime = true;
-      RestrictSUIDSGID = true;
-      RestrictAddressFamilies = [ "AF_UNIX" ];
-      SystemCallArchitectures = "native";
-      LimitCORE = 0;
-    };
-  };
-
-  gpuService = {
-    description = "Sandbox VM GPU (${if nvgpu then "virtio-nvgpu" else "cross-domain"}): ${appName}";
-    requires = [ (ref "${unit}-prep") ] ++ lib.optional gui (ref "${unit}-wl");
-    after = [ (ref "${unit}-prep") ] ++ lib.optional gui (ref "${unit}-wl");
-    bindsTo = [ (ref unit) ];
-    restartIfChanged = false;
-    stopIfChanged = false;
-    serviceConfig = {
-      ExecStart = "${gpuScript}${instArg}";
-      User = principal;
-      Group = principalGroup;
-      NoNewPrivileges = true;
-      CapabilityBoundingSet = "";
-      AmbientCapabilities = "";
-      ProtectSystem = "strict";
-      ProtectHome = "tmpfs";
-      ReadWritePaths = [ base ];
-      PrivateTmp = true;
-      PrivateIPC = true;
-      PrivateNetwork = true;
-      ProtectKernelTunables = true;
-      ProtectKernelModules = true;
-      ProtectKernelLogs = true;
-      ProtectControlGroups = true;
-      ProtectClock = true;
-      ProtectHostname = true;
-      LockPersonality = true;
-      RestrictRealtime = true;
-      RestrictSUIDSGID = true;
-      RestrictAddressFamilies = [
-        "AF_UNIX"
-        "AF_NETLINK"
-      ];
-      SystemCallArchitectures = "native";
-      DevicePolicy = "closed";
-      # cross-domain touches no host GPU at all.
-      DeviceAllow = lib.optionals nvgpu nvgpuDeviceAllow;
-      UMask = "0077";
-      LimitCORE = 0;
-    };
-  };
-
-  relayService = {
-    description = "Sandbox VM host services (vsock relay): ${appName}";
-    requires = [ (ref "${unit}-prep") ] ++ lib.optional bus (ref "${unit}-bus");
-    after = [ (ref "${unit}-prep") ] ++ lib.optional bus (ref "${unit}-bus");
-    bindsTo = [ (ref unit) ];
-    restartIfChanged = false;
-    stopIfChanged = false;
-    serviceConfig = {
-      # Ready once the vsock port is bound.
-      Type = "notify";
-      NotifyAccess = "main";
-      ExecStart = "${relayScript}${instArg}";
-      User = username;
-      Group = hostUser.group;
-      NoNewPrivileges = true;
-      CapabilityBoundingSet = "";
-      ProtectSystem = "strict";
-      ProtectHome = "read-only";
-      PrivateTmp = true;
-      PrivateDevices = true;
-      ProtectKernelTunables = true;
-      ProtectKernelModules = true;
-      ProtectKernelLogs = true;
-      ProtectControlGroups = true;
-      ProtectClock = true;
-      LockPersonality = true;
-      RestrictRealtime = true;
-      RestrictSUIDSGID = true;
-      RestrictAddressFamilies = [
-        "AF_UNIX"
-        "AF_VSOCK"
-      ];
-      SystemCallArchitectures = "native";
-      UMask = "0077";
-      LimitCORE = 0;
-    };
-  };
-
-  busService = {
-    description = "Sandbox VM session bus (filtered D-Bus proxy): ${appName}";
-    requires = [ (ref "${unit}-prep") ];
-    after = [ (ref "${unit}-prep") ];
-    bindsTo = [ (ref unit) ];
-    restartIfChanged = false;
-    stopIfChanged = false;
-    environment = {
-      XDG_RUNTIME_DIR = hostRuntimeDir;
-      DBUS_SESSION_BUS_ADDRESS = "unix:path=${hostRuntimeDir}/bus";
-    };
-    serviceConfig = {
-      ExecStart = "${busScript}${instArg}";
-      User = username;
-      Group = hostUser.group;
-      NoNewPrivileges = true;
-      LockPersonality = true;
-      RestrictRealtime = true;
-      RestrictSUIDSGID = true;
-      RestrictAddressFamilies = [ "AF_UNIX" ];
-      SystemCallArchitectures = "native";
-      LimitCORE = 0;
-    };
-  };
-
   unsupported =
-    lib.optional (caps.gpu && !nvgpu) "gpu"
-    ++ lib.optional (caps.wayland && !gui) "wayland"
-    ++ lib.optional (caps.x11 && !x11) "x11"
+    lib.optional (caps.gpu && !instance.nvgpu) "gpu"
+    ++ lib.optional (caps.wayland && !instance.gui) "wayland"
+    ++ lib.optional (caps.x11 && !instance.x11) "x11"
     ++ lib.optional caps.fido "fido"
     ++ lib.optional (caps.binds.dev != [ ]) "device binds"
-    ++ lib.optional (caps.dbus.policies != { } && !bus) "D-Bus policies"
-    ++ lib.optional (pwdBinds != [ ]) "./-relative binds"
+    ++ lib.optional (caps.dbus.policies != { } && !instance.bus) "D-Bus policies"
+    ++ lib.optional (lib.any (b: paths.isPwdRelative b.path) member.bindReqs) "./-relative binds"
     # gui/xdg/audio/D-Bus are carried over; what raw nixpak modules add beyond
     # that (extra binds, env, device nodes) is not.
     ++ lib.optional (
@@ -1001,36 +135,20 @@ let
     ++ lib.optional (appCfg.variantCommands != { }) "variantCommands";
 in
 {
-  inherit package spec;
+  inherit package member;
   systemConfig = {
     # The /dev/vhost-vsock device crosvm opens.
     boot.kernelModules = [ "vhost_vsock" ];
 
-    # Polkit allowlist (modules/system/sandbox.nix): the user starts/stops only the
-    # VM unit; its prep/net units come along as dependencies.
-    modules.sandbox.units = lib.optional (!perCwd) "${unit}.service";
-    modules.sandbox.unitTemplates = lib.optional perCwd "${unit}@";
+    # Every VM-capable app publishes its member record; groups are built from them.
+    modules.sandbox.vm.members.${appName} = member;
 
-    systemd.services = {
-      "${unit}${tmpl}" = vmmService;
-      "${unit}-prep${tmpl}" = prepService;
-    }
-    // lib.optionalAttrs network { "${unit}-net${tmpl}" = netService; }
-    // lib.optionalAttrs gui { "${unit}-wl${tmpl}" = wlService; }
-    // lib.optionalAttrs gpuDevice { "${unit}-gpu${tmpl}" = gpuService; }
-    // lib.optionalAttrs relay { "${unit}-relay${tmpl}" = relayService; }
-    // lib.optionalAttrs bus { "${unit}-bus${tmpl}" = busService; };
+    # A grouped app's VM (units, polkit) is its group's, defined once for the group.
+    systemd.services = lib.optionalAttrs (group == null) instance.services;
+    modules.sandbox.units = lib.optionals (group == null) instance.polkitUnits;
+    modules.sandbox.unitTemplates = lib.optionals (group == null) instance.polkitTemplates;
+    assertions = lib.optionals (group == null) instance.assertions;
 
-    assertions = [
-      {
-        assertion = !perCwd || principal == username;
-        message = "sandbox app '${appName}': the vm backend attaches the working directory (capabilities.cwd) only when the VM runs as ${username}; a dedicated app uid can't read the user's project.";
-      }
-      {
-        assertion = username == config.modules.sandbox.vm.user;
-        message = "sandbox app '${appName}': its user (${username}) differs from the VM guest user (modules.sandbox.vm.user = ${config.modules.sandbox.vm.user}).";
-      }
-    ];
     warnings =
       lib.optional (cfg.sandbox.mode == "vm" && unsupported != [ ])
         "sandbox app '${appName}' runs in a VM, which doesn't provide these yet (they are ignored): ${lib.concatStringsSep ", " unsupported}.";

@@ -107,6 +107,11 @@
           };
 
           vm = {
+            persistent = lib.mkOption {
+              type = lib.types.bool;
+              default = false;
+              description = "Keep ${appName}'s VM running after its last session exits (stop it with `sandbox-vm stop ${appName}`).";
+            };
             memory = lib.mkOption {
               type = lib.types.ints.positive;
               default = 4096;

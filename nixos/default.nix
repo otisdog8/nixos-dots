@@ -32,6 +32,7 @@
     modules/system/impermanence.nix
     modules/system/sandbox.nix
     modules/system/sandbox-vm.nix
+    modules/system/sandbox-agents.nix
     modules/system/kernel.nix
     modules/system/locale.nix
     modules/system/networking.nix
