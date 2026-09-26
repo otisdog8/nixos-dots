@@ -77,6 +77,35 @@
             description = "Run ${appName} in its container backend (app.defaultBackend) or its microVM.";
           };
 
+          # Per-host override of app.capabilities.networkPolicy (lib/netpolicy.nix).
+          network = {
+            mode = lib.mkOption {
+              type = lib.types.enum [
+                "default"
+                "open"
+                "internet"
+                "allowlist"
+              ];
+              default = appCfg.capabilities.networkPolicy.mode;
+              description = "Where ${appName} may connect (see app.capabilities.networkPolicy.mode).";
+            };
+            allow = lib.mkOption {
+              type = lib.types.listOf lib.types.str;
+              default = appCfg.capabilities.networkPolicy.allow;
+              description = "Addresses/prefixes ${appName} may always reach.";
+            };
+            deny = lib.mkOption {
+              type = lib.types.listOf lib.types.str;
+              default = appCfg.capabilities.networkPolicy.deny;
+              description = "Addresses/prefixes ${appName} may never reach.";
+            };
+            allowDns = lib.mkOption {
+              type = lib.types.bool;
+              default = appCfg.capabilities.networkPolicy.allowDns;
+              description = "Keep ${appName}'s resolver reachable in the restricted modes.";
+            };
+          };
+
           vm = {
             memory = lib.mkOption {
               type = lib.types.ints.positive;
@@ -228,6 +257,7 @@
             principal = if dedicated then "app-${appName}" else username;
             principalGroup = if dedicated then "app-${appName}" else config.users.users.${username}.group;
             desktopSource = backendResult.package;
+            inherit (backendResult) dbusArgs flatpakInfoFile;
           };
 
           variants = import ./variants.nix { inherit lib pkgs; };

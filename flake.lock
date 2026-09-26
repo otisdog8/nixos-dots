@@ -1525,6 +1525,7 @@
         "nixvim": "nixvim",
         "rose-pine-hyprcursor": "rose-pine-hyprcursor",
         "sops-nix": "sops-nix",
+        "virtio-nvgpu": "virtio-nvgpu",
         "zen-browser": "zen-browser"
       }
     },
@@ -1813,6 +1814,23 @@
         "owner": "pyproject-nix",
         "repo": "uv2nix",
         "type": "github"
+      }
+    },
+    "virtio-nvgpu": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1790398966,
+        "narHash": "sha256-TuqaPU3CXj9s68q7uxU2/30+HXqAydOpmXx9LcMgg0E=",
+        "ref": "display-passthrough",
+        "rev": "e513ba96392e6fbcf288b2156df3de1238b83a8b",
+        "revCount": 278,
+        "type": "git",
+        "url": "file:///home/jrt/Documents/nixos-dots/virtio-nvgpu"
+      },
+      "original": {
+        "ref": "display-passthrough",
+        "type": "git",
+        "url": "file:///home/jrt/Documents/nixos-dots/virtio-nvgpu"
       }
     },
     "xdph": {

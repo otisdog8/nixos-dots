@@ -27,6 +27,7 @@
 let
   user = sbxHost.user;
   home = "/home/${user}";
+  vsockRelay = import ./vsock-relay.nix pkgs;
 
   # Mount everything the spec describes. Runs as root before any SSH session.
   setup = pkgs.writeShellScript "sbx-setup" ''
@@ -79,6 +80,7 @@ let
     install -m 0644 /run/sbx/meta/authorized_keys /run/sbx/ssh/authorized_keys
     cwd=""
     [ -f /run/sbx/meta/cwd ] && cwd="$(cat /run/sbx/meta/cwd)"
+    cid="$(cat /run/sbx/meta/cid)"
     umount /run/sbx/meta
 
     spec="$(arg sbx.spec)"
@@ -110,9 +112,29 @@ let
       esac
       mount -t virtiofs -o nosuid,nodev sbx-cwd "$cwd"
     fi
+
+    # Host services (audio, the filtered session bus) over the vsock relay: one
+    # guest socket per service the app was given.
+    if [ "$(jq '.relay | length' "$spec")" -gt 0 ]; then
+      {
+        echo "$cid"
+        jq -r '.relay[] | "\(.name)=\(.path)"' "$spec"
+      } > /run/sbx/relay.args
+      for d in $(jq -r '.relay[].path' "$spec" | xargs -n1 dirname | sort -u); do
+        install -d -m 0755 -o "$user" -g "$group" "$d"
+      done
+      systemctl start --no-block sbx-relay.service || true
+    fi
+
+    # X11 apps: Xwayland on the guest's Wayland socket (guest-graphics.nix).
+    if [ "$(jq '.x11' "$spec")" = true ]; then
+      systemctl start --no-block sbx-xwayland.service || true
+    fi
   '';
 in
 {
+  imports = [ ./guest-graphics.nix ];
+
   system.stateVersion = sbxHost.stateVersion;
   networking.hostName = "sandbox-vm";
 
@@ -210,11 +232,27 @@ in
       coreutils
       util-linux
       jq
+      systemd
+      findutils
     ];
     serviceConfig = {
       Type = "oneshot";
       RemainAfterExit = true;
       ExecStart = setup;
+    };
+  };
+
+  systemd.services.sbx-relay = {
+    description = "Host services for the app (vsock relay)";
+    after = [ "sbx-setup.service" ];
+    script = ''
+      mapfile -t a < /run/sbx/relay.args
+      exec ${vsockRelay}/bin/vsock-relay guest --port "''${a[0]}" "''${a[@]:1}"
+    '';
+    serviceConfig = {
+      User = user;
+      Restart = "on-failure";
+      RestartSec = 1;
     };
   };
 

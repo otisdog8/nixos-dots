@@ -20,6 +20,14 @@
       url = "github:otisdog8/nixpak/hard-bind";
       inputs.nixpkgs.follows = "nixpkgs";
     };
+    # virtio-nvgpu: GPU + Wayland display for the VM sandbox tier
+    # (lib/vm/nvgpu.nix). The local checkout's committed display-passthrough
+    # branch for now (not pushed yet); switch to github:otisdog8/virtio-nvgpu
+    # once it is. Update with `nix flake update virtio-nvgpu`.
+    virtio-nvgpu = {
+      url = "git+file:///home/jrt/Documents/nixos-dots/virtio-nvgpu?ref=display-passthrough";
+      flake = false;
+    };
     nixpkgs-older.url = "github:NixOS/nixpkgs?rev=3e042434c17eff8ed5528faa4c4503facc2bdf6c";
     # nixpkgs-unstable branch: carries fixes ahead of the nixos-* channels
     # (e.g. the cantarell-fonts 0.311 rebuild). Used for isolated package pins.

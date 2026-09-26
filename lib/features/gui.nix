@@ -11,6 +11,10 @@
   ];
 
   config.app = {
+    # Backend-agnostic: the VM backend wires the display from this (the bwrap
+    # backends get the same socket from the nixpak module below too).
+    capabilities.wayland = true;
+
     # GUI apps should specify their own persistence paths
     # (removed automatic .config/${name} and .cache/${name} defaults)
 

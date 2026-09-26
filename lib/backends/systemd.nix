@@ -592,6 +592,15 @@ let
   # a cfg.sandbox.stashOwner option, since removed: the effective stash owner is now
   # derived from dedicatedUser at lowering in lib/apps.nix, and the old option was a
   # dead knob that made this assertion inert.) Matches injectAssertion's `!dedicated`.
+  # Where the app may connect (lib/netpolicy.nix), enforced on this unit by
+  # systemd's cgroup IP filter. Containers default to open; DNS goes through
+  # resolved's stub on loopback, kept reachable in the restricted modes.
+  netPolicy = (import ../netpolicy.nix { inherit lib; }).lower {
+    policy = cfg.sandbox.network;
+    backendDefault = "open";
+    dns = if config.services.resolved.enable then [ "127.0.0.53" ] else config.networking.nameservers;
+  };
+
   ptraceAssertion = lib.optional (!dedicated) {
     assertion = builtins.toString (config.boot.kernel.sysctl."kernel.yama.ptrace_scope" or 0) != "0";
     message = ''
@@ -619,6 +628,8 @@ let
   };
 in
 {
+  # Reused by the VM implementation's D-Bus proxy (lib/backends/vm.nix).
+  inherit (innerNix) dbusArgs flatpakInfoFile;
   package = finalPkg;
   systemConfig = {
     systemd.tmpfiles.rules =
@@ -681,6 +692,8 @@ in
         # to /var/lib/systemd/coredump. (Also silences electron's spurious
         # speech-dispatcher thread-abort dumps.)
         LimitCORE = 0;
+        IPAddressAllow = netPolicy.ipAddressAllow;
+        IPAddressDeny = netPolicy.ipAddressDeny;
         Environment = [
           "HOME=${appHome}"
           # setpriv --reuid/--regid does NOT reset USER/LOGNAME, so without these

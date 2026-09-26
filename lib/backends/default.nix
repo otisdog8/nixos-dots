@@ -6,6 +6,10 @@
 # concrete config: `package` goes on PATH / into finalPackage, `systemConfig` is
 # merged into the host NixOS config (tmpfiles, persistence, units).
 #
+# They also return the app's session-bus filter (`dbusArgs`, xdg-dbus-proxy
+# --talk/--own/… args; null when unsandboxed) and nixpak's `.flatpak-info`
+# (`flatpakInfoFile`), which the VM implementation's D-Bus proxy reuses.
+#
 # app.defaultBackend (lib/app-spec.nix) selects one of these as the app's
 # container implementation; "nixpak" is the default. The microVM implementation
 # (./vm.nix) is not in this registry: lib/apps.nix evaluates it next to whichever

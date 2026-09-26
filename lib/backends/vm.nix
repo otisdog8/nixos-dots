@@ -24,11 +24,21 @@
 #   - capabilities.network → a virtio-net NIC backed by passt in its own unit, as
 #     the principal, with IPAddressDeny= keeping the guest off loopback, the LAN
 #     and the tailnet. No network capability → no NIC at all.
+#   - capabilities.wayland (gui.nix) → the app's windows on the host compositor
+#     through a wp_security_context_v1 socket (the -wl unit), carried by
+#     virtio-nvgpu (which also gives the guest the host GPU) or by crosvm's
+#     cross-domain virtio-gpu, per modules.sandbox.vm.graphics. X11 apps get
+#     xwayland-satellite in the guest.
+#   - capabilities.audio → the user's PulseAudio socket, and the container
+#     backend's D-Bus policy → a per-VM filtered xdg-dbus-proxy with the app's
+#     flatpak identity (portals, notifications, OpenURI), both over a vsock relay
+#     that answers only this VM's CID.
 #
-# Not lowered yet (the app still starts, without them): GUI/Wayland and GPU
-# (graphics wiring comes later), audio, x11, fido, device binds, D-Bus policies,
-# ./-relative binds, raw nixpakModules and variantCommands. Selecting mode = "vm"
-# for an app that uses any of these emits a warning listing them.
+# Not lowered yet (the app still starts, without them): fido, device binds,
+# ./-relative binds, whatever raw nixpakModules add beyond gui/xdg/audio/D-Bus,
+# variantCommands, and file-descriptor passing over D-Bus (so the document
+# portal's file chooser results and screen capture don't work yet). Selecting
+# mode = "vm" for an app that uses any of these emits a warning listing them.
 #
 # Security shape: the app's code runs behind KVM; the host-side attack surface is
 # crosvm (per-device minijail processes with seccomp, the main process confined by
@@ -53,6 +63,10 @@
   # Package whose share/ provides .desktop entries and icons: the container
   # backend's, whose Exec= lines already name the app's command.
   desktopSource,
+  # The container backend's session-bus filter and .flatpak-info (null when the
+  # app is unsandboxed): the VM's D-Bus proxy applies the same policy.
+  dbusArgs ? null,
+  flatpakInfoFile ? null,
 }:
 let
   paths = import ../paths.nix { inherit lib; };
@@ -72,6 +86,57 @@ let
   perCwd = caps.cwd;
   network = caps.network;
 
+  # ── Display and GPU (modules.sandbox.vm.graphics; guest side in
+  # lib/vm/guest-graphics.nix) ─────────────────────────────────────────────────
+  vmHost = config.modules.sandbox.vm;
+  gui = caps.wayland && vmHost.graphics != "none";
+  x11 = gui && (caps.x11 || cfg.sandbox.x11Forward);
+  # virtio-nvgpu carries both the GPU and the display; GPU-only apps get it too.
+  nvgpu = vmHost.graphics == "nvgpu" && (gui || caps.gpu);
+  crossDomain = vmHost.graphics == "cross-domain" && gui;
+  gpuDevice = nvgpu || crossDomain;
+  crosvmPkg = if nvgpu then vmHost.nvgpu.crosvm else pkgs.crosvm;
+  # The guest's Wayland socket (mirrors guest-graphics.nix) and the host
+  # compositor's, pinned like the systemd backend's.
+  guestWaylandDisplay = if vmHost.graphics == "nvgpu" then "/run/sbx/wl/wayland-0" else "wayland-0";
+  guestRuntimeDir = "/run/user/${guestUid}";
+  hostRuntimeDir = "/run/user/${guestUid}";
+  hostWaylandSocket = "wayland-1";
+  wlSecure = import ./wayland-security-context.nix pkgs;
+
+  netPolicy = (import ../netpolicy.nix { inherit lib; }).lower {
+    policy = cfg.sandbox.network;
+    backendDefault = "internet";
+    dns = vmHost.dns;
+  };
+
+  # ── Host services over vsock (lib/vm/vsock-relay.py) ─────────────────────────
+  # Audio: the user's PulseAudio socket (pipewire-pulse), no shm/memfd since file
+  # descriptors can't cross vsock. D-Bus: a per-VM xdg-dbus-proxy with the app's
+  # own filter (the same policy the container backends apply) and its flatpak
+  # identity, so the portals treat it as that sandboxed app.
+  audio = caps.audio;
+  bus = dbusArgs != null && dbusArgs != [ ];
+  relayServices = lib.optional audio "pulse" ++ lib.optional bus "dbus";
+  relay = relayServices != [ ];
+  vsockRelay = import ../vm/vsock-relay.nix pkgs;
+  guestSockets = {
+    pulse = "/run/sbx/pulse/native";
+    dbus = "/run/sbx/bus/bus";
+  };
+  pulseClientConf = pkgs.writeText "sandbox-vm-pulse-client.conf" ''
+    enable-shm = no
+    enable-memfd = no
+    autospawn = no
+  '';
+  # nixpak's .flatpak-info plus the [Instance] group the portal's parser requires
+  # (as lib/backends/systemd.nix does for its bridge).
+  busInstance = "sandbox-vm-${appName}";
+  busFlatpakInfo = pkgs.runCommand "${unit}-flatpak-info" { } ''
+    cat ${flatpakInfoFile} > "$out"
+    printf '\n[Instance]\ninstance-id=${busInstance}\nsession-bus-proxy=true\nsystem-bus-proxy=true\n' >> "$out"
+  '';
+
   unit = "sandbox-vm-${appName}";
   tmpl = lib.optionalString perCwd "@";
   # Units reference each other per instance; scripts get the project path.
@@ -87,7 +152,7 @@ let
   cwdMount = "${base}/cwd";
 
   co = "${pkgs.coreutils}/bin";
-  crosvm = "${pkgs.crosvm}/bin/crosvm";
+  crosvm = "${crosvmPkg}/bin/crosvm";
   systemctl = "${pkgs.systemd}/bin/systemctl";
   flock = "${pkgs.util-linux}/bin/flock";
   ssh = "${pkgs.openssh}/bin/ssh";
@@ -128,7 +193,26 @@ let
     ++ map (p: {
       path = p;
       ro = false;
-    }) (caps.binds.rw ++ cfg.sandbox.extraBinds);
+    }) (caps.binds.rw ++ cfg.sandbox.extraBinds)
+    # GUI apps see the user's toolkit/theme settings, read-only (as gui.nix
+    # binds them for the container backends); the theme files themselves come
+    # from the host's system profile, which the launcher puts on XDG_DATA_DIRS.
+    ++ lib.optionals gui (
+      map
+        (p: {
+          path = p;
+          ro = true;
+        })
+        [
+          ".config/gtk-2.0"
+          ".config/gtk-3.0"
+          ".config/gtk-4.0"
+          ".config/fontconfig"
+          ".config/dconf"
+          ".config/qt6ct"
+          ".config/Kvantum"
+        ]
+    );
   pwdBinds = lib.filter (b: paths.isPwdRelative b.path) bindReqs;
   # Absolute and home-relative binds keep their host path inside the guest.
   binds = lib.imap0 (
@@ -164,6 +248,11 @@ let
         target = b.source;
       }) binds;
       cwd = perCwd;
+      inherit x11;
+      relay = map (n: {
+        name = n;
+        path = guestSockets.${n};
+      }) relayServices;
     }
   );
 
@@ -191,11 +280,23 @@ let
     ${co}/install -d -m 0711 "$rt"
     ${co}/install -d -m 0700 -o ${principal} -g ${principalGroup} "$rt/meta" "$rt/ctl" "$rt/net"
     ${co}/install -d -m 0700 -o ${username} -g ${hostUser.group} "$rt/client"
+    ${lib.optionalString gui ''
+      # The display socket: made by the user's security-context helper (the -wl
+      # unit), used by the GPU unit (the principal; ACL-granted when it differs).
+      ${co}/install -d -m 0711 -o ${username} -g ${hostUser.group} "$rt/wl"
+    ''}
+    ${lib.optionalString gpuDevice ''
+      ${co}/install -d -m 0700 -o ${principal} -g ${principalGroup} "$rt/gpu"
+    ''}
+    ${lib.optionalString bus ''
+      ${co}/install -d -m 0700 -o ${username} -g ${hostUser.group} "$rt/bus"
+    ''}
     ${pkgs.openssh}/bin/ssh-keygen -q -t ed25519 -N "" -C "sandbox-vm-${appName}" -f "$rt/meta/ssh_host_ed25519_key"
     ${pkgs.openssh}/bin/ssh-keygen -q -t ed25519 -N "" -C "${username}@sandbox-vm-${appName}" -f "$rt/client/id_ed25519"
     ${co}/install -m 0644 "$rt/client/id_ed25519.pub" "$rt/meta/authorized_keys"
     printf 'sandbox-vm %s\n' "$(${co}/cut -d' ' -f1,2 "$rt/meta/ssh_host_ed25519_key.pub")" > "$rt/client/known_hosts"
     if [ -n "$dir" ]; then printf '%s' "$dir" > "$rt/meta/cwd"; fi
+    printf '%s' "$cid" > "$rt/meta/cid"
     ${co}/chown ${principal}:${principalGroup} "$rt/meta"/*
     ${co}/chown ${username}:${hostUser.group} "$rt/client"/*
   '';
@@ -252,6 +353,19 @@ let
       fi
       args+=(--vhost-user "type=net,socket=$rt/net/passt.sock")
     ''}
+    ${lib.optionalString gpuDevice ''
+      for _ in $(${co}/seq 1 200); do [ -S "$rt/gpu/gpu.sock" ] && break; ${co}/sleep 0.05; done
+      if [ ! -S "$rt/gpu/gpu.sock" ]; then
+        echo "${unit}: the GPU backend never created its socket; see the journal of the matching ${unit}-gpu unit" >&2
+        exit 1
+      fi
+    ''}
+    ${lib.optionalString nvgpu ''
+      args+=(--vhost-user "type=nvgpu,socket=$rt/gpu/gpu.sock,max-queue-size=256" --no-pci-hotplug-port)
+    ''}
+    ${lib.optionalString crossDomain ''
+      args+=(--vhost-user "type=gpu,socket=$rt/gpu/gpu.sock")
+    ''}
     for p in ${lib.escapeShellArgs guestKernelParams}; do args+=(-p "$p"); done
     exec ${crosvm} "''${args[@]}" \
       --initrd ${guest.system.build.initialRamdisk}/${guest.system.boot.loader.initrdFile} \
@@ -275,6 +389,128 @@ let
       --socket "$rt/net/passt.sock" \
       -t none -u none --no-map-gw \
       ${lib.concatMapStringsSep " " (d: "--dns ${lib.escapeShellArg d}") config.modules.sandbox.vm.dns}
+  '';
+
+  # The user: a wp_security_context_v1 socket on the user's compositor for this
+  # VM's windows (see wayland-security-context.py), held for the VM's lifetime.
+  # Never the raw compositor socket: sandboxed clients only see Hyprland's
+  # allowlist of ordinary globals (no screencopy, data-control, virtual input…).
+  wlScript = pkgs.writeShellScript "${unit}-wl" ''
+    set -euo pipefail
+    dir="''${1:-}"
+    ${idPrelude}
+    sock="$rt/wl/wayland.sock"
+    ${wlSecure}/bin/wayland-security-context hold "$sock" ${lib.escapeShellArg "sandbox-vm.${appName}"} &
+    pid=$!
+    for _ in $(${co}/seq 1 100); do
+      [ -S "$sock" ] && break
+      kill -0 "$pid" 2>/dev/null || break
+      ${co}/sleep 0.05
+    done
+    if [ ! -S "$sock" ]; then
+      echo "${unit}: no security-context Wayland socket (is the compositor running?)" >&2
+      exit 1
+    fi
+    ${lib.optionalString (principal != username) ''
+      ${pkgs.acl}/bin/setfacl -m "u:${principal}:rw" "$sock"
+    ''}
+    wait "$pid"
+  '';
+
+  # Principal: the VM's GPU device, over vhost-user.
+  #   nvgpu:        virtio-nvgpu's backend (its own sandbox: network namespace,
+  #                 Landlock, seccomp), which is also the host half of the Wayland
+  #                 proxy. Compute (CUDA) only for apps with the gpu capability.
+  #   cross-domain: crosvm's GPU device as a separate process, cross-domain
+  #                 Wayland only (no virgl/venus: no host GPU API at all), its
+  #                 virtual display hidden so no stray window appears.
+  waitForWl = ''
+    for _ in $(${co}/seq 1 200); do [ -S "$rt/wl/wayland.sock" ] && break; ${co}/sleep 0.05; done
+  '';
+  gpuScript = pkgs.writeShellScript "${unit}-gpu" (
+    ''
+      set -euo pipefail
+      dir="''${1:-}"
+      ${idPrelude}
+      ${lib.optionalString gui waitForWl}
+    ''
+    + (
+      if nvgpu then
+        ''
+          exec ${vmHost.nvgpu.backend}/bin/vhost-user-nvgpu --socket "$rt/gpu/gpu.sock" ${lib.optionalString gui ''--wayland-socket "$rt/wl/wayland.sock"''} ${lib.optionalString caps.gpu "--allow-compute"}
+        ''
+      else
+        ''
+          exec ${pkgs.crosvm}/bin/crosvm device gpu --socket-path "$rt/gpu/gpu.sock" \
+            --wayland-sock "$rt/wl/wayland.sock" \
+            --params ${
+              lib.escapeShellArg (
+                builtins.toJSON {
+                  context-types = "cross-domain";
+                  displays = [ { hidden = true; } ];
+                }
+              )
+            }
+        ''
+    )
+  );
+
+  # Host-GPU device nodes for the virtio-nvgpu backend: the host's
+  # modules.sandbox.gpuDevices narrowing when set (multi-GPU hosts), else every
+  # NVIDIA and DRM node.
+  nvgpuDeviceAllow =
+    (
+      if config.modules.sandbox.gpuDevices != null then
+        map (d: if d == "/dev/dri" then "char-drm rw" else "${d} rw") config.modules.sandbox.gpuDevices
+      else
+        [
+          "char-nvidia-frontend rw"
+          "char-drm rw"
+        ]
+    )
+    ++ [
+      "/dev/nvidiactl rw"
+      "/dev/nvidia-modeset rw"
+      "/dev/udmabuf rw"
+    ]
+    ++ lib.optional caps.gpu "/dev/nvidia-uvm rw";
+
+  # The user: this VM's end of the vsock relay, on port = its CID, answering only
+  # that CID, and only for the services it was given.
+  relayScript = pkgs.writeShellScript "${unit}-relay" ''
+    set -euo pipefail
+    dir="''${1:-}"
+    ${idPrelude}
+    exec ${vsockRelay}/bin/vsock-relay host --cid "$cid" ${
+      lib.concatStringsSep " " (
+        lib.optional audio "pulse=${hostRuntimeDir}/pulse/native"
+        ++ lib.optional bus ''dbus="$rt/bus/bus.sock"''
+      )
+    }
+  '';
+
+  # The user: the VM's session bus, filtered by the app's own policy. Wrapped in a
+  # minimal bwrap only to give the proxy the app's /.flatpak-info at its
+  # /proc/root, which is where the portals read a caller's identity from.
+  busScript = pkgs.writeShellScript "${unit}-bus" ''
+    set -euo pipefail
+    dir="''${1:-}"
+    ${idPrelude}
+    # The portal looks up the flatpak instance named in .flatpak-info here.
+    ${co}/mkdir -p "${hostRuntimeDir}/.flatpak/${busInstance}"
+    printf '{"child-pid": 1, "mnt-namespace": 1, "net-namespace": 1, "pid-namespace": 1}' \
+      > "${hostRuntimeDir}/.flatpak/${busInstance}/bwrapinfo.json"
+    ${co}/rm -f "$rt/bus/bus.sock"
+    exec ${pkgs.bubblewrap}/bin/bwrap \
+      --ro-bind-try /etc /etc \
+      --ro-bind /nix/store /nix/store \
+      --bind /run /run \
+      --ro-bind ${busFlatpakInfo} /.flatpak-info \
+      --die-with-parent \
+      -- ${pkgs.xdg-dbus-proxy}/bin/xdg-dbus-proxy "$DBUS_SESSION_BUS_ADDRESS" "$rt/bus/bus.sock" \
+        ${lib.concatMapStringsSep " " lib.escapeShellArg (
+          (if dbusArgs == null then [ ] else dbusArgs) ++ [ "--filter" ]
+        )}
   '';
 
   # The user's command. Per-project apps run in the VM for the physical $PWD.
@@ -368,8 +604,66 @@ let
     # The guest boots from the host store, so the host's system profile (for the
     # usual CLI tools) is on the guest PATH after the app itself.
     hostsw="$(${co}/readlink -f /run/current-system/sw)"
-    guestpath="${cfg.package}/bin:/run/current-system/sw/bin:$hostsw/bin"
-    remote="cd $(printf '%q' "$workdir") && export PATH=$(printf '%q' "$guestpath") && exec $(printf '%q ' ${cfg.package}/bin/${bin} "$@")"
+    genv=("PATH=${cfg.package}/bin:/run/current-system/sw/bin:$hostsw/bin")
+    ${lib.optionalString audio ''
+      genv+=("PULSE_SERVER=unix:${guestSockets.pulse}" "PULSE_CLIENTCONFIG=${pulseClientConf}")
+    ''}
+    ${lib.optionalString bus ''
+      genv+=("DBUS_SESSION_BUS_ADDRESS=unix:path=${guestSockets.dbus}")
+    ''}
+    ${lib.optionalString gui ''
+      # GUI session environment. Store paths are valid in the guest as-is; the
+      # host's profile symlinks aren't, so they're resolved first.
+      userprof="$(${co}/readlink -f /etc/profiles/per-user/${username} 2>/dev/null || true)"
+      nixprof="$(${co}/readlink -f "''${HOME:-${home}}/.nix-profile" 2>/dev/null || true)"
+      rewrite() {
+        local v="$1"
+        v="''${v//\/run\/current-system\/sw/$hostsw}"
+        [ -n "$userprof" ] && v="''${v//\/etc\/profiles\/per-user\/${username}/$userprof}"
+        [ -n "$nixprof" ] && v="''${v//''${HOME:-${home}}\/.nix-profile/$nixprof}"
+        printf '%s' "$v"
+      }
+      for v in XDG_DATA_DIRS XDG_CONFIG_DIRS QT_PLUGIN_PATH QML2_IMPORT_PATH \
+               QT_QPA_PLATFORMTHEME QT_STYLE_OVERRIDE QT_QPA_PLATFORM \
+               GDK_PIXBUF_MODULE_FILE GIO_EXTRA_MODULES GTK_PATH GTK_THEME \
+               XCURSOR_THEME XCURSOR_SIZE XCURSOR_PATH HYPRCURSOR_THEME HYPRCURSOR_SIZE \
+               XDG_CURRENT_DESKTOP XDG_SESSION_TYPE XDG_SESSION_DESKTOP DESKTOP_SESSION \
+               NIXOS_OZONE_WL ELECTRON_OZONE_PLATFORM_HINT MOZ_ENABLE_WAYLAND GDK_BACKEND; do
+        val="''${!v:-}"
+        if [ -n "$val" ]; then genv+=("$v=$(rewrite "$val")"); fi
+      done
+      # gui.nix's defaults, for launches from outside the session environment.
+      for kv in NIXOS_OZONE_WL=1 ELECTRON_OZONE_PLATFORM_HINT=wayland MOZ_ENABLE_WAYLAND=1 \
+                "QT_QPA_PLATFORM=wayland;xcb" QT_QPA_PLATFORMTHEME=qt6ct \
+                XDG_CURRENT_DESKTOP=Hyprland XDG_SESSION_TYPE=wayland; do
+        case " ''${genv[*]} " in *" ''${kv%%=*}="*) ;; *) genv+=("$kv") ;; esac
+      done
+      fc="$(${co}/readlink -f /etc/fonts/fonts.conf 2>/dev/null || true)"
+      if [ -n "$fc" ]; then genv+=("FONTCONFIG_FILE=$fc"); fi
+      genv+=(
+        "XDG_RUNTIME_DIR=${guestRuntimeDir}"
+        "WAYLAND_DISPLAY=${guestWaylandDisplay}"
+        ${lib.optionalString x11 ''"DISPLAY=:0"''}
+        ${
+          if nvgpu then
+            # Pin every loader to NVIDIA's files (as virtio-nvgpu's guest does), so
+            # a broken NVIDIA ICD fails loudly instead of falling back to Mesa.
+            ''
+              "VK_DRIVER_FILES=/run/opengl-driver/share/vulkan/icd.d/nvidia_icd.json"
+              "__EGL_VENDOR_LIBRARY_FILENAMES=/run/opengl-driver/share/glvnd/egl_vendor.d/10_nvidia.json"
+              "__GLX_VENDOR_LIBRARY_NAME=nvidia"
+              "GBM_BACKENDS_PATH=/run/opengl-driver/lib/gbm"
+            ''
+          else
+            # No host GPU behind cross-domain: render in software.
+            ''
+              "LIBGL_ALWAYS_SOFTWARE=1"
+              "GALLIUM_DRIVER=llvmpipe"
+            ''
+        }
+      )
+    ''}
+    remote="cd $(printf '%q' "$workdir") && exec env $(printf '%q ' "''${genv[@]}" ${cfg.package}/bin/${bin} "$@")"
     tty=-T
     if [ -t 0 ] && [ -t 1 ]; then tty=-t; fi
     set +e
@@ -397,10 +691,17 @@ let
   '';
 
   # ── Units ────────────────────────────────────────────────────────────────────
+  vmmDeps = [
+    (ref "${unit}-prep")
+  ]
+  ++ lib.optional network (ref "${unit}-net")
+  ++ lib.optional gpuDevice (ref "${unit}-gpu")
+  # Bound before the VM starts, so nothing else can hold the relay's port.
+  ++ lib.optional relay (ref "${unit}-relay");
   vmmService = {
     description = "Sandbox VM: ${appName}";
-    requires = [ (ref "${unit}-prep") ] ++ lib.optional network (ref "${unit}-net");
-    after = [ (ref "${unit}-prep") ] ++ lib.optional network (ref "${unit}-net");
+    requires = vmmDeps;
+    after = vmmDeps;
     # Like the systemd backend: a rebuild must not kill a running app. A changed
     # definition takes effect on the next launch.
     restartIfChanged = false;
@@ -511,19 +812,12 @@ let
       ExecStart = "${netScript}${instArg}";
       User = principal;
       Group = principalGroup;
-      # The guest reaches the internet, not the host or anything on the local
-      # networks (LAN, tailnet, container/VM bridges). passt makes its outbound
-      # connections from this unit, so the cgroup filter applies to all of them.
-      IPAddressDeny = [
-        "localhost"
-        "link-local"
-        "multicast"
-        "10.0.0.0/8"
-        "172.16.0.0/12"
-        "192.168.0.0/16"
-        "100.64.0.0/10"
-        "fc00::/7"
-      ];
+      # The app's network policy (lib/netpolicy.nix; VMs default to "internet":
+      # not the host, the LAN, the tailnet or container/VM bridges). passt makes
+      # every outbound connection from this unit, so the cgroup filter applies to
+      # all of the guest's traffic.
+      IPAddressAllow = netPolicy.ipAddressAllow;
+      IPAddressDeny = netPolicy.ipAddressDeny;
       NoNewPrivileges = true;
       CapabilityBoundingSet = "";
       ProtectSystem = "strict";
@@ -550,18 +844,160 @@ let
     };
   };
 
+  wlService = {
+    description = "Sandbox VM display (Wayland security context): ${appName}";
+    requires = [ (ref "${unit}-prep") ];
+    after = [ (ref "${unit}-prep") ];
+    bindsTo = [ (ref unit) ];
+    restartIfChanged = false;
+    stopIfChanged = false;
+    environment = {
+      XDG_RUNTIME_DIR = hostRuntimeDir;
+      WAYLAND_DISPLAY = hostWaylandSocket;
+    };
+    serviceConfig = {
+      ExecStart = "${wlScript}${instArg}";
+      User = username;
+      Group = hostUser.group;
+      NoNewPrivileges = true;
+      CapabilityBoundingSet = "";
+      ProtectSystem = "strict";
+      ReadWritePaths = [ base ];
+      PrivateTmp = true;
+      PrivateNetwork = true;
+      PrivateDevices = true;
+      ProtectKernelTunables = true;
+      ProtectKernelModules = true;
+      ProtectKernelLogs = true;
+      ProtectControlGroups = true;
+      ProtectClock = true;
+      LockPersonality = true;
+      RestrictRealtime = true;
+      RestrictSUIDSGID = true;
+      RestrictAddressFamilies = [ "AF_UNIX" ];
+      SystemCallArchitectures = "native";
+      LimitCORE = 0;
+    };
+  };
+
+  gpuService = {
+    description = "Sandbox VM GPU (${if nvgpu then "virtio-nvgpu" else "cross-domain"}): ${appName}";
+    requires = [ (ref "${unit}-prep") ] ++ lib.optional gui (ref "${unit}-wl");
+    after = [ (ref "${unit}-prep") ] ++ lib.optional gui (ref "${unit}-wl");
+    bindsTo = [ (ref unit) ];
+    restartIfChanged = false;
+    stopIfChanged = false;
+    serviceConfig = {
+      ExecStart = "${gpuScript}${instArg}";
+      User = principal;
+      Group = principalGroup;
+      NoNewPrivileges = true;
+      CapabilityBoundingSet = "";
+      AmbientCapabilities = "";
+      ProtectSystem = "strict";
+      ProtectHome = "tmpfs";
+      ReadWritePaths = [ base ];
+      PrivateTmp = true;
+      PrivateIPC = true;
+      PrivateNetwork = true;
+      ProtectKernelTunables = true;
+      ProtectKernelModules = true;
+      ProtectKernelLogs = true;
+      ProtectControlGroups = true;
+      ProtectClock = true;
+      ProtectHostname = true;
+      LockPersonality = true;
+      RestrictRealtime = true;
+      RestrictSUIDSGID = true;
+      RestrictAddressFamilies = [
+        "AF_UNIX"
+        "AF_NETLINK"
+      ];
+      SystemCallArchitectures = "native";
+      DevicePolicy = "closed";
+      # cross-domain touches no host GPU at all.
+      DeviceAllow = lib.optionals nvgpu nvgpuDeviceAllow;
+      UMask = "0077";
+      LimitCORE = 0;
+    };
+  };
+
+  relayService = {
+    description = "Sandbox VM host services (vsock relay): ${appName}";
+    requires = [ (ref "${unit}-prep") ] ++ lib.optional bus (ref "${unit}-bus");
+    after = [ (ref "${unit}-prep") ] ++ lib.optional bus (ref "${unit}-bus");
+    bindsTo = [ (ref unit) ];
+    restartIfChanged = false;
+    stopIfChanged = false;
+    serviceConfig = {
+      # Ready once the vsock port is bound.
+      Type = "notify";
+      NotifyAccess = "main";
+      ExecStart = "${relayScript}${instArg}";
+      User = username;
+      Group = hostUser.group;
+      NoNewPrivileges = true;
+      CapabilityBoundingSet = "";
+      ProtectSystem = "strict";
+      ProtectHome = "read-only";
+      PrivateTmp = true;
+      PrivateDevices = true;
+      ProtectKernelTunables = true;
+      ProtectKernelModules = true;
+      ProtectKernelLogs = true;
+      ProtectControlGroups = true;
+      ProtectClock = true;
+      LockPersonality = true;
+      RestrictRealtime = true;
+      RestrictSUIDSGID = true;
+      RestrictAddressFamilies = [
+        "AF_UNIX"
+        "AF_VSOCK"
+      ];
+      SystemCallArchitectures = "native";
+      UMask = "0077";
+      LimitCORE = 0;
+    };
+  };
+
+  busService = {
+    description = "Sandbox VM session bus (filtered D-Bus proxy): ${appName}";
+    requires = [ (ref "${unit}-prep") ];
+    after = [ (ref "${unit}-prep") ];
+    bindsTo = [ (ref unit) ];
+    restartIfChanged = false;
+    stopIfChanged = false;
+    environment = {
+      XDG_RUNTIME_DIR = hostRuntimeDir;
+      DBUS_SESSION_BUS_ADDRESS = "unix:path=${hostRuntimeDir}/bus";
+    };
+    serviceConfig = {
+      ExecStart = "${busScript}${instArg}";
+      User = username;
+      Group = hostUser.group;
+      NoNewPrivileges = true;
+      LockPersonality = true;
+      RestrictRealtime = true;
+      RestrictSUIDSGID = true;
+      RestrictAddressFamilies = [ "AF_UNIX" ];
+      SystemCallArchitectures = "native";
+      LimitCORE = 0;
+    };
+  };
+
   unsupported =
-    lib.optional caps.gpu "gpu"
-    ++ lib.optional caps.wayland "wayland"
-    ++ lib.optional caps.x11 "x11"
-    ++ lib.optional caps.audio "audio"
+    lib.optional (caps.gpu && !nvgpu) "gpu"
+    ++ lib.optional (caps.wayland && !gui) "wayland"
+    ++ lib.optional (caps.x11 && !x11) "x11"
     ++ lib.optional caps.fido "fido"
     ++ lib.optional (caps.binds.dev != [ ]) "device binds"
-    ++ lib.optional (caps.dbus.policies != { }) "D-Bus policies"
+    ++ lib.optional (caps.dbus.policies != { } && !bus) "D-Bus policies"
     ++ lib.optional (pwdBinds != [ ]) "./-relative binds"
+    # gui/xdg/audio/D-Bus are carried over; what raw nixpak modules add beyond
+    # that (extra binds, env, device nodes) is not.
     ++ lib.optional (
       appCfg.nixpakModules != [ ] || cfg.sandbox.nixpakModules != [ ]
-    ) "raw nixpakModules (gui, xdg, …)"
+    ) "binds/env/devices from raw nixpakModules"
     ++ lib.optional (appCfg.variantCommands != { }) "variantCommands";
 in
 {
@@ -579,7 +1015,11 @@ in
       "${unit}${tmpl}" = vmmService;
       "${unit}-prep${tmpl}" = prepService;
     }
-    // lib.optionalAttrs network { "${unit}-net${tmpl}" = netService; };
+    // lib.optionalAttrs network { "${unit}-net${tmpl}" = netService; }
+    // lib.optionalAttrs gui { "${unit}-wl${tmpl}" = wlService; }
+    // lib.optionalAttrs gpuDevice { "${unit}-gpu${tmpl}" = gpuService; }
+    // lib.optionalAttrs relay { "${unit}-relay${tmpl}" = relayService; }
+    // lib.optionalAttrs bus { "${unit}-bus${tmpl}" = busService; };
 
     assertions = [
       {

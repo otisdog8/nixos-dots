@@ -182,6 +182,48 @@
         default = false;
         description = "App needs network access.";
       };
+      # Where a network-enabled app may connect. Enforced by the systemd backend
+      # (on the app's unit) and the VM backend (on the VM's passt unit) with
+      # systemd's cgroup IP filter; see lib/netpolicy.nix. Per-host override:
+      # modules.apps.<name>.sandbox.network.
+      networkPolicy = {
+        mode = lib.mkOption {
+          type = lib.types.enum [
+            "default"
+            "open"
+            "internet"
+            "allowlist"
+          ];
+          default = "default";
+          description = ''
+            - default: the backend's own default (containers: open; VMs: internet)
+            - open: anything the host can reach, including the LAN, the tailnet
+              and services on the host itself
+            - internet: public addresses only: no loopback, link-local, private
+              (RFC 1918/ULA), CGNAT/tailnet or multicast addresses
+            - allowlist: only `allow` (plus DNS, see `allowDns`)
+          '';
+        };
+        allow = lib.mkOption {
+          type = lib.types.listOf lib.types.str;
+          default = [ ];
+          example = [
+            "192.168.1.20"
+            "100.64.0.0/10"
+          ];
+          description = "Addresses/prefixes always allowed (also exceptions to `internet`'s blocks).";
+        };
+        deny = lib.mkOption {
+          type = lib.types.listOf lib.types.str;
+          default = [ ];
+          description = "Addresses/prefixes always denied, on top of the mode.";
+        };
+        allowDns = lib.mkOption {
+          type = lib.types.bool;
+          default = true;
+          description = "In allowlist mode, still allow the resolver the app uses.";
+        };
+      };
       wayland = lib.mkOption {
         type = lib.types.bool;
         default = false;

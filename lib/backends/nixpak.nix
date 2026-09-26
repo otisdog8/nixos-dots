@@ -44,6 +44,9 @@ let
   '';
 in
 {
+  # The app's session-bus filter (--talk/--own/… args) and nixpak's .flatpak-info,
+  # reused by the VM implementation's D-Bus proxy (lib/backends/vm.nix).
+  inherit (inner) dbusArgs flatpakInfoFile;
   package =
     if inner.usesWayland then
       pkgs.symlinkJoin {
@@ -70,6 +73,18 @@ in
     systemd.tmpfiles.rules = storage.tmpfilesRules;
     environment.persistence = storage.homePersistence;
     assertions = storage.assertions;
+    # nixpak runs in the user's session, where systemd can't attach the cgroup IP
+    # filter the other backends use, so only "open" is enforceable here.
+    warnings =
+      lib.optional
+        (
+          appCfg.capabilities.network
+          && !(lib.elem cfg.sandbox.network.mode [
+            "default"
+            "open"
+          ])
+        )
+        "sandbox app '${appName}': network mode \"${cfg.sandbox.network.mode}\" isn't enforced by the nixpak backend (it runs in your session); use the systemd backend or the VM.";
     modules.sandbox.stashMigrations = lib.optional (storage.stashEntries != [ ]) {
       app = appName;
       bin = binName;

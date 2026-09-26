@@ -15,6 +15,9 @@
   storage,
 }:
 {
+  # Unsandboxed: no session-bus filter to hand the VM implementation.
+  dbusArgs = null;
+  flatpakInfoFile = null;
   package = cfg.package;
   systemConfig = {
     systemd.tmpfiles.rules = storage.tmpfilesRules;
