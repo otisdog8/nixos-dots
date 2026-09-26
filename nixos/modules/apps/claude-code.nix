@@ -21,6 +21,7 @@
       ../../../lib/features/agent-gpu-command.nix
     ];
 
+    # $PWD comes from cwd.nix; the stash binds provide ~/.claude and ~/.claude.json.
     config.app = {
       name = "claude-code";
       packageName = "claude";
@@ -29,6 +30,33 @@
       package = pkgs.unstable-small.claude-code;
 
       defaultBackend = "nixpak";
+
+      # `claude-nesbox`: the same sandbox plus the hardware the nesbox GPU/VM tests
+      # need. Opt-in per session; plain `claude` is unchanged. SECURITY: anything in
+      # the session can reach nvidia.ko and /dev/kvm and read all of /sys. Still no
+      # Wayland socket (a live compositor socket allows input injection and
+      # screencopy); run a separate compositor inside instead. Device binds are
+      # bind-try, so nodes absent on a host are skipped. /dev/nvidia-uvm-tools is
+      # left out on purpose (the backend refuses it).
+      variantCommands.claude-nesbox.nixpakModules = [
+        (_: {
+          bubblewrap.bind.dev = [
+            "/dev/kvm"
+            "/dev/udmabuf"
+            "/dev/nvidiactl"
+            "/dev/nvidia0"
+            "/dev/nvidia-uvm"
+            "/dev/nvidia-modeset"
+            "/dev/nvidia-caps"
+            "/dev/dri"
+          ];
+          # Device lookup, libdrm and nvidia-smi.
+          bubblewrap.bind.ro = [
+            "/sys"
+            "/run/opengl-driver"
+          ];
+        })
+      ];
 
       storage = [
         # Parent catches auth + real state (projects, history.jsonl, plans, tasks,
@@ -85,21 +113,6 @@
           tier = "cache";
           type = "file";
         }
-      ];
-
-      # $PWD comes from cwd.nix; the stash binds provide ~/.claude and
-      # ~/.claude.json. /tmp is a PRIVATE tmpfs (not the shared host /tmp): a
-      # per-app scratch dir so nothing this agent writes to /tmp is visible to
-      # other sandboxes or the host, and nothing on the host /tmp is visible to
-      # it. TMPDIR is pinned so tools that honour it land inside that tmpfs.
-      nixpakModules = [
-        (
-          { ... }:
-          {
-            bubblewrap.tmpfs = [ "/tmp" ];
-            bubblewrap.env.TMPDIR = "/tmp";
-          }
-        )
       ];
     };
   }

@@ -19,8 +19,7 @@
       name = "zen-browser";
       package = pkgs.zen-browser;
       # The package ships ONLY bin/zen-beta, and zen-beta.desktop runs `zen-beta` —
-      # so that's the binary the systemd launcher must wrap (the old "zen" name only
-      # worked in the legacy nixpak path via extraEntrypoints, which systemd ignores).
+      # so that's the binary the systemd launcher must wrap.
       packageName = "zen-beta";
       desktopFileName = "zen-beta.desktop";
       # gecko registers org.mozilla.<app>.<profile-instance> on the session bus

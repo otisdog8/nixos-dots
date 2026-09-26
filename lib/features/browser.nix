@@ -1,17 +1,28 @@
 # Web browser feature
 { config, lib, ... }:
-
+let
+  # The browser's own org.freedesktop.Application / gecko-remote name prefix
+  # (app.dbusName, e.g. "org.mozilla.zen"). gecko registers
+  # <dbusName>.<profile-instance> (MOZ_DBUS_REMOTE, open-links.nix); the "<name>.*"
+  # policy covers that subtree and the bare name.
+  ownName = config.app.dbusName;
+in
 {
   # Browsers are GUI apps with network + FIDO/WebAuthn security keys + audio
-  # (web audio/video — no longer implied by gui.nix).
+  # (web audio/video), and may ask the portal for
+  # screen sharing (WebRTC getDisplayMedia) — the host picker still gates it.
   imports = [
     ./gui.nix
     ./network.nix
     ./fido.nix
     ./audio.nix
+    ./screen-capture.nix
   ];
 
   config.app = {
+    # WebRTC cameras via the portal (PipeWire camera); no raw /dev/video* nodes.
+    portalInterfaces = [ "Camera" ];
+
     # Browser-specific nixpak configuration
     nixpakModules = [
       (
@@ -29,19 +40,20 @@
             (sloth.concat' sloth.homeDir "/Documents/tthtml")
           ];
 
-          # DBus policies for browser to advertise its remote control service
-          # This allows xdg-open from other apps to connect to running browser
-          dbus.policies = {
-            # Firefox-based browsers need to own their service
-            "org.mozilla.firefox.*" = "own";
-            "org.mozilla.Firefox.*" = "own";
-            "org.mozilla.zen.*" = "own";
-            # Chromium-based browsers
-            "org.chromium.Chromium.*" = "own";
-            "com.brave.Browser.*" = "own";
-            # MPRIS media player controls (for playerctl, media keys, etc.)
-            "org.mpris.MediaPlayer2.*" = "own";
-          };
+          # D-Bus names the browser may OWN. SECURITY: only its OWN remote-control
+          # name, never another browser's. The launcher forwards URLs (OAuth /
+          # magic-login links included) to whoever owns <dbusName>.*, so a blanket
+          # own-list would let any compromised browser register e.g.
+          # org.mozilla.zen.0 and receive every link meant for zen. Other browsers'
+          # names stay talk-only (open-links.nix).
+          dbus.policies =
+            lib.optionalAttrs (ownName != "") {
+              "${ownName}.*" = "own";
+            }
+            // {
+              # MPRIS media player controls (for playerctl, media keys, etc.)
+              "org.mpris.MediaPlayer2.*" = "own";
+            };
         }
       )
     ];

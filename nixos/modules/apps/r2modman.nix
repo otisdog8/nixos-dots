@@ -13,12 +13,12 @@
       ../../../lib/features/needs-gpu.nix
       ../../../lib/features/network.nix
       ../../../lib/features/xdg-desktop.nix
-      # TEMP FIX: r2modman launches games through a shell wrapper that execs the
-      # hardcoded /bin/sh, which a bwrap tmpfs root lacks → "missing /bin/sh" on game
-      # launch. bin-sh.nix binds a bash ELF onto /bin/sh. The REAL fix lands with the
-      # steam conversion (r2modman launches games via Steam; the shared game-launch
-      # environment gets sorted out there) — revisit then.
+      # r2modman launches games through a shell wrapper that execs the hardcoded
+      # /bin/sh, which a bwrap tmpfs root lacks (same fix as steam.nix).
       ../../../lib/features/bin-sh.nix
+      # r2modman runs steam.sh inside its OWN sandbox when Steam isn't already
+      # up, and the Steam client is X11/XWayland-only (see steam.nix).
+      ../../../lib/features/x11.nix
     ];
 
     config.app = {
@@ -26,10 +26,10 @@
       package = pkgs.r2modman;
       packageName = "r2modman";
 
-      # v2 unified storage. location = "home" (NOT a hidden stash) is load-bearing:
-      # r2modman's mod data is SHARED with steam (steam binds ~/.config/
-      # r2modmanPlus-local rw so it can launch modded games). steam stays legacy with
-      # its data at jrt's real $HOME, so r2modman's copy must also stay host-visible at
+      # location = "home" (NOT a hidden stash) is load-bearing: r2modman's mod data
+      # is SHARED with steam (steam binds ~/.config/r2modmanPlus-local rw so it can
+      # launch modded games). steam keeps its data at jrt's real $HOME
+      # (location = "home"), so r2modman's copy must also stay host-visible at
       # ~/.config/r2modmanPlus-local — a stash would hide it from steam and break the
       # sharing. tier = persist keeps it backed up; location = home keeps it shareable.
       # (Full stash isolation waits on the steam+r2modman shared-namespace work.)

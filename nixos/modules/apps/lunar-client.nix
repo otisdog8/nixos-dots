@@ -38,13 +38,9 @@
         "VideoDecodeStats"
       ];
 
-      # v2 unified storage (replaces persistence.user.* + impermanence). This app is
-      # THE nested-tier desync case: `.lunarclient/offline` and `.lunarclient/jre`
-      # (large) live INSIDE `.lunarclient` (persist). Under the legacy path that
-      # stacked two independent mount authorities (impermanence home bind + the bwrap
-      # mirror) on the same tree, desyncing the live process (the Lunar login desync).
-      # In v2 there is ONE authority (bwrap): the stash binds are sorted parent-first
-      # and applied in a single namespace, so the child `large` binds mount cleanly on
+      # Nested tiers: `.lunarclient/offline` and `.lunarclient/jre` (large) live
+      # INSIDE `.lunarclient` (persist). The stash binds are sorted parent-first and
+      # applied in a single namespace, so the child `large` binds mount cleanly on
       # top of the `persist` parent. Cross-tier nesting is explicitly allowed by
       # lib/storage.nix (only SAME-tier nesting is illegal).
       #

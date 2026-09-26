@@ -19,20 +19,20 @@
     # STEP 1: Import feature modules
     # ═══════════════════════════════════════════════════════════════════════
     #
-    # Feature modules set defaults for persistence AND nixpak sandboxing.
-    # They compose through imports (e.g., electron.nix imports gui.nix)
+    # Feature modules set defaults for app.storage, capabilities and nixpakModules.
+    # They compose through imports (e.g., chromium.nix imports gui.nix)
     #
-    # Available features:
-    #   - gui.nix:         GUI apps (Wayland, audio, fonts, basic GPU, DBus)
-    #   - electron.nix:    Electron apps (imports gui, adds cache + Wayland flags)
+    # Common features (see lib/features/ for the full list):
+    #   - gui.nix:         GUI apps (Wayland, fonts, theming, portals via xdg-desktop.nix)
+    #   - chromium.nix:    Chromium/Electron apps (imports gui, profile + cache storage)
     #   - network.nix:     Network access
-    #   - needs-gpu.nix:   Full GPU acceleration (NVIDIA, Vulkan, Mesa)
-    #   - gaming.nix:      Gaming apps (imports gui + gpu + network + input devices)
-    #   - browser.nix:     Web browsers (imports gui + network + downloads)
-    #   - development.nix: Dev tools (imports gui + network + project directories)
+    #   - audio.nix:       Audio in/out (not implied by gui)
+    #   - needs-gpu.nix:   GPU acceleration (NVIDIA, Vulkan, Mesa)
+    #   - x11.nix:         X11/XWayland socket, for apps that can't do native Wayland
+    #   - browser.nix:     Web browsers (imports gui + network + fido + audio)
 
     imports = [
-      ../../../lib/features/electron.nix # Change to match your app
+      ../../../lib/features/chromium.nix # Change to match your app
       ../../../lib/features/network.nix
     ];
 
@@ -46,32 +46,30 @@
       package = pkgs.APPNAME; # Package to install
       packageName = "APPNAME"; # Binary name in package
 
-      # Optional: Override default usernames for persistence
-      # defaultUsernames = [ "alice" "bob" ];
+      # Optional: the session user (only the first entry is used)
+      # defaultUsernames = [ "alice" ];
 
       # ─────────────────────────────────────────────────────────────────────
       # Persistence
       # ─────────────────────────────────────────────────────────────────────
       #
-      # Feature modules already set defaults (e.g., electron.nix sets cache paths).
+      # Feature modules already set defaults (e.g., chromium.nix sets cache paths).
       # List options merge ADDITIVELY - just add your paths and they'll combine!
       #
-      # Available persistence types:
-      #   - persist:        Mutable config/data (/persist)
-      #   - large:          Large data files (/large)
+      # Storage tiers:
+      #   - persist:        Mutable config/data (/persist, backed up)
+      #   - large:          Large data files (/large, not backed up)
       #   - cache:          Ephemeral cache, can be cleared (/cache)
-      #   - baked:          Immutable setup data (/baked)
 
       # Add paths - they merge with feature defaults automatically
-      # persistence.user.persist = [
-      #   ".config/APPNAME/plugins"
-      #   ".local/share/APPNAME"
+      # (see lib/storage.nix; tier = persist | large | cache)
+      # storage = [
+      #   { path = ".config/APPNAME"; tier = "persist"; }
+      #   { path = ".cache/APPNAME"; tier = "cache"; }
       # ];
 
       # To REPLACE feature defaults instead of merging, use lib.mkForce
-      # persistence.user.cache = lib.mkForce [
-      #   ".cache/APPNAME"
-      # ];
+      # storage = lib.mkForce [ { path = ".config/APPNAME"; } ];
 
       # System-level persistence (rare for desktop apps)
       # persistence.system.persist = [ "/var/lib/APPNAME" ];
@@ -191,8 +189,7 @@
         }:
         {
           # Example: Bind custom dataDir into sandbox
-          # modules.apps.APPNAME.sandbox.extraBinds = lib.mkIf
-          #   (config.modules.apps.APPNAME.sandbox.enable)
+          # modules.apps.APPNAME.sandbox.extraBinds =
           #   [ config.modules.apps.APPNAME.dataDir ];
 
           # Example: Systemd user service
@@ -241,16 +238,9 @@
 #     # dataDir = "/custom/path";
 #     # logLevel = "debug";
 #
-#     # Persistence toggles
-#     persistConfig = true;   # Persist config files
-#     persistData = true;     # Persist data files
-#     enableCache = true;     # Enable caching
-#
-#     # Sandboxing. Prefer a v2 backend (config.app.defaultBackend =
-#     # "nixpak"/"systemd") + app.storage. sandbox.enable is the legacy in-session
-#     # wrap, kept for not-yet-migrated apps:
-#     sandbox.enable = true;   # Enable the legacy nixpak wrap
-#     sandbox.extraBinds = [   # Additional bind mounts (relative to $HOME or absolute)
+#     # Sandboxing: the backend is config.app.defaultBackend in the app module
+#     # ("nixpak" by default, "systemd", or "none" for unsandboxed).
+#     sandbox.extraBinds = [   # Extra binds: home-relative, ./ or ../ ($PWD), or absolute
 #       "Documents/vault"      # Relative: expands to $HOME/Documents/vault
 #       "/mnt/data"            # Absolute: used as-is
 #     ];

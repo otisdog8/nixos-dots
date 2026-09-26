@@ -17,12 +17,15 @@
 #     imports this feature shares one store instead of each rebuilding its own.
 #   - Mounts host /etc/nix read-only so client-side experimental-features
 #     (nix-command, flakes) and substituters are honoured inside the sandbox.
+#     On NixOS /etc/nix/{nix.conf,registry.json} are symlinks into /etc/static,
+#     so /etc/static/nix is bound too — otherwise they dangle and nix runs with
+#     built-in defaults ("experimental Nix feature 'nix-command' is disabled").
 #
 # The on-disk backing of ~/.local/share/nix/root (on the compressed /cache
 # subvolume) is declared ONCE in modules/system/developer-tools.nix. It must not
-# be added per-app via persistence.user.cache: multiple apps importing this
-# feature would then register the same user directory twice and impermanence
-# asserts on duplicate persistence entries.
+# be added per-app via app.storage: a stash entry would give each app its own
+# store, and a location = "home" entry in several apps would register the same
+# user dir twice (impermanence asserts on duplicates).
 #
 # Note: because the daemon/db are not exposed, the store still can't see the
 # host's existing /nix/store paths, so closures are fetched from substituters on
@@ -42,6 +45,8 @@
         bubblewrap.bind.ro = [
           # Enables experimental-features / substituters config inside the sandbox.
           "/etc/nix"
+          # Targets of the /etc/nix symlinks (nix.conf, registry.json, …).
+          "/etc/static/nix"
         ];
       }
     )

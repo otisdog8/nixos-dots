@@ -32,6 +32,23 @@ let
   ul = "${pkgs.util-linux}/bin";
   pg = "${pkgs.procps}/bin/pgrep";
 
+  paths = import ../../../lib/paths.nix { inherit lib; };
+  # Every home-relative path the user persists via impermanence (any tier).
+  userPersisted =
+    user:
+    lib.concatMap (
+      tier:
+      let
+        u = config.environment.persistence.${tier}.users.${user} or null;
+      in
+      lib.optionals (u != null) (map (d: d.directory) u.directories ++ map (f: f.file) u.files)
+    ) (lib.attrNames config.environment.persistence);
+  # An old-layout path that is a PARENT of something the user persists in their
+  # own right (e.g. a zoom stash entry ".config" vs jrt's ".config/nvim") is a
+  # shared host directory, not app data: moving it would swallow the user's own
+  # config into the app's stash. Such entries are never migrated.
+  sharesUserData = user: path: lib.any (paths.isStrictParent path) (userPersisted user);
+
   # Per-app migration from the old /<tier>/home/<user>/<path> impermanence layout
   # into /<tier>/sandbox/<app>/<path>. Runs from an activation script, so it fires
   # on `nixos-rebuild switch` (no reboot) AND on boot. Safe on a live system:
@@ -42,10 +59,13 @@ let
   #   - stale old-layout bind mounts (present after a switch, absent at boot) are
   #     unmounted deepest-first before the move;
   #   - both paths are on the same tier subvol, so `mv` is an atomic rename;
-  #   - chowns reconcile ownership (handles same-uid <-> dedicated transitions).
+  #   - chowns reconcile ownership (handles same-uid <-> dedicated transitions);
+  #   - an entry whose path is a parent of something the user persists directly
+  #     (sharesUserData) is never moved.
   migrateApp =
     m:
     let
+      movable = lib.filter (e: !(sharesUserData m.user e.path)) m.entries;
       unmounts = lib.concatMapStringsSep "\n" (
         e:
         let
@@ -55,13 +75,13 @@ let
           if __safe "${t}" && ${ul}/mountpoint -q --nofollow "${t}" 2>/dev/null; then
             ${ul}/umount --no-canonicalize "${t}" 2>/dev/null || ${ul}/umount -l --no-canonicalize "${t}" 2>/dev/null || true
           fi''
-      ) (lib.reverseList m.entries); # deepest-first
+      ) (lib.reverseList movable); # deepest-first
       moves = lib.concatMapStringsSep "\n" (
         e:
         let
           dst = "${tierMount.${e.tier}}/sandbox/${m.app}/${e.path}";
           # Old-layout data can sit under ANY tier's home: a path being re-tiered
-          # (e.g. .claude/security persist→large, or codex logs persist→large) still
+          # (e.g. .claude/security persist→large) still
           # lives under the parent's OLD tier, not its new declared one. Search the
           # declared tier first, then the others; take the first that exists. Each
           # candidate test is fully quoted, so paths with spaces (Electron's
@@ -116,7 +136,7 @@ let
                 ''if __safe "${c}"; then echo "  rm stale cache ${c}"; ${co}/rm -rf "${c}"; fi''
               ) candidateTiers}''
           }''
-      ) (lib.reverseList m.entries); # deepest-first: extract carved children before the parent moves
+      ) (lib.reverseList movable); # deepest-first: extract carved children before the parent moves
       # Reconcile ownership every run (not gated by the stamp): mv preserves the
       # old jrt ownership, and flipping an app same-uid <-> dedicated changes the
       # target owner. NB: check the WHOLE tree, not just dst's top-dir owner — the
@@ -184,9 +204,7 @@ in
         /dev/nvidia*, so a visible compute-only card gets chosen for buffer
         allocation and every cross-GPU dmabuf import fails (context-lost loop).
         All entries are bind-try: listing a node absent on some boot is safe.
-        Honored by the v2 backends (systemd/nixpak) only — the legacy in-session
-        wrap keeps the full default (threading host config into it recurses:
-        legacy finalPackage evaluation cycles through config.modules).
+        Honored by the sandboxing backends (systemd/nixpak).
       '';
     };
 
@@ -199,6 +217,8 @@ in
         per-entry placement and the hidden stash. One switch for debugging,
         inspection, recovery, or a host where hiding isn't wanted. Sandboxing
         itself is unaffected — only the stash placement is disabled.
+        Dedicated-uid apps (sandbox.dedicatedUser) are exempt: they run with
+        HOME=/home/app-<name> and could never see data under the user's home.
       '';
     };
 
@@ -293,6 +313,23 @@ in
     # mount is refused the portal fails to start, breaking file dialogs for EVERY
     # sandboxed app, so this and the overlay change are a matched pair.
     programs.fuse.userAllowOther = true;
+
+    # The Wayland security-context helper the backends use (lib/backends/
+    # wayland-security-context.py), also on PATH so the confinement can be checked
+    # by hand, e.g. `wayland-security-context run "$XDG_RUNTIME_DIR/wl-test" test
+    # -- grim /tmp/x.png` must FAIL while plain `grim` works.
+    environment.systemPackages = [ (import ../../../lib/backends/wayland-security-context.nix pkgs) ];
+
+    # FIDO/WebAuthn keys for dedicated-uid sandboxes (the `fido` capability).
+    # systemd's 60-fido-id.rules tags FIDO tokens ID_FIDO_TOKEN=1 and grants the
+    # seat user a uaccess ACL — which a dedicated app-<name> uid never gets. Put
+    # exactly those hidraw nodes (never keyboards/mice) in a `fido` group that
+    # fido-capable dedicated apps join (lib/backends/systemd.nix). A key is still
+    # useless without a physical touch.
+    users.groups.fido = { };
+    services.udev.extraRules = ''
+      SUBSYSTEM=="hidraw", ENV{ID_FIDO_TOKEN}=="1", GROUP="fido", MODE="0660"
+    '';
 
     # One-time data migration into the stash layout. As an activation script it
     # runs on `nixos-rebuild switch` (no reboot needed) and on boot, before the

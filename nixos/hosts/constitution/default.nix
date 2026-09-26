@@ -8,7 +8,7 @@
 }:
 {
   networking.hostName = "constitution";
-  time.timeZone = "America/Los_Angeles";
+  time.timeZone = "America/New_York";
 
   boot.supportedFilesystems = [ "btrfs" ];
 

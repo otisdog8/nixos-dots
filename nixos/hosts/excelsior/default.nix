@@ -9,10 +9,16 @@
 }:
 {
   networking.hostName = "excelsior";
-  time.timeZone = "America/Los_Angeles";
+  time.timeZone = "America/New_York";
 
   boot.supportedFilesystems = [ "btrfs" ];
   boot.blacklistedKernelModules = [ "amdgpu" ];
+
+  # One window (layer) per head instead of main + overlay. Each layer costs
+  # one phywin per tile and the GPU has 8: with overlays, 4K@240 (2 tiles) +
+  # 4K@165 DSC (8 slices => 2 tiles) + 4K@120 needs (2+2+1)*2 = 10 and the
+  # modeset is rejected. Hyprland never uses overlay planes.
+  boot.extraModprobeConfig = "options nvidia-modeset enable_overlay_layers=0";
   #boot.kernelPackages = lib.mkOverride 50 pkgs.linuxPackages_6_18;
 
   imports = [
@@ -58,34 +64,47 @@
           mode = "3840x2160@240";
           position = "0x2160";
           scale = 1;
-          bitdepth = 8;
+          bitdepth = 10;
+          cm = "auto";
         }
         {
           output = "desc:Shenzhen KTC Technology Group H32P22P";
           mode = "3840x2160@165";
           position = "3840x2160";
           scale = 1;
-          bitdepth = 8;
+          bitdepth = 10;
+          cm = "auto";
         }
         {
           output = "desc:Dell Inc. DELL U2725QE 4DGM884";
           mode = "3840x2160@120";
           position = "7680x2160";
           scale = 1;
-          bitdepth = 8;
+          bitdepth = 10;
+          cm = "auto";
         }
         {
           output = "desc:Dell Inc. DELL U2725QE GCGM884";
           mode = "3840x2160@120";
           position = "7680x0";
           scale = 1;
-          bitdepth = 8;
+          bitdepth = 10;
+          cm = "auto";
         }
       ];
 
       # The ASUS is a QD-OLED: power it off after 2.5 min idle (global dpms
       # stays at 450s) so an idle desktop doesn't keep the panel lit.
       hypridle.oledMonitors = [ "desc:ASUSTek COMPUTER INC PG32UCDM3 W4LMAV007023" ];
+      # Rotating wallpapers, this host only. The images live outside the
+      # repo (not on GitHub, not in the store); hyprpaper reads the directory
+      # at runtime, so adding a wallpaper is just dropping a file in.
+      hyprpaper = {
+        path = "/home/${username}/Pictures/wallpapers";
+        interval = 900;
+      };
+      # No static bar on the OLED either.
+      waybar.hiddenMonitors = [ "desc:ASUSTek COMPUTER INC PG32UCDM3 W4LMAV007023" ];
     };
 
     # Hardening baseline — workstation profile keeps userns on for
@@ -120,6 +139,8 @@
   programs.captive-browser.enable = true;
 
   systemd.services.connect-wifi = {
+    # Disabled (unit is masked), kept for now — delete once confirmed unneeded.
+    enable = false;
     script = ''
       for _ in $(seq 1 30); do
         ${pkgs.networkmanager}/bin/nmcli -t connection show >/dev/null 2>&1 && break
@@ -145,6 +166,8 @@
   };
 
   systemd.services.network-restarter = {
+    # Disabled (unit is masked), kept for now — delete once confirmed unneeded.
+    enable = false;
     description = "Check internet connectivity and restart NetworkManager if down";
     after = [ "network-online.target" ];
     wants = [ "network-online.target" ];

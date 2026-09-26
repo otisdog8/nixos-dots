@@ -63,9 +63,17 @@ let
       substituteInPlace modules/launch.nix --replace-fail \
         '++ config.dbus.args ++ [ "--filter" ];' \
         '++ config.dbus.args ++ (optional config.dbus.filter "--filter");'
+      # Mount tmpfs entries BEFORE the binds (upstream mounts them after), so a
+      # bind under a tmpfs path — $PWD under /tmp, /tmp/.X11-unix, anything under a
+      # tmpfs $HOME — stays visible instead of being hidden by it.
+      sed -i -e '/^    tmpfs$/d' -e 's/^    bindPaths$/    tmpfs\n    bindPaths/' modules/launch.nix
+      [ "$(grep -c '^    tmpfs$' modules/launch.nix)" = 1 ] \
+        && grep -A1 '^    tmpfs$' modules/launch.nix | grep -q '^    bindPaths$' \
+        || { echo "nixpak launch.nix tmpfs reorder did not apply" >&2; exit 1; }
     '';
   };
   mkNixPak = (import "${patchedNixpak}/modules") { inherit lib pkgs; };
+  bindPath = import ../paths.nix { inherit lib; };
 in
 let
   built = mkNixPak {
@@ -130,9 +138,9 @@ let
           # source (systemd.nix). Same-uid apps and absolute/$PWD paths bind as-is.
           ++ (map (
             p:
-            if lib.hasPrefix "/" p then
+            if bindPath.isAbsolute p then
               p
-            else if lib.hasPrefix "." p then
+            else if bindPath.isPwdRelative p then
               sloth.concat' (sloth.env "PWD") "/${p}"
             else if sharedHome != null then
               [
@@ -163,6 +171,12 @@ in
   # The flatpak app-id — used to scope the cross-uid doc-portal bind to this app's
   # by-app/<appId> subtree instead of the whole doc FUSE.
   appId = built.config.flatpak.appId;
+  # Whether the sandbox gets a Wayland socket (gui.nix / capabilities.wayland).
+  # The backends then hand it a wp_security_context_v1 socket, never the raw one.
+  usesWayland = built.config.bubblewrap.sockets.wayland;
+  # nixpak's inner launcher script; its env rewrites absolute Exec=/D-Bus paths
+  # in share/ to point here (see the Wayland wrapper in nixpak.nix).
+  script = built.config.script;
   # The app's session-bus filter policies (--talk/--own/--call/--broadcast). With
   # the inner proxy transparent (transparentDbus), the jrt-side bridge applies these
   # as its --filter, so the filter lives on the trusted uid.

@@ -18,6 +18,8 @@
       # hardcoded /bin/sh, absent from a bwrap tmpfs root. Same fix r2modman needs; the
       # full modded-launch chain (steam ↔ r2modman) still wants runtime testing.
       ../../../lib/features/bin-sh.nix
+      # The Steam client (and most Proton games) are X11/XWayland-only.
+      ../../../lib/features/x11.nix
     ];
 
     config.app = {
@@ -25,14 +27,14 @@
       package = pkgs.steam;
       packageName = "steam";
 
-      # v2 storage, but every entry is location = "home" (host-visible at ~, NOT a
-      # hidden stash). Two reasons this is mandatory:
+      # Every storage entry is location = "home" (host-visible at ~, NOT a hidden
+      # stash). Two reasons this is mandatory:
       #   1. r2modman (a separate same-uid sandbox) binds ~/.steam and
       #      ~/.local/share/Steam rw to install mods into Steam's game dirs — a stash
       #      would hide them from r2modman and break modding. (Full isolation waits on
       #      the steam+r2modman shared-namespace work.)
-      #   2. location=home is the SAME impermanence path the legacy layout used, so
-      #      converting moves ZERO data — the 135G library stays exactly where it is.
+      #   2. the 135G library stays at its existing impermanence path — no data
+      #      movement.
       # Same-uid nixpak (not dedicated): steam runs as jrt so jrt/r2modman can reach
       # the library; the sandbox is the boundary, not host-hiding.
       defaultBackend = "nixpak";

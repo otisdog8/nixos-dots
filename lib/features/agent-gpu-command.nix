@@ -4,5 +4,5 @@
 { config, ... }:
 {
   imports = [ ../app-spec.nix ];
-  config.app.gpuCommandName = "${config.app.packageName}-gpu";
+  config.app.variantCommands."${config.app.packageName}-gpu".capabilities.gpu = true;
 }

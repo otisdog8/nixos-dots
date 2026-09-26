@@ -17,12 +17,6 @@ in
   options.modules.bundles.gaming = {
     enable = lib.mkEnableOption "gaming applications bundle";
 
-    enableSandboxing = lib.mkOption {
-      type = lib.types.bool;
-      default = true;
-      description = "Enable sandboxing for all gaming apps in the bundle";
-    };
-
     steam.enable = lib.mkOption {
       type = lib.types.bool;
       default = cfg.enable;
@@ -70,40 +64,31 @@ in
     modules.apps = {
       steam = {
         inherit (cfg.steam) enable;
-        sandbox.enable = lib.mkDefault cfg.enableSandboxing;
       };
 
       prismlauncher = {
         inherit (cfg.prismlauncher) enable;
-        sandbox.enable = lib.mkDefault cfg.enableSandboxing;
       };
 
       lunar-client = {
         inherit (cfg.lunar-client) enable;
-        sandbox.enable = lib.mkDefault cfg.enableSandboxing;
       };
 
       tetrio-desktop = {
         inherit (cfg.tetrio-desktop) enable;
-        sandbox.enable = lib.mkDefault cfg.enableSandboxing;
       };
 
       slipstream = {
         inherit (cfg.slipstream) enable;
-        sandbox.enable = lib.mkDefault cfg.enableSandboxing;
       };
 
       r2modman = {
         inherit (cfg.r2modman) enable;
-        sandbox.enable = false;
       };
 
-      # Wine runs arbitrary Windows binaries from arbitrary filesystem
-      # locations — sandboxing is off by default since it would block access
-      # to user-chosen game install dirs.
+      # Wine runs unsandboxed (backend "none", see apps/wine.nix).
       wine = {
         inherit (cfg.wine) enable;
-        sandbox.enable = false;
       };
     };
   };

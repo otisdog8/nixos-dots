@@ -15,12 +15,6 @@ in
   options.modules.bundles.browsers = {
     enable = lib.mkEnableOption "browser applications bundle";
 
-    enableSandboxing = lib.mkOption {
-      type = lib.types.bool;
-      default = true;
-      description = "Enable sandboxing for all browsers in the bundle";
-    };
-
     zen-browser.enable = lib.mkOption {
       type = lib.types.bool;
       default = true;
@@ -56,31 +50,23 @@ in
     modules.apps = {
       zen-browser = {
         inherit (cfg.zen-browser) enable;
-        sandbox.enable = lib.mkDefault cfg.enableSandboxing;
         isDefaultBrowser = lib.mkDefault true;
       };
 
       firefox = {
         inherit (cfg.firefox) enable;
-        sandbox.enable = lib.mkDefault cfg.enableSandboxing;
       };
 
       brave = {
         inherit (cfg.brave) enable;
-        sandbox.enable = lib.mkDefault cfg.enableSandboxing;
       };
 
       chromium = {
         inherit (cfg.chromium) enable;
-        sandbox.enable = lib.mkDefault cfg.enableSandboxing;
       };
 
       ungoogled-chromium = {
         inherit (cfg.ungoogled-chromium) enable;
-        sandbox.enable = lib.mkDefault cfg.enableSandboxing;
-        persistConfig = false;
-        persistData = false;
-        enableCache = false;
       };
     };
   };

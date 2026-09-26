@@ -13,7 +13,6 @@
       ../../../lib/features/browser.nix
       ../../../lib/features/needs-gpu.nix
       ../../../lib/features/xdg-desktop.nix
-      ../../../lib/features/tmpfs-homedir.nix
     ];
 
     config.app = {
@@ -34,8 +33,9 @@
       desktopFileName = "chromium-browser.desktop";
 
       # Dedicated-uid + ephemeral: runs as app-ungoogled-chromium (data hidden from
-      # jrt) with a tmpfs home wiped on reboot. Clear chromium.nix's persist storage
-      # so no stash is created/backed-up (the tmpfs home would only shadow it).
+      # jrt). The app's $HOME isn't bound into the sandbox — bwrap creates it on its
+      # own tmpfs root, so the profile is discarded on every exit. Clear
+      # chromium.nix's persist storage so no stash is created/backed-up.
       defaultBackend = "systemd";
       storage = lib.mkForce [ ];
 
@@ -43,6 +43,8 @@
         { config, lib, ... }:
         {
           modules.apps.ungoogled-chromium.sandbox.dedicatedUser = true;
+          # Downloads land in jrt's ~/Downloads/ungoogled-chromium (host-visible).
+          modules.apps.ungoogled-chromium.sandbox.sharedDownloads = true;
           users.users."app-ungoogled-chromium".extraGroups = [
             "video"
             "audio"

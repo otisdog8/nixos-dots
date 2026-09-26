@@ -36,7 +36,7 @@
       # Brave keeps its profile under .config/BraveSoftware/Brave-Browser, with the
       # real per-profile caches under Default/. profiles=["Default"] makes chromium.nix
       # carve them (Cache/Code Cache/GPUCache/Dawn*/Service Worker/CacheStorage) to
-      # /cache — replacing the old hand-listed persistence.user.cache entry.
+      # /cache.
       chromium.basePath = ".config/BraveSoftware/Brave-Browser";
       chromium.profiles = [ "Default" ];
 
@@ -49,6 +49,9 @@
         { config, lib, ... }:
         {
           modules.apps.brave.sandbox.dedicatedUser = true;
+          # Downloads land in jrt's ~/Downloads/brave (host-visible, persisted)
+          # instead of the app's 0700 home, which jrt can't open.
+          modules.apps.brave.sandbox.sharedDownloads = true;
           users.users."app-brave".extraGroups = [
             "video"
             "audio"

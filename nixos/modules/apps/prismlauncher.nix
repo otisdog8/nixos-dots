@@ -21,9 +21,8 @@
       package = pkgs.prismlauncher;
       packageName = "prismlauncher";
 
-      # v2 unified storage (replaces persistence.user.* + impermanence). No nesting
-      # here — clean tiers: config backed up, game installs large (not backed up),
-      # cache disposable.
+      # No nesting here — clean tiers: config backed up, game installs large (not
+      # backed up), cache disposable.
       #
       # Dedicated-uid + XWayland forward. PrismLauncher (Qt) and the Minecraft it
       # launches (Java/LWJGL) both use X11; a dedicated uid can't auth to jrt's XWayland

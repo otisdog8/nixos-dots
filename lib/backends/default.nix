@@ -6,8 +6,8 @@
 # concrete config: `package` goes on PATH / into finalPackage, `systemConfig` is
 # merged into the host NixOS config (tmpfiles, persistence, units).
 #
-# "legacy" is not a backend here — it is the untouched pre-v2 code path in
-# lib/apps.nix. The vm backend is future work (not yet registered).
+# app.defaultBackend (lib/app-spec.nix) selects one of these; "nixpak" is the
+# default. A microVM backend is future work (not yet registered).
 {
   none = import ./none.nix;
   nixpak = import ./nixpak.nix;

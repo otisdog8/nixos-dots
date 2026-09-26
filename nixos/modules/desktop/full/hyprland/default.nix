@@ -309,18 +309,23 @@ in
               };
             };
             general = {
-              gaps_in = 3;
-              gaps_out = 3;
+              gaps_in = 1;
+              gaps_out = 1;
             };
             decoration = {
               rounding = 0;
-              active_opacity = 0.97;
-              inactive_opacity = 0.9;
+              active_opacity = 1.0;
+              inactive_opacity = 1.0;
             };
             dwindle = {
               preserve_split = true;
               force_split = 0;
               smart_split = true;
+            };
+            render = {
+              # Fullscreen HDR apps switch their monitor to HDR even when its
+              # rule is cm = "auto" (successor to cm_fs_passthrough).
+              cm_auto_hdr = 1;
             };
             binds = {
               allow_workspace_cycles = true;
@@ -346,7 +351,8 @@ in
               mode = "highres";
               position = "auto";
               scale = 1;
-              bitdepth = 8;
+              bitdepth = 10;
+              cm = "auto";
             }
           ]
           ++ cfg.monitors;

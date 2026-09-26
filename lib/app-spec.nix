@@ -20,13 +20,29 @@
       description = "Binary name within the package (for sandboxing)";
     };
 
-    gpuCommandName = lib.mkOption {
-      type = lib.types.nullOr lib.types.str;
-      default = null;
+    variantCommands = lib.mkOption {
+      type = lib.types.attrsOf (
+        lib.types.submodule {
+          options = {
+            capabilities = lib.mkOption {
+              type = lib.types.attrs;
+              default = { };
+              description = "Capability overrides, merged over app.capabilities.";
+            };
+            nixpakModules = lib.mkOption {
+              type = lib.types.listOf lib.types.deferredModule;
+              default = [ ];
+              description = "Extra nixpak modules for this command only.";
+            };
+          };
+        }
+      );
+      default = { };
       description = ''
-        Optional command that launches a second copy of the app sandbox with the
-        GPU capability enabled. The regular command remains GPU-less. Currently
-        supported by the nixpak backend.
+        Extra commands (name → variant) that launch a second copy of the app's
+        sandbox with more privileges, e.g. `claude-gpu`. The regular command is
+        unchanged, so the wider access is only there when explicitly chosen.
+        nixpak backend only.
       '';
     };
 
@@ -48,80 +64,25 @@
       description = "org.freedesktop.Application D-Bus name (or prefix) for URL forwarding to a running instance.";
     };
 
-    # The app's sandbox backend (Layer-2). Apps opt into v2 by setting this to
-    # nixpak/systemd/vm (or "none" for unsandboxed v2); "legacy" keeps the pre-v2
-    # path. This IS the effective backend — there is no per-host sandbox.backend
-    # override (it would be inert; see lib/apps.nix). It lives in the app-spec
-    # (independent eval) rather than being set via customConfig, so reading the
-    # effective backend never forces the outer config mid-merge.
+    # Layer-2 backend: nixpak (in-session bwrap), systemd (root-prepared stash
+    # service, optionally a dedicated uid) or none (unsandboxed; storage at ~).
+    # Set here in the app-spec so dispatch never forces the outer config; there is
+    # no per-host override (lib/apps.nix). Unsandboxed must be explicit.
     defaultBackend = lib.mkOption {
       type = lib.types.enum [
-        "legacy"
         "none"
         "nixpak"
         "systemd"
-        "vm"
       ];
-      default = "legacy";
-      description = "Default Layer-2 sandbox backend for this app.";
+      default = "nixpak";
+      description = "Layer-2 sandbox backend for this app.";
     };
 
-    # Default usernames for user-level persistence
+    # The human user whose session/home the app belongs to (the head is used).
     defaultUsernames = lib.mkOption {
       type = lib.types.listOf lib.types.str;
       default = [ "jrt" ];
-      description = "Default users to apply persistence to";
-    };
-
-    # User-level persistence (applied to user directories like ~/.config, ~/.local/share)
-    persistence.user = {
-      persist = lib.mkOption {
-        type = lib.types.listOf lib.types.str;
-        default = [ ];
-        description = "User paths for /persist (mutable config/data)";
-      };
-
-      persistFiles = lib.mkOption {
-        type = lib.types.listOf lib.types.str;
-        default = [ ];
-        description = "User file paths for /persist (mutable config/data files)";
-      };
-
-      large = lib.mkOption {
-        type = lib.types.listOf lib.types.str;
-        default = [ ];
-        description = "User paths for /large (large persistent data)";
-      };
-
-      largeFiles = lib.mkOption {
-        type = lib.types.listOf lib.types.str;
-        default = [ ];
-        description = "User file paths for /large (large persistent data files)";
-      };
-
-      cache = lib.mkOption {
-        type = lib.types.listOf lib.types.str;
-        default = [ ];
-        description = "User paths for cache (ephemeral, can be cleared)";
-      };
-
-      cacheFiles = lib.mkOption {
-        type = lib.types.listOf lib.types.str;
-        default = [ ];
-        description = "User file paths for cache (ephemeral, can be cleared)";
-      };
-
-      baked = lib.mkOption {
-        type = lib.types.listOf lib.types.str;
-        default = [ ];
-        description = "User paths for /baked (immutable setup-time data)";
-      };
-
-      bakedFiles = lib.mkOption {
-        type = lib.types.listOf lib.types.str;
-        default = [ ];
-        description = "User file paths for /baked (immutable setup-time data)";
-      };
+      description = "The app's session user; only the first entry is used.";
     };
 
     # System-level persistence (for system services, /var/lib, /etc, etc.)
@@ -151,11 +112,10 @@
       };
     };
 
-    # ── v2: unified storage model (Layer 1) ──────────────────────────────────
+    # ── Unified storage model (Layer 1) ──────────────────────────────────────
     # A single per-path declaration that (per backend) drives the on-disk stash
     # location + tier (= backup policy), its creation, and the in-sandbox bind.
-    # Coexists with the legacy persistence.user.* lists above; an app uses one or
-    # the other depending on sandbox.backend. See lib/storage.nix.
+    # See lib/storage.nix.
     storage = lib.mkOption {
       type = lib.types.listOf (
         lib.types.submodule {
@@ -205,13 +165,12 @@
         }
       );
       default = [ ];
-      description = "v2 unified storage entries. Alternative to persistence.user.* for converted apps.";
+      description = "Unified per-path storage entries (see lib/storage.nix).";
     };
 
-    # ── v2: backend-agnostic capability vocabulary (Layer 1) ──────────────────
-    # Features set these; backends lower them differently. Introduced now; feature
-    # conversion is incremental (unconverted features keep using nixpakModules,
-    # still consumed by the bwrap backends).
+    # ── Backend-agnostic capability vocabulary (Layer 1) ─────────────────────
+    # Features set these; backends lower them differently. Features may still add
+    # raw nixpakModules; both bwrap backends consume them.
     capabilities = {
       gpu = lib.mkOption {
         type = lib.types.bool;
@@ -269,12 +228,12 @@
         rw = lib.mkOption {
           type = lib.types.listOf lib.types.str;
           default = [ ];
-          description = "Home-relative or absolute read-write binds.";
+          description = "Read-write binds: absolute, ./ or ../ ($PWD), or home-relative (lib/paths.nix).";
         };
         ro = lib.mkOption {
           type = lib.types.listOf lib.types.str;
           default = [ ];
-          description = "Home-relative or absolute read-only binds.";
+          description = "Read-only binds: absolute, ./ or ../ ($PWD), or home-relative (lib/paths.nix).";
         };
         dev = lib.mkOption {
           type = lib.types.listOf lib.types.str;

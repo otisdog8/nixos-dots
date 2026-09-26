@@ -7,12 +7,6 @@
 #   - the profile on the backed-up /persist tier, and
 #   - each cache subdir carved out to the disposable /cache tier (cross-tier
 #     children of the persist parent — no same-tier nesting, no desync).
-#
-# It emits BOTH layouts so it works before and after conversion:
-#   - legacy backend → persistence.user.* (impermanence), unchanged.
-#   - v2 backend     → app.storage. Inert for legacy apps (storage.nix output is
-#     only wired in for non-legacy backends), so a chromium app converts by simply
-#     setting `defaultBackend = "nixpak"` — no per-app cache list to repeat.
 { config, lib, ... }:
 let
   cfg = config.app.chromium;
@@ -89,8 +83,8 @@ in
       ];
       description = ''
         Top-level Chromium/Electron cache subdirectories (relative to basePath)
-        routed to the disposable /cache tier in the v2 backend. Listing one that a
-        given app never creates is harmless — it just prepares an empty cache dir.
+        routed to the disposable /cache tier. Listing one that a given app never
+        creates is harmless — it just prepares an empty cache dir.
       '';
     };
 
@@ -122,18 +116,7 @@ in
   };
 
   config.app = {
-    # ── Legacy backend (impermanence) — unchanged for back-compat.
-    # (persistRoot defaults to basePath, so this is identical for existing apps.) ──
-    persistence.user.persist = [ cfg.persistRoot ];
-    persistence.user.cache = [
-      "${base}/Cache"
-      "${base}/GPUCache"
-      "${base}/Code Cache"
-      "${base}/DawnCache"
-    ];
-
-    # ── v2 backend — unified storage: persistRoot on /persist, caches on /cache.
-    # Inert for legacy apps; used the moment an app sets a non-legacy backend.
+    # Unified storage: persistRoot on /persist, caches on /cache.
     storage = [
       {
         path = cfg.persistRoot;

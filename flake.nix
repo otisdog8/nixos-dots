@@ -221,9 +221,16 @@
               # starts from a clean slate (a dangling mapper makes `cryptsetup
               # open` fail with "already exists", and a stale install root makes
               # the store copy go to the host instead of the stick).
-              umount -R /mnt/disko-install-root 2>/dev/null || true
+              # Never delete recursively: if anything is still mounted there,
+              # abort rather than risk wiping a live filesystem.
+              root=/mnt/disko-install-root
+              if mountpoint -q "$root"; then
+                umount -R "$root" || { echo "failed to unmount $root, aborting" >&2; exit 1; }
+              fi
               cryptsetup close cryptliveusb 2>/dev/null || true
-              rm -rf /mnt/disko-install-root 2>/dev/null || true
+              if [ -d "$root" ]; then
+                rmdir "$root" || { echo "$root is not empty (still mounted?), aborting" >&2; exit 1; }
+              fi
               exec disko-install --flake "${self}#liveusb" --disk main "$dev"
             '';
           };
@@ -248,15 +255,41 @@
               # nixos-install build instead.
               export TMPDIR=/nix/var/nix/build
               mkdir -p "$TMPDIR"
+              # Resolve partitions strictly beneath the selected disk (not the
+              # global by-partlabel links, which are ambiguous with two sticks).
+              disk="$(readlink -f "$1")"
+              [ "$(lsblk -dnro TYPE "$disk" 2>/dev/null)" = disk ] || { echo "$1 is not a whole disk" >&2; exit 1; }
+              part_by_label() {
+                local name pk label found=""
+                while read -r name pk label; do
+                  if [ "$label" = "$1" ] && [ "$pk" = "$disk" ]; then
+                    [ -z "$found" ] || { echo "multiple '$1' partitions on $disk" >&2; return 1; }
+                    found="$name"
+                  fi
+                done < <(lsblk -nrpo NAME,PKNAME,PARTLABEL "$disk")
+                [ -n "$found" ] || { echo "no '$1' partition on $disk" >&2; return 1; }
+                echo "$found"
+              }
+              luks_part="$(part_by_label disk-main-luks)"
+              esp_part="$(part_by_label disk-main-ESP)"
+              mapper="luks-upgrade-$$"
               mnt="$(mktemp -d)"
-              cleanup() { umount -R "$mnt" 2>/dev/null || true; cryptsetup close luks-upgrade 2>/dev/null || true; rmdir "$mnt" 2>/dev/null || true; }
+              # Only tear down what this invocation actually set up.
+              opened="" mounted=""
+              cleanup() {
+                if [ -n "$mounted" ]; then umount -R "$mnt" || echo "warning: failed to unmount $mnt" >&2; fi
+                if [ -n "$opened" ]; then cryptsetup close "$mapper" || echo "warning: failed to close $mapper" >&2; fi
+                rmdir "$mnt" 2>/dev/null || true
+              }
               trap cleanup EXIT
-              cryptsetup open /dev/disk/by-partlabel/disk-main-luks luks-upgrade
-              mount -o subvol=root,compress=zstd,noatime /dev/mapper/luks-upgrade "$mnt"
+              cryptsetup open "$luks_part" "$mapper"
+              opened=1
+              mount -o subvol=root,compress=zstd,noatime "/dev/mapper/$mapper" "$mnt"
+              mounted=1
               mkdir -p "$mnt"/{nix,persist,boot}
-              mount -o subvol=nix,compress=zstd,noatime /dev/mapper/luks-upgrade "$mnt/nix"
-              mount -o subvol=persist,compress=zstd,noatime /dev/mapper/luks-upgrade "$mnt/persist"
-              mount /dev/disk/by-partlabel/disk-main-ESP "$mnt/boot"
+              mount -o subvol=nix,compress=zstd,noatime "/dev/mapper/$mapper" "$mnt/nix"
+              mount -o subvol=persist,compress=zstd,noatime "/dev/mapper/$mapper" "$mnt/persist"
+              mount "$esp_part" "$mnt/boot"
               nixos-install --root "$mnt" --flake "${self}#liveusb" --no-root-passwd
             '';
           };

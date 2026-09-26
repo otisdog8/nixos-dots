@@ -25,10 +25,5 @@
         }
       )
     ];
-
-    # Persist the native messaging manifest so it survives reboots
-    persistence.user.persist = [
-      ".mozilla/native-messaging-hosts"
-    ];
   };
 }
