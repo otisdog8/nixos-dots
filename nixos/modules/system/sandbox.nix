@@ -8,12 +8,15 @@
   config,
   lib,
   pkgs,
+  inputs,
   isDesktop ? false,
   isLaptop ? false,
   ...
 }:
 let
   cfg = config.modules.sandbox;
+  containerMembersOf =
+    g: map (a: cfg.containerMembers.${a}) (lib.filter (a: cfg.containerMembers ? ${a}) g.apps);
 
   # Exact allowlist of the REAL sandbox-<app>.service units, for the polkit rule
   # below. Sourced from modules.sandbox.units (each backend emits its own unit name)
@@ -205,6 +208,40 @@ in
       '';
     };
 
+    containerMembers = lib.mkOption {
+      type = lib.types.attrsOf lib.types.raw;
+      default = { };
+      internal = true;
+      description = "Every nixpak app's member record (lib/backends/nixpak.nix), by app name.";
+    };
+
+    containerGroups = lib.mkOption {
+      type = lib.types.attrsOf lib.types.raw;
+      readOnly = true;
+      internal = true;
+      default =
+        lib.mapAttrs
+          (
+            name: g:
+            import ../../../lib/backends/nixpak-group.nix {
+              inherit
+                lib
+                pkgs
+                inputs
+                name
+                ;
+              inherit (g) persistent;
+              members = containerMembersOf g;
+            }
+          )
+          (
+            lib.filterAttrs (
+              _: g: g.sharedContainer && g.projects != [ ] && containerMembersOf g != [ ]
+            ) cfg.groups
+          );
+      description = "Each group's shared container (lib/backends/nixpak-group.nix).";
+    };
+
     groups = lib.mkOption {
       default = { };
       description = ''
@@ -212,9 +249,10 @@ in
         together (e.g. the AI agents, modules.sandbox.agents). In VM mode a group
         is ONE persistent VM (sandbox-vm-group-<name>) holding every member's
         storage and capabilities plus the group's projects and shared home paths;
-        each member's command runs in it. In container mode each member keeps its
-        own sandbox and gets the group's projects and shared home paths as extra
-        binds.
+        each member's command runs in it. In container mode every member gets
+        the group's projects and shared home paths as extra binds, and (with
+        sharedContainer) a launch inside one of the projects runs in ONE shared
+        container instead of the member's own (lib/backends/nixpak-group.nix).
       '';
       type = lib.types.attrsOf (
         lib.types.submodule {
@@ -226,7 +264,12 @@ in
             persistent = lib.mkOption {
               type = lib.types.bool;
               default = true;
-              description = "Keep the group's VM running after its last app exits (stop it with `sandbox-vm stop group-<name>`).";
+              description = "Keep the group's VM (or shared container) running after its last app exits (stop it with `sandbox-vm stop group-<name>`, or `systemctl --user stop sbx-group-<name>`).";
+            };
+            sharedContainer = lib.mkOption {
+              type = lib.types.bool;
+              default = true;
+              description = "Container mode: launches inside the group's projects share one container (the user service sbx-group-<name>). Needs projects; nixpak-backend members only.";
             };
             projects = lib.mkOption {
               type = lib.types.listOf lib.types.str;
@@ -405,6 +448,14 @@ in
   };
 
   config = {
+    # Shared group containers: a user service each, and one broker socket.
+    systemd.user.services = lib.mapAttrs' (
+      n: grp: lib.nameValuePair "sbx-group-${n}" grp.service
+    ) cfg.containerGroups;
+    modules.sandbox.broker.sandboxes = lib.mapAttrs' (
+      n: _: lib.nameValuePair "group-${n}" { label = "${n} sandbox (container)"; }
+    ) cfg.containerGroups;
+
     # Container mode: a group's members each get its projects and shared home
     # paths as extra binds (VM mode puts them in the group's one VM instead;
     # modules/system/sandbox-vm.nix). Not filtered by which apps are enabled:

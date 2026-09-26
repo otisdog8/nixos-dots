@@ -28,6 +28,29 @@ let
   };
   binName = appCfg.packageName;
   wlSecure = import ./wayland-security-context.nix pkgs;
+  username = builtins.head appCfg.defaultUsernames;
+
+  # A group's shared container (nixpak-group.nix): this app's command runs in it
+  # when launched inside the group's projects.
+  groups = config.modules.sandbox.groups;
+  group = lib.findFirst (g: lib.elem appName groups.${g}.apps) null (lib.attrNames groups);
+  sharedGroup =
+    if group != null && config.modules.sandbox.containerGroups ? ${group} then
+      config.modules.sandbox.containerGroups.${group}
+    else
+      null;
+  member = {
+    inherit
+      appName
+      appCfg
+      cfg
+      storage
+      ;
+    bin = binName;
+    package = cfg.package;
+    gpuDevices = config.modules.sandbox.gpuDevices;
+    fallback = "${perAppPackage}/bin/${binName}";
+  };
 
   # Wayland apps get a wp_security_context_v1 socket, never the raw one (see
   # wayland-security-context.py); nixpak binds "$XDG_RUNTIME_DIR/$WAYLAND_DISPLAY",
@@ -43,12 +66,9 @@ let
       "$__rt/sandbox-${appName}-wayland-$$" ${lib.escapeShellArg inner.appId} \
       -- ${inner.package}/bin/${binName} "$@"
   '';
-in
-{
-  # The app's session-bus filter (--talk/--own/… args) and nixpak's .flatpak-info,
-  # reused by the VM implementation's D-Bus proxy (lib/backends/vm.nix).
-  inherit (inner) dbusArgs flatpakInfoFile;
-  package =
+
+  # The app's own sandbox (and, for Wayland apps, its security-context wrapper).
+  perAppPackage =
     if inner.usesWayland then
       pkgs.symlinkJoin {
         inherit (inner.package) name;
@@ -70,7 +90,35 @@ in
       }
     else
       inner.package;
+in
+{
+  # The app's session-bus filter (--talk/--own/… args) and nixpak's .flatpak-info,
+  # reused by the VM implementation's D-Bus proxy (lib/backends/vm.nix).
+  inherit (inner) dbusArgs flatpakInfoFile;
+  package =
+    if sharedGroup == null then
+      perAppPackage
+    else
+      pkgs.symlinkJoin {
+        inherit (perAppPackage) name;
+        paths = [ perAppPackage ];
+        postBuild = ''
+          rm "$out/bin/${binName}"
+          ln -s ${
+            sharedGroup.launcherFor {
+              bin = binName;
+              inherit (member) package fallback;
+              projects = map (
+                p: if lib.hasPrefix "/" p then p else "/home/${username}/${lib.removePrefix "~/" p}"
+              ) groups.${group}.projects;
+            }
+          } "$out/bin/${binName}"
+        '';
+      };
   systemConfig = {
+    # Every nixpak app publishes its member record; shared group containers are
+    # built from them (modules/system/sandbox.nix).
+    modules.sandbox.containerMembers.${appName} = member;
     systemd.tmpfiles.rules = storage.tmpfilesRules;
     environment.persistence = storage.homePersistence;
     assertions = storage.assertions;
