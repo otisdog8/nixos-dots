@@ -68,6 +68,7 @@
     modules/apps/agent-auth-client.nix
     modules/apps/hermes-agents.nix
     modules/apps/sandbox-shell.nix
+    modules/apps/op-broker.nix
     modules/apps/nixvim.nix
     modules/apps/jellyfin.nix
     modules/apps/sabnzbd.nix
