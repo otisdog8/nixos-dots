@@ -29,8 +29,8 @@ documentation, kept current, and more precise than this summary.
 
 ## 1. Where things stand
 
-- Branch `vm-sandbox`, 39 commits ahead of `master` (`git log --oneline
-  master..vm-sandbox`), head `0d6ea7c`. Nothing pushed, nothing deployed.
+- Branch `vm-sandbox`, ~42 commits ahead of `master` (`git log --oneline
+  master..vm-sandbox`). Nothing pushed, nothing deployed.
 - **All eight hosts evaluate** (arquitens carrack constitution excelsior galaxy
   liveusb munificent recusant). Most units, guests and packages have been
   *built*.
@@ -84,7 +84,12 @@ recursion); follow the existing `lib.genAttrs … mkIf` patterns.
   wish), crosvm cross-domain (software rendering, no host GPU) for other GUI
   VMs. virtio-nvgpu built from the fork in `lib/vm/nvgpu.nix` (backend,
   nvgpu-wl-guest, patched crosvm c0474109, guest kmod); the backend runs as a
-  per-VM user `sbx-gpu-<vm>` following the fork's DEPLOY.md. Windows always go
+  per-VM user `sbx-gpu-<vm>` following the fork's DEPLOY.md. GPU VMs whose apps
+  may ask the ScreenCast portal also get the fork's **capture injection**
+  wired: `--inject-socket $rt/gpu/inject.sock --inject-uid <sbx-cap-<vm>>`, the
+  socket ACLed to that helper user alone, and `/dev/nvgpu-capture` in the guest
+  given to group `nvgpu-capture` — the programs on either side are not
+  written yet (§6). Windows always go
   through a `wp_security_context_v1` socket (`lib/backends/wayland-security-context.py`).
 - Host services into the guest: `vsock-relay.py` (guest listens on unix
   sockets, host end answers only its VM's CID): PulseAudio (filtered, below),
@@ -153,8 +158,10 @@ ephemeral.
   in [ c.systemd.units."sandbox-vm-firefox.service".unit c.modules.sandbox.vm.guest.config.system.build.toplevel ]'`.
   Scenarios: `.extendModules { modules = [ { … } ]; }`.
 - `virtio-nvgpu` flake input is `git+file:///…/virtio-nvgpu?ref=display-passthrough`
-  (locked 0869ef9; GitHub `otisdog8/virtio-nvgpu` only has an older `dev` —
-  switch the URL when the user pushes). Update: `nix flake update virtio-nvgpu`.
+  (locked 2eec306, which has capture injection; GitHub `otisdog8/virtio-nvgpu`
+  only has an older `dev` — switch the URL when the user pushes). Update:
+  `nix flake update virtio-nvgpu`, then rebuild `lib/vm/nvgpu.nix`'s four
+  packages (crosvm's patch series lives in the fork and changes with it).
 - Gotchas hit before: zsh doesn't word-split `$VAR` (use `bash -c`); AF_UNIX
   paths >108 bytes (use short dirs like `/run/user/1001/…` for local socket
   tests); `nixfmt` reflows lines (re-read before sed); NixOS group names ≤31
@@ -197,11 +204,69 @@ quotes each side separately), passt flag differences, crosvm seccomp gaps.
 
 ## 6. Open items / backlog
 
-- **Screen capture in VMs:** waiting on the virtio-nvgpu agents
-  (`docs/virtio-nvgpu-zero-copy-capture.md`: an "inject a host dma-buf"
-  primitive). nixos-dots then builds the portal/PipeWire plumbing (host helper
-  under the app's flatpak identity → guest PipeWire source node + guest
-  ScreenCast portal backend). A copy-over-vsock fallback is possible without it.
+- **Screen capture in VMs (the next big piece; design below).** The
+  virtio-nvgpu side is done and hardware-tested by its agents: see
+  `docs/virtio-nvgpu-zero-copy-capture.md` (our brief),
+  `docs/virtio-nvgpu-zero-copy-capture-reply.md` (their answer), and the fork's
+  `DEPLOY.md` "Capture injection" (normative wire format and rules),
+  `SECURITY.md` §18, `ARCHITECTURE.md` §17, reference C code
+  `rig/rig-tools/nvgpu-inject-test.c` (helper) and
+  `rig/guest-image/tools/nvgpu-capture-import.c` (daemon). nixos-dots has wired
+  the users, socket and node (commit 3597f21). Still to write:
+
+  1. **The D-Bus problem (the crux).** A VM app reaches the host portal over the
+     relayed session bus (guest `vsock-relay` socket → host `-bus` unit's
+     xdg-dbus-proxy with the app's flatpak identity). The ScreenCast flow is
+     CreateSession → SelectSources → Start (the host picker: the consent) →
+     Response with `streams a(ua{sv})` (host PipeWire node ids) →
+     `OpenPipeWireRemote` returning a **file descriptor**, which can't cross
+     vsock; and the node ids mean nothing in the guest. Recommended approach: a
+     **ScreenCast shim in the guest end of the D-Bus relay** that intercepts
+     only `org.freedesktop.portal.ScreenCast` calls (parse D-Bus message headers;
+     pass every other message through untouched), answers them itself as the
+     portal would (Request/Session object paths, Response signals synthesized
+     with the portal's sender name), and drives the real session through a
+     private relay service to a host **capture client**. Alternative: let the
+     calls through, make the host relay capture the fd from the method return
+     (recvmsg) and hand it to the helper, and have the guest relay attach a
+     guest PipeWire fd and patch node ids in the Response in place — fewer
+     synthesized messages, more byte-level patching; judge which is less
+     fragile.
+  2. **Host capture client** (as the user, in a bwrap giving it the app's
+     `.flatpak-info` like the `-bus` unit does, so the host portal attributes
+     the request to the app and the picker names it): performs the portal
+     session, gets the restricted PipeWire remote fd, consumes the stream with a
+     DMA-BUF format offer (libpipewire in C, or GStreamer `pipewiresrc` via
+     Python GI — C is more controllable), and passes each buffer's dma-buf fds
+     over a unix socket (SCM_RIGHTS) to…
+  3. **The host capture helper**, running as `sbx-cap-<vm>` (the only uid the
+     backend accepts): HELLO, IMPORT per buffer (→ id + secret token), RELEASE
+     when PipeWire drops a buffer; per frame, announce `(id, seq, timestamps,
+     damage, crop, cursor)` to the guest daemon over a new relay service (never
+     put tokens in argv/env/logs/files), hold the buffer until the daemon's
+     `done` or a few-frame timeout, then requeue. xdph 1.4.1 attaches no
+     SyncTimeline, so "announce only complete frames" suffices; optional explicit
+     sync per DEPLOY.md. It can be merged with the capture client if the
+     client's uid can be sbx-cap (it can't: the client needs the user's session
+     bus) — keep them split.
+  4. **Guest capture daemon** (an account in group `nvgpu-capture`, never the
+     app's): opens `/dev/nvgpu-capture` + `/dev/dri/renderD128`,
+     `NVGPU_CAPTURE_IOC_OPEN {render_fd, id, token}` → read-only dma-buf +
+     layout (`driver/uapi/nvgpu_capture.h`), publishes a PipeWire **video
+     source node** whose buffers are those dma-bufs (`SPA_DATA_DmaBuf`, the
+     modifier), queues per announced frame, sends `done`. Needs PipeWire (+
+     WirePlumber, or a static link policy) running in the guest for the app's
+     user — the guest has none today.
+  5. The shim returns the guest node's id in the Response and a connection to
+     the guest PipeWire (restricted to that node if feasible) as the
+     OpenPipeWireRemote fd.
+  6. Cross-domain (non-GPU) VMs have no injection: a copy fallback (helper maps
+     the buffer, frames over vsock, daemon uses MemFd buffers) is possible but
+     heavy (~250 MB/s at 1080p30).
+  Limits to respect (from the reply): 32 buffers / 1 GiB / 16 syncobjs per VM;
+  buffers must be this GPU's nvidia-drm memory (a SHM/MemFd stream can't be
+  injected; refuse or fall back to copying); the guest can write to its own
+  stream's buffers (GPU mappings are read-write) — harmless to anyone else.
 - Native-PipeWire apps (incl. pipewire-jack) have no audio in sandboxes now; if
   one matters: restricted PipeWire socket for containers, virtio-snd for VMs.
 - Container FIDO hotplug (containers still bind /dev/hidraw* at start).
