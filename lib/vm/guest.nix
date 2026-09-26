@@ -169,11 +169,13 @@ let
           echo "sbx-setup: could not bind $source at $target" >&2
       done
 
-    # Other modules' long-running helpers (sandbox.vm.guestServices), as the user.
+    # Other modules' long-running helpers (sandbox.vm.guestServices), as the user
+    # (or as root, for the ones that ask).
     jq -c '.services[]' "$spec" | while read -r sv; do
       name="$(jq -r .name <<<"$sv")"
       grp="$(jq -r '.group // empty' <<<"$sv")"
-      opts=(--unit="sbx-svc-$name" --uid="$user" -p Restart=on-failure -p RestartSec=2 --no-block)
+      opts=(--unit="sbx-svc-$name" -p Restart=on-failure -p RestartSec=2 --no-block)
+      [ "$(jq -r '.root // false' <<<"$sv")" = true ] || opts+=(--uid="$user")
       if [ -n "$grp" ]; then
         getent group "$grp" >/dev/null || groupadd -r "$grp"
         opts+=(--gid="$grp")

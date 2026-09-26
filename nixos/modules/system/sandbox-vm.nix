@@ -105,7 +105,8 @@ let
       # Reuse the host's package set (overlays included) instead of instantiating
       # nixpkgs a second time.
       { nixpkgs.pkgs = pkgs; }
-    ];
+    ]
+    ++ cfg.guestModules;
   };
 in
 {
@@ -186,6 +187,18 @@ in
       internal = true;
       default = nvgpu;
       description = "virtio-nvgpu's packages (lib/vm/nvgpu.nix).";
+    };
+
+    guestModules = lib.mkOption {
+      type = lib.types.listOf lib.types.deferredModule;
+      default = [ ];
+      description = ''
+        Extra NixOS modules for the generic guest system. There is ONE guest
+        system per host, shared by every VM, so whatever goes here is in every
+        guest: keep it inert unless the app that needs it runs (e.g. a
+        D-Bus-activated service, a polkit policy). Per-VM behaviour belongs in
+        the app's sandbox.vm.guestServices / guestBinds instead.
+      '';
     };
 
     guest = lib.mkOption {

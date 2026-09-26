@@ -175,11 +175,16 @@
                       default = null;
                       description = "Run with this primary group (created in the guest if missing).";
                     };
+                    root = lib.mkOption {
+                      type = lib.types.bool;
+                      default = false;
+                      description = "Run as the guest's root instead of the user (the guest is the boundary; e.g. a polkit agent, or a helper that drops privileges itself).";
+                    };
                   };
                 }
               );
               default = { };
-              description = "Commands ${appName}'s guest keeps running as the user (with the VM's display, when it has one).";
+              description = "Commands ${appName}'s guest keeps running as the user, or as root (with the VM's display, when it has one).";
             };
           };
 

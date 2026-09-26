@@ -335,7 +335,7 @@ let
       }) guestBinds;
       services = lib.mapAttrsToList (n: sv: {
         name = n;
-        inherit (sv) argv group;
+        inherit (sv) argv group root;
         env = [
           "XDG_RUNTIME_DIR=${guestRuntimeDir}"
         ]
