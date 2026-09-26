@@ -7,6 +7,9 @@
     pkgs,
     ...
   }:
+  let
+    browserSettings = import ../../../lib/browser-settings.nix { inherit lib; };
+  in
   {
     imports = [
       ../../../lib/features/browser.nix
@@ -17,6 +20,8 @@
 
     config.app = {
       name = "firefox";
+      # Unconfigured base; customConfig swaps in the build with this host's
+      # policies (modules.apps.firefox.browser.*) baked in.
       package = pkgs.firefox;
       packageName = "firefox";
       desktopFileName = "firefox.desktop";
@@ -32,17 +37,32 @@
       # flag/wrapper needed.
       defaultBackend = "systemd";
 
-      customConfig =
-        { config, lib, ... }:
-        {
-          modules.apps.firefox.sandbox.dedicatedUser = true;
-          # Downloads land in jrt's ~/Downloads/firefox (host-visible, persisted).
-          modules.apps.firefox.sandbox.sharedDownloads = true;
-          users.users."app-firefox".extraGroups = [
-            "video"
-            "audio"
-          ];
+      # modules.apps.firefox.browser.*: policies, extensions (uBlock Origin by
+      # default), search engine, … — see lib/browser-settings.nix.
+      customOptions =
+        _:
+        browserSettings.mkOptions {
+          appName = "firefox";
+          family = "gecko";
         };
+
+      customConfig =
+        { config, lib, ... }@args:
+        lib.mkMerge [
+          {
+            modules.apps.firefox.sandbox.dedicatedUser = true;
+            # Downloads land in jrt's ~/Downloads/firefox (host-visible, persisted).
+            modules.apps.firefox.sandbox.sharedDownloads = true;
+            users.users."app-firefox".extraGroups = [
+              "video"
+              "audio"
+            ];
+          }
+          (browserSettings.geckoConfig {
+            appName = "firefox";
+            basePackage = pkgs.firefox;
+          } args)
+        ];
     };
   }
 )

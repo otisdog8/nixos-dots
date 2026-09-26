@@ -7,6 +7,9 @@
     pkgs,
     ...
   }:
+  let
+    browserSettings = import ../../../lib/browser-settings.nix { inherit lib; };
+  in
   {
     imports = [
       ../../../lib/features/browser.nix
@@ -17,6 +20,8 @@
 
     config.app = {
       name = "zen-browser";
+      # Unconfigured base; customConfig swaps in the build with this host's
+      # policies (modules.apps.zen-browser.browser.*) baked in.
       package = pkgs.zen-browser;
       # The package ships ONLY bin/zen-beta, and zen-beta.desktop runs `zen-beta` —
       # so that's the binary the systemd launcher must wrap.
@@ -46,20 +51,36 @@
         }
       ];
 
-      customConfig =
-        { config, lib, ... }:
-        {
-          modules.apps.zen-browser.sandbox.dedicatedUser = true;
-          users.users."app-zen-browser".extraGroups = [
-            "video"
-            "audio"
-          ];
-          # Shared downloads under a per-app subdir: zen's ~/Downloads becomes jrt's
-          # ~/Downloads/zen-browser (host-visible, on /large where impermanence already
-          # persists Downloads; the launcher ACLs it + tmpfiles creates it). Keeps each
-          # dedicated app's downloads separate instead of a shared pool.
-          modules.apps.zen-browser.sandbox.sharedDownloads = true;
+      # modules.apps.zen-browser.browser.*: policies, extensions (uBlock Origin by
+      # default), search engine, … — see lib/browser-settings.nix. Policies only
+      # change settings and add extensions; the .zen profile itself is untouched.
+      customOptions =
+        _:
+        browserSettings.mkOptions {
+          appName = "zen-browser";
+          family = "gecko";
         };
+
+      customConfig =
+        { config, lib, ... }@args:
+        lib.mkMerge [
+          {
+            modules.apps.zen-browser.sandbox.dedicatedUser = true;
+            users.users."app-zen-browser".extraGroups = [
+              "video"
+              "audio"
+            ];
+            # Shared downloads under a per-app subdir: zen's ~/Downloads becomes jrt's
+            # ~/Downloads/zen-browser (host-visible, on /large where impermanence already
+            # persists Downloads; the launcher ACLs it + tmpfiles creates it). Keeps each
+            # dedicated app's downloads separate instead of a shared pool.
+            modules.apps.zen-browser.sandbox.sharedDownloads = true;
+          }
+          (browserSettings.geckoConfig {
+            appName = "zen-browser";
+            basePackage = pkgs.zen-browser;
+          } args)
+        ];
     };
   }
 )
