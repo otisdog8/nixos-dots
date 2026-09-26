@@ -60,8 +60,9 @@
         inherit policyRoot;
       };
 
-      # modules.apps.brave.browser.* — see lib/browser-settings.nix. Brave Search is
-      # already a private default, so the search engine is left alone.
+      # modules.apps.brave.browser.*: policies, extensions (Vimium by default), … —
+      # see lib/browser-settings.nix. Brave Search is already a private default, so
+      # the search engine is left alone.
       customOptions =
         _:
         browserSettings.mkOptions {
@@ -86,8 +87,8 @@
           (browserSettings.chromiumConfig {
             appName = "brave";
             inherit policyRoot mkPackage;
-            # Brave Shields already block ads and trackers.
-            defaultExtensions = { };
+            # Vimium only: Brave Shields already block ads and trackers.
+            defaultExtensions = browserSettings.knownExtensions.vimium.chromium;
             # Brave's own telemetry (P3A, stats ping, Web Discovery) and Rewards,
             # its Brave Ads programme.
             extraManaged = {

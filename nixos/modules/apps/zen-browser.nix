@@ -51,9 +51,10 @@
         }
       ];
 
-      # modules.apps.zen-browser.browser.*: policies, extensions (uBlock Origin by
-      # default), search engine, … — see lib/browser-settings.nix. Policies only
-      # change settings and add extensions; the .zen profile itself is untouched.
+      # modules.apps.zen-browser.browser.*: policies, extensions (uBlock Origin and
+      # Vimium by default; op-broker's when it serves zen-browser), search engine, …
+      # — see lib/browser-settings.nix. Policies only change settings and add
+      # extensions; the .zen profile itself is untouched.
       customOptions =
         _:
         browserSettings.mkOptions {

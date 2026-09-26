@@ -57,8 +57,8 @@
         inherit policyRoot;
       };
 
-      # modules.apps.chromium.browser.*: policies, extensions (uBlock Origin Lite by
-      # default), search engine, … — see lib/browser-settings.nix.
+      # modules.apps.chromium.browser.*: policies, extensions (uBlock Origin Lite and
+      # Vimium by default), search engine, … — see lib/browser-settings.nix.
       customOptions =
         _:
         browserSettings.mkOptions {

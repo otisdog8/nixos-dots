@@ -78,9 +78,11 @@
           (browserSettings.chromiumConfig {
             appName = "ungoogled-chromium";
             inherit policyRoot mkPackage;
-            # No default extensions: force-installing from the Chrome Web Store would
+            # No default extensions (not even uBlock Origin Lite / Vimium, which the
+            # other browsers get): force-installing from the Chrome Web Store would
             # make this browser fetch from Google on every (ephemeral) start. Add
-            # some through modules.apps.ungoogled-chromium.browser.extensions.
+            # some through modules.apps.ungoogled-chromium.browser.extensions, or
+            # an unpacked one through …browser.unpackedExtensions.
             defaultExtensions = { };
           } args)
         ];

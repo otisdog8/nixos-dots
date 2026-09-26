@@ -76,19 +76,38 @@ rec {
     suggestUrl = "https://duckduckgo.com/ac/?q={searchTerms}&type=list";
   };
 
-  # Default force-installed extensions. uBlock Origin is the one extension
-  # uncontroversial enough to install everywhere; current Chromium no longer runs
-  # Manifest V2 extensions, so Chromium gets its MV3 build, uBlock Origin Lite.
-  # (Brave has its own ad blocker; ungoogled-chromium gets none by default because
-  # installing from the Chrome Web Store would make it talk to Google.)
+  # Store extensions by family, ID → URL (the form browser.extensions takes).
+  knownExtensions = {
+    # uBlock Origin. Current Chromium no longer runs Manifest V2 extensions, so
+    # Chromium gets its MV3 build, uBlock Origin Lite.
+    ublock = {
+      gecko."uBlock0@raymondhill.net" = amo "ublock-origin";
+      chromium."ddkjiahejlhfcafbddmgiahcphecmpfh" = chromeWebStore;
+    };
+    # Vimium, keyboard navigation (AMO slug vimium-ff).
+    vimium = {
+      gecko."{d7742d87-e61d-4b78-b8a1-b469842139fa}" = amo "vimium-ff";
+      chromium."dbepggeogbaibhgnhhndojpepiihcmeb" = chromeWebStore;
+    };
+  };
+
+  # The official 1Password extension (AMO 1password-x-password-manager; Chrome Web
+  # Store release and beta), blocked where op-broker's extension replaces it.
+  onePasswordExtensions = {
+    gecko = [ "{d634138d-c276-4fc8-924b-40a0ea21d284}" ];
+    chromium = [
+      "aeblfdkhhhdcdjpifhhbdiojplfjncoa"
+      "khgocmkkpikpnmmkgmdnfckapcdkgfaf"
+    ];
+  };
+
+  # Default force-installed extensions: uBlock Origin and Vimium. Brave has its own
+  # ad blocker, so it takes only Vimium; ungoogled-chromium and the captive-portal
+  # browser get none, because installing from the Chrome Web Store would make them
+  # talk to Google.
   extensionDefaults = {
-    gecko = {
-      "uBlock0@raymondhill.net" = amo "ublock-origin";
-    };
-    chromium = {
-      # uBlock Origin Lite
-      "ddkjiahejlhfcafbddmgiahcphecmpfh" = chromeWebStore;
-    };
+    gecko = knownExtensions.ublock.gecko // knownExtensions.vimium.gecko;
+    chromium = knownExtensions.ublock.chromium // knownExtensions.vimium.chromium;
   };
 
   # VA-API decode/encode (Chromium ≥ 131 feature names; the same list nixpkgs'
@@ -104,8 +123,9 @@ rec {
       appName,
       family, # "gecko" | "chromium"
       searchEngine ? duckduckgo,
-      # Whether the app's package honours hardwareVideoDecoding (false for apps
-      # whose package isn't built by chromiumPackage / wrapFirefox).
+      # Whether the app's package is built here (chromiumPackage / wrapFirefox),
+      # so it honours hardwareVideoDecoding (and, Chromium family,
+      # unpackedExtensions). false for apps with their own fixed package.
       withHardwareVideoDecoding ? true,
     }:
     {
@@ -145,9 +165,23 @@ rec {
                   Web Store's is "${chromeWebStore}"; a self-hosted extension serves
                   its own updates.xml pointing at its .crx).''
             }
-            HOOK: this is where a custom password-manager / autofill extension goes
-            (do NOT add the official 1Password extension here). Set an ID to null to
-            drop a default (e.g. uBlock Origin).
+            Defaults: uBlock Origin and Vimium (per browser, see
+            lib/browser-settings.nix). ${
+              if family == "gecko" then
+                "With modules.apps.op-broker serving this browser, its XPI is added here."
+              else
+                "(op-broker's extension goes through unpackedExtensions instead.)"
+            } Set an ID to null to drop a default.
+          '';
+        };
+
+        blockedExtensions = mkOption {
+          type = types.listOf types.str;
+          default = [ ];
+          description = ''
+            Extension IDs that may not be installed (removed if already present).
+            With modules.apps.op-broker serving this browser, the official 1Password
+            extension is added.
           '';
         };
 
@@ -218,6 +252,33 @@ rec {
               else
                 "--enable-features=${lib.concatStringsSep "," vaapiFeatures}"
             }). Harmless where no VA-API driver exists (software fallback).
+          '';
+        };
+      }
+      // lib.optionalAttrs (family == "gecko") {
+        allowUnsignedExtensions = mkOption {
+          type = types.bool;
+          default = false;
+          description = ''
+            Let the browser install unsigned add-ons (the locked pref
+            xpinstall.signatures.required = false). Only builds without
+            MOZ_REQUIRE_SIGNING honour it: Developer Edition, Nightly, ESR,
+            unbranded builds and Zen, not Firefox release. On whenever
+            modules.apps.op-broker serves this browser (its XPI is unsigned).
+          '';
+        };
+      }
+      // lib.optionalAttrs (family == "chromium" && withHardwareVideoDecoding) {
+        unpackedExtensions = mkOption {
+          type = types.listOf types.str;
+          default = [ ];
+          description = ''
+            Unpacked extension directories the browser loads on every start
+            (--load-extension in the app's wrapper package; not a policy, so it
+            applies with managePolicies = false too). Works in Chromium-based
+            builds; only Google-branded Chrome dropped the switch. With
+            modules.apps.op-broker serving this browser, its extension directory is
+            added.
           '';
         };
       }
@@ -304,6 +365,12 @@ rec {
               Value = true;
               Status = "default";
             };
+          }
+          // lib.optionalAttrs b.allowUnsignedExtensions {
+            "xpinstall.signatures.required" = {
+              Value = false;
+              Status = "locked";
+            };
           };
       }
       # Passwords and payment cards live in 1Password: no built-in saving or
@@ -320,11 +387,15 @@ rec {
           Locked = true;
         };
       }
-      // lib.optionalAttrs (exts != { }) {
-        ExtensionSettings = lib.mapAttrs (_: url: {
-          installation_mode = "force_installed";
-          install_url = url;
-        }) exts;
+      // lib.optionalAttrs (exts != { } || b.blockedExtensions != [ ]) {
+        ExtensionSettings =
+          lib.genAttrs b.blockedExtensions (_: {
+            installation_mode = "blocked";
+          })
+          // lib.mapAttrs (_: url: {
+            installation_mode = "force_installed";
+            install_url = url;
+          }) exts;
       }
       # Default = applied once per change of the value (Firefox's
       # runOncePerModification), so the user can pick another engine afterwards.
@@ -354,8 +425,30 @@ rec {
       }
     ) b.policies;
 
-  # customConfig part for a Gecko browser: the default extensions, and the package
-  # with the policies baked in (wrapFirefox's extraPolicies).
+  # ── op-broker ─────────────────────────────────────────────────────────────────
+  # modules.apps.op-broker (nixos/modules/apps/op-broker.nix) as seen by one
+  # browser app: `on` when it's enabled and serves appName, and its read-only
+  # `extension` (ids, XPI, unpacked dirs). Only op-broker's own options are read,
+  # never the browser's, and only in values (mkIf conditions / option values), so
+  # it can't recurse into modules.apps; a host without that module gets `on = false`.
+  opBrokerFor =
+    config: appName:
+    let
+      opb =
+        config.modules.apps.op-broker or {
+          enable = false;
+          browsers = [ ];
+          extension = null;
+        };
+    in
+    {
+      on = opb.enable && lib.elem appName opb.browsers;
+      inherit (opb) extension;
+    };
+
+  # customConfig part for a Gecko browser: the default extensions, op-broker's
+  # extension when op-broker serves this browser, and the package with the
+  # policies baked in (wrapFirefox's extraPolicies).
   geckoConfig =
     {
       appName,
@@ -365,9 +458,19 @@ rec {
     { config, ... }:
     let
       b = config.modules.apps.${appName}.browser;
+      opb = opBrokerFor config appName;
     in
     lib.mkMerge [
       { modules.apps.${appName}.browser.extensions = lib.mapAttrs (_: lib.mkDefault) defaultExtensions; }
+      # op-broker's unsigned XPI from the store (file://), which needs signature
+      # checks off; the official 1Password extension it replaces is blocked.
+      (lib.mkIf opb.on {
+        modules.apps.${appName}.browser = {
+          extensions.${opb.extension.ids.gecko} = lib.mkDefault opb.extension.xpiUrl;
+          allowUnsignedExtensions = lib.mkDefault true;
+          blockedExtensions = onePasswordExtensions.gecko;
+        };
+      })
       (lib.mkIf b.managePolicies {
         # mkDefault: a host that sets modules.apps.<app>.package itself wins.
         modules.apps.${appName}.package = lib.mkDefault (
@@ -419,6 +522,9 @@ rec {
         // lib.optionalAttrs (exts != { }) {
           ExtensionInstallForcelist = lib.mapAttrsToList (id: url: "${id};${url}") exts;
         }
+        // lib.optionalAttrs (b.blockedExtensions != [ ]) {
+          ExtensionInstallBlocklist = b.blockedExtensions;
+        }
       ) b.policies;
 
       recommended = mergePolicies (
@@ -446,16 +552,18 @@ rec {
       "${policyRoot}/recommended/${appName}.json"
     ];
 
-  # customConfig part for a Chromium-family browser: default extensions, the
-  # per-app policy files under policyRoot, and (with mkPackage) the wrapper package
-  # built from the host's hardwareVideoDecoding.
+  # customConfig part for a Chromium-family browser: default extensions, op-broker's
+  # extension when op-broker serves this browser, the per-app policy files under
+  # policyRoot, and (with mkPackage) the wrapper package built from the host's
+  # hardwareVideoDecoding and unpackedExtensions.
   chromiumConfig =
     {
       appName,
       policyRoot, # e.g. "/etc/chromium/policies"
       extraManaged ? { },
       defaultExtensions ? extensionDefaults.chromium,
-      # { hardwareVideoDecoding } → package; null = leave the package alone.
+      # { hardwareVideoDecoding, loadExtensions } → package; null = leave the
+      # package alone.
       mkPackage ? null,
     }:
     {
@@ -468,9 +576,22 @@ rec {
       p = chromiumPolicies { inherit b extraManaged; };
       json = pkgs.formats.json { };
       etcDir = lib.removePrefix "/etc/" policyRoot;
+      opb = opBrokerFor config appName;
     in
     lib.mkMerge [
       { modules.apps.${appName}.browser.extensions = lib.mapAttrs (_: lib.mkDefault) defaultExtensions; }
+      # op-broker's extension, unpacked from the store with --load-extension (its
+      # manifest `key` pins the id; a force-install policy would need a signed CRX
+      # behind an update URL); the official 1Password extension it replaces is
+      # blocked.
+      (lib.mkIf opb.on {
+        modules.apps.${appName}.browser = {
+          blockedExtensions = onePasswordExtensions.chromium;
+        }
+        // lib.optionalAttrs (mkPackage != null) {
+          unpackedExtensions = [ opb.extension.chromiumDir ];
+        };
+      })
       (lib.mkIf b.managePolicies {
         environment.etc."${etcDir}/managed/${appName}.json".source =
           json.generate "${appName}-managed-policies.json" p.managed;
@@ -482,6 +603,7 @@ rec {
       (lib.mkIf (mkPackage != null) {
         modules.apps.${appName}.package = lib.mkDefault (mkPackage {
           hardwareVideoDecoding = b.hardwareVideoDecoding;
+          loadExtensions = b.unpackedExtensions or [ ];
         });
       })
     ];
@@ -491,6 +613,9 @@ rec {
   # ALL features go in ONE --enable-features: Chromium keeps only the last copy of a
   # repeated switch, and these flags come after the ones the nixpkgs wrapper adds
   # (so e.g. brave's own VA-API --enable-features would otherwise be dropped).
+  # loadExtensions: unpacked extension directories, in ONE --load-extension for the
+  # same reason. (No --disable-features here: it would replace the list brave's
+  # wrapper passes.)
   chromiumPackage =
     {
       pkgs,
@@ -499,11 +624,19 @@ rec {
       bin,
       hardwareVideoDecoding ? true,
       features ? [ ],
+      loadExtensions ? [ ],
     }:
     let
       allFeatures = lib.unique (
         [ "WebRtcPipeWireCapturer" ] ++ lib.optionals hardwareVideoDecoding vaapiFeatures ++ features
       );
+      loadFlag = "--load-extension=${lib.concatStringsSep "," (lib.unique loadExtensions)}";
+      flags = [
+        "--ozone-platform=wayland"
+        "--enable-features=${lib.concatStringsSep "," allFeatures}"
+        "--no-first-run"
+      ]
+      ++ lib.optional (loadExtensions != [ ]) loadFlag;
     in
     pkgs.symlinkJoin {
       inherit name;
@@ -512,7 +645,7 @@ rec {
       postBuild = ''
         rm $out/bin/${bin}
         makeWrapper ${base}/bin/${bin} $out/bin/${bin} \
-          --add-flags "--ozone-platform=wayland --enable-features=${lib.concatStringsSep "," allFeatures} --no-first-run"
+          --add-flags "${lib.concatStringsSep " " flags}"
       '';
     };
 }
