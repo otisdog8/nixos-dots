@@ -33,6 +33,12 @@
 #     filtered xdg-dbus-proxy with the (first) member's flatpak identity (portals,
 #     notifications, OpenURI), both over a vsock relay that answers only this
 #     VM's CID.
+#   - folder grants (VMs that run as the user): a second virtio-fs share of the
+#     whole home behind crosvm's dynamic path allowlist, which starts empty
+#     (lib/vm/grants.py). The broker's grant-path, and group launchers started in
+#     an undeclared folder of ~ (grantCwd), add a folder to the allowlist, and a
+#     root agent in the guest binds it at its real path. Grants last until the
+#     VM stops; "read-only" is the guest's bind only (the share allows writes).
 #
 # Security shape: the apps' code runs behind KVM; the host-side attack surface is
 # crosvm (per-device minijail processes with seccomp, the main process confined by
@@ -60,6 +66,9 @@
   projects ? [ ],
   # Extra { path; ro; } binds, absolute or home-relative (group credentials).
   extraBinds ? [ ],
+  # A launcher started outside the shared folders grants the VM its $PWD
+  # (groups: you ran the app there, which is the consent).
+  grantCwd ? false,
   network,
   memory,
   vcpus,
@@ -116,8 +125,17 @@ let
   # The sandbox broker (modules/system/sandbox-broker.nix): escapes and grants.
   broker = config.modules.sandbox.broker.enable;
   brokerName = "vm-${name}";
+  # Temporary folder grants (lib/vm/grants.py): a virtio-fs share of the user's
+  # home behind an allowlist that starts empty. Only when the VM runs as the user.
+  grants = principal == username;
+  grantCwd' = grantCwd && grants;
+  grantsPkg = import ./grants.nix pkgs;
+  crosvmFs = import ./crosvm-fs.nix pkgs;
   relayServices =
-    lib.optional audio "pulse" ++ lib.optional bus "dbus" ++ lib.optional broker "broker";
+    lib.optional audio "pulse"
+    ++ lib.optional bus "dbus"
+    ++ lib.optional broker "broker"
+    ++ lib.optional grants "grants";
   relay = relayServices != [ ];
   vsockRelay = import ./vsock-relay.nix pkgs;
   guestSockets = {
@@ -243,10 +261,12 @@ let
         target = b.source;
       }) binds;
       cwd = perCwd;
+      inherit grants;
+      # Guest sockets for the relay (the grant agent dials the host directly).
       relay = map (n: {
         name = n;
         path = guestSockets.${n};
-      }) relayServices;
+      }) (lib.remove "grants" relayServices);
     }
   );
 
@@ -284,6 +304,9 @@ let
     ''}
     ${lib.optionalString bus ''
       ${co}/install -d -m 0700 -o ${username} -g ${hostUser.group} "$rt/bus"
+    ''}
+    ${lib.optionalString grants ''
+      ${co}/install -d -m 0700 -o ${username} -g ${hostUser.group} "$rt/grants"
     ''}
     ${pkgs.openssh}/bin/ssh-keygen -q -t ed25519 -N "" -C "${unit}" -f "$rt/meta/ssh_host_ed25519_key"
     ${pkgs.openssh}/bin/ssh-keygen -q -t ed25519 -N "" -C "${username}@${unit}" -f "$rt/client/id_ed25519"
@@ -353,6 +376,14 @@ let
         echo "${unit}: the GPU backend never created its socket; see the journal of the matching ${unit}-gpu unit" >&2
         exit 1
       fi
+    ''}
+    ${lib.optionalString grants ''
+      for _ in $(${co}/seq 1 200); do [ -S "$rt/grants/fs.sock" ] && break; ${co}/sleep 0.05; done
+      if [ ! -S "$rt/grants/fs.sock" ]; then
+        echo "${unit}: the grants share never came up; see the journal of the matching ${unit}-grantsfs unit" >&2
+        exit 1
+      fi
+      args+=(--vhost-user "type=fs,socket=$rt/grants/fs.sock")
     ''}
     ${lib.optionalString nvgpu ''
       args+=(--vhost-user "type=nvgpu,socket=$rt/gpu/gpu.sock,max-queue-size=256" --no-pci-hotplug-port)
@@ -449,6 +480,66 @@ let
     )
   );
 
+  # The user: the grants share, the user's whole home behind crosvm's dynamic
+  # path allowlist, which starts empty (the guest sees nothing through it until
+  # a folder is granted). Jailed like crosvm's other devices (user/pid/mount/net
+  # namespaces, pivot_root into the home, seccomp).
+  grantsFsScript = pkgs.writeShellScript "${unit}-grantsfs" ''
+    set -euo pipefail
+    dir="''${1:-}"
+    ${idPrelude}
+    eu="$(${co}/id -u)"
+    eg="$(${co}/id -g)"
+    ${co}/rm -f "$rt/grants/fs.sock" "$rt/grants/allow.sock"
+    exec ${crosvmFs}/bin/crosvm device fs \
+      --socket-path "$rt/grants/fs.sock" \
+      --allowlist-socket-path "$rt/grants/allow.sock" \
+      --tag sbx-grants \
+      --shared-dir ${home} \
+      --cfg cache=auto,timeout=1,negative_timeout=0,posix_acl=false,security_ctx=false \
+      --uid "$eu" --gid "$eg" \
+      --uid-map "$eu $eu 1" --gid-map "$eg $eg 1"
+  '';
+
+  # The user: takes grant requests (from the launchers and the broker) and has
+  # the guest agent mount what the allowlist now lets through.
+  grantsHubScript = pkgs.writeShellScript "${unit}-grants" ''
+    set -euo pipefail
+    dir="''${1:-}"
+    ${idPrelude}
+    for _ in $(${co}/seq 1 200); do [ -S "$rt/grants/allow.sock" ] && break; ${co}/sleep 0.05; done
+    exec ${grantsPkg}/bin/sbx-grants hub --home ${home} --dir "$rt/grants"
+  '';
+
+  # For the broker (grant-path PATH rw|ro). Per-project VMs share one broker
+  # socket, so the folder goes to every running one of them.
+  grantPathsScript = pkgs.writeShellScript "${unit}-grant-path" ''
+    set -uo pipefail
+    ok=0
+    grant() {
+      ${idPrelude}
+      if ${grantsPkg}/bin/sbx-grants request "$rt/grants" "$path" "$mode"; then ok=1; fi
+    }
+    path="$1"
+    mode="''${2:-rw}"
+    ${
+      if perCwd then
+        ''
+          while read -r u; do
+            inst="''${u#${unit}-grants@}"
+            dir="$(${pkgs.systemd}/bin/systemd-escape --unescape --path -- "''${inst%.service}")"
+            grant
+          done < <(${systemctl} list-units --plain --no-legend --state=active '${unit}-grants@*.service' | ${pkgs.gawk}/bin/awk '{print $1}')
+        ''
+      else
+        ''
+          dir=""
+          grant
+        ''
+    }
+    if [ "$ok" != 1 ]; then echo "${label} isn't running, or the grant failed" >&2; exit 1; fi
+  '';
+
   # Host-GPU device nodes for the virtio-nvgpu backend: the host's
   # modules.sandbox.gpuDevices narrowing when set (multi-GPU hosts), else every
   # NVIDIA and DRM node.
@@ -480,6 +571,7 @@ let
         lib.optional audio "pulse=${hostRuntimeDir}/pulse/native"
         ++ lib.optional bus ''dbus="$rt/bus/bus.sock"''
         ++ lib.optional broker "broker=${hostRuntimeDir}/sbx-broker/${brokerName}.sock"
+        ++ lib.optional grants ''grants="$rt/grants/guest.sock"''
       )
     }
   '';
@@ -534,14 +626,28 @@ let
             dir=""
             unit="${unit}.service"
             workdir=${home}
-            ${lib.optionalString (projectDirs != [ ]) ''
-              # Start in $PWD when it's inside one of the instance's projects.
-              here="$(pwd -P)"
+            here="$(pwd -P)"
+            grantHere=0
+            ${lib.optionalString (projectDirs != [ ] || grantCwd') ''
+              # Start in $PWD when it's inside one of the instance's projects, or
+              # (grantCwd) anywhere in ~: running the app there grants the VM that folder.
               for p in ${lib.escapeShellArgs projectDirs}; do
                 case "$here/" in "$p"/*) workdir="$here" ;; esac
               done
               if [ "$workdir" = ${home} ] && [ "$here" != ${home} ]; then
-                echo "${member.bin}: $here isn't shared with ${label}; starting in ~ (projects: ${lib.concatStringsSep ", " projectDirs})" >&2
+                ${
+                  if grantCwd' then
+                    ''
+                      case "$here" in
+                        ${home}/*) workdir="$here"; grantHere=1 ;;
+                        *) echo "${member.bin}: $here is outside ~ and not shared with ${label}; starting in ~" >&2 ;;
+                      esac
+                    ''
+                  else
+                    ''
+                      echo "${member.bin}: $here isn't shared with ${label}; starting in ~ (projects: ${lib.concatStringsSep ", " projectDirs})" >&2
+                    ''
+                }
               fi
             ''}
           ''
@@ -613,6 +719,12 @@ let
         echo "${member.bin}: the VM did not come up (see: journalctl -u '$unit')" >&2
         finish 1
       fi
+      ${lib.optionalString (!perCwd && grantCwd') ''
+        if [ "$grantHere" = 1 ] && ! ${grantsPkg}/bin/sbx-grants request "$rt/grants" "$here" rw; then
+          echo "${member.bin}: couldn't give ${label} $here; starting in ~" >&2
+          workdir=${home}
+        fi
+      ''}
 
       # The guest boots from the host store, so the host's system profile (for the
       # usual CLI tools) is on the guest PATH after the members themselves (so they
@@ -697,6 +809,7 @@ let
   ]
   ++ lib.optional network' (ref "${unit}-net")
   ++ lib.optional gpuDevice (ref "${unit}-gpu")
+  ++ lib.optional grants (ref "${unit}-grantsfs")
   # Bound before the VM starts, so nothing else can hold the relay's port.
   ++ lib.optional relay (ref "${unit}-relay");
   vmmService = {
@@ -930,7 +1043,7 @@ let
   );
 
   relayService = helper (
-    afterPrep (lib.optional bus (ref "${unit}-bus"))
+    afterPrep (lib.optional bus (ref "${unit}-bus") ++ lib.optional grants (ref "${unit}-grants"))
     // {
       description = "Sandbox VM host services (vsock relay): ${label}";
       serviceConfig = {
@@ -988,6 +1101,89 @@ let
     }
   );
 
+  grantsFsService = helper (
+    afterPrep [ ]
+    // {
+      description = "Sandbox VM folder grants (virtio-fs): ${label}";
+      serviceConfig = {
+        ExecStart = "${grantsFsScript}${instArg}";
+        User = username;
+        Group = hostUser.group;
+        NoNewPrivileges = true;
+        CapabilityBoundingSet = "";
+        AmbientCapabilities = "";
+        # Only this user's home is visible (it's the share); the rest of the
+        # host is read-only and the other data trees hidden.
+        ProtectSystem = "strict";
+        ProtectHome = "tmpfs";
+        BindPaths = [ home ];
+        ReadWritePaths = [ base ];
+        InaccessiblePaths = [
+          "-/persist"
+          "-/large"
+          "-/cache"
+        ];
+        RestrictNamespaces = "user pid mnt net";
+        SystemCallFilter = [
+          "@system-service"
+          "@mount"
+          "@sandbox"
+          "~@obsolete @raw-io @reboot @swap @module @cpu-emulation @debug @clock"
+        ];
+        SystemCallErrorNumber = "EPERM";
+        PrivateTmp = true;
+        PrivateIPC = true;
+        PrivateNetwork = true;
+        PrivateDevices = true;
+        ProtectKernelTunables = true;
+        ProtectKernelModules = true;
+        ProtectKernelLogs = true;
+        ProtectControlGroups = true;
+        ProtectClock = true;
+        ProtectHostname = true;
+        LockPersonality = true;
+        RestrictRealtime = true;
+        RestrictSUIDSGID = true;
+        RestrictAddressFamilies = [ "AF_UNIX" ];
+        SystemCallArchitectures = "native";
+        UMask = "0077";
+        LimitCORE = 0;
+      };
+    }
+  );
+
+  grantsHubService = helper (
+    afterPrep [ (ref "${unit}-grantsfs") ]
+    // {
+      description = "Sandbox VM folder grants (hub): ${label}";
+      serviceConfig = {
+        ExecStart = "${grantsHubScript}${instArg}";
+        User = username;
+        Group = hostUser.group;
+        NoNewPrivileges = true;
+        CapabilityBoundingSet = "";
+        ProtectSystem = "strict";
+        ProtectHome = "read-only";
+        ReadWritePaths = [ base ];
+        PrivateTmp = true;
+        PrivateNetwork = true;
+        PrivateDevices = true;
+        ProtectKernelTunables = true;
+        ProtectKernelModules = true;
+        ProtectKernelLogs = true;
+        ProtectControlGroups = true;
+        ProtectClock = true;
+        LockPersonality = true;
+        RestrictRealtime = true;
+        RestrictSUIDSGID = true;
+        RestrictAddressFamilies = [ "AF_UNIX" ];
+        SystemCallArchitectures = "native";
+        UMask = "0077";
+        LimitCORE = 0;
+      };
+    }
+  );
+
   entryPaths = map (e: e.path) entries;
 in
 {
@@ -1011,7 +1207,11 @@ in
   // lib.optionalAttrs gui { "${unit}-wl${tmpl}" = wlService; }
   // lib.optionalAttrs gpuDevice { "${unit}-gpu${tmpl}" = gpuService; }
   // lib.optionalAttrs relay { "${unit}-relay${tmpl}" = relayService; }
-  // lib.optionalAttrs bus { "${unit}-bus${tmpl}" = busService; };
+  // lib.optionalAttrs bus { "${unit}-bus${tmpl}" = busService; }
+  // lib.optionalAttrs grants {
+    "${unit}-grantsfs${tmpl}" = grantsFsService;
+    "${unit}-grants${tmpl}" = grantsHubService;
+  };
 
   # The broker's view of this VM (modules.sandbox.broker.sandboxes.<brokerName>).
   inherit brokerName;
@@ -1020,6 +1220,7 @@ in
     netUnits = lib.optional network' (
       if perCwd then "${unit}-net@*.service" else "${unit}-net.service"
     );
+    grantPaths = if grants then "${grantPathsScript}" else null;
   };
 
   # For the polkit allowlist (modules/system/sandbox.nix): the user starts/stops

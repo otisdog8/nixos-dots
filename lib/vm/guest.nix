@@ -28,6 +28,7 @@ let
   user = sbxHost.user;
   home = "/home/${user}";
   vsockRelay = import ./vsock-relay.nix pkgs;
+  grantsPkg = import ./grants.nix pkgs;
 
   # Mount everything the spec describes. Runs as root before any SSH session.
   setup = pkgs.writeShellScript "sbx-setup" ''
@@ -124,6 +125,16 @@ let
         install -d -m 0755 -o "$user" -g "$group" "$d"
       done
       systemctl start --no-block sbx-relay.service || true
+    fi
+
+    # Folder grants (lib/vm/grants.py): the host's allowlisted view of the home,
+    # behind a root-only directory; granted folders are bound out of it by
+    # sbx-grantd at their real paths.
+    if [ "$(jq '.grants' "$spec")" = true ]; then
+      install -d -m 0700 /run/sbx/grants
+      vfs sbx-grants /run/sbx/grants/home
+      printf '%s' "$cid" > /run/sbx/grants/cid
+      systemctl start --no-block sbx-grantd.service || true
     fi
 
     # X11 apps: Xwayland on the guest's Wayland socket (guest-graphics.nix).
@@ -252,6 +263,20 @@ in
     serviceConfig = {
       User = user;
       Restart = "on-failure";
+      RestartSec = 1;
+    };
+  };
+
+  systemd.services.sbx-grantd = {
+    description = "Folder grants from the host";
+    after = [ "sbx-setup.service" ];
+    path = [ pkgs.util-linux ];
+    script = ''
+      exec ${grantsPkg}/bin/sbx-grants guest --port "$(cat /run/sbx/grants/cid)" --mount /run/sbx/grants/home \
+        --home ${home} --owner ${toString sbxHost.uid}:${toString sbxHost.gid}
+    '';
+    serviceConfig = {
+      Restart = "always";
       RestartSec = 1;
     };
   };
