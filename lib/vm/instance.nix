@@ -29,7 +29,9 @@
 #     wp_security_context_v1 socket (the -wl unit), carried by virtio-nvgpu (which
 #     also gives the guest the host GPU) or crosvm's cross-domain virtio-gpu, per
 #     modules.sandbox.vm.graphics. X11 apps get xwayland-satellite in the guest.
-#   - audio → the user's PulseAudio socket, and the members' D-Bus policy → a
+#   - audio → the sandbox broker's filtered PulseAudio socket (playback;
+#     recording only with the microphone capability, after approval), and the
+#     members' D-Bus policy → a
 #     filtered xdg-dbus-proxy with the (first) member's flatpak identity (portals,
 #     notifications, OpenURI), both over a vsock relay that answers only this
 #     VM's CID.
@@ -143,8 +145,8 @@ let
   netUnitPattern = if perCwd then "${unit}-net@*.service" else "${unit}-net.service";
 
   # ── Host services over vsock (lib/vm/vsock-relay.py) ─────────────────────────
-  # Audio: the user's PulseAudio socket (pipewire-pulse), no shm/memfd since file
-  # descriptors can't cross vsock. D-Bus: an xdg-dbus-proxy with the members' own
+  # Audio: the broker's filtered PulseAudio socket for this VM (in front of
+  # pipewire-pulse), no shm/memfd since file descriptors can't cross vsock. D-Bus: an xdg-dbus-proxy with the members' own
   # filter (the same policy the container backends apply) and a flatpak identity,
   # so the portals treat it as that sandboxed app.
   audio = anyCap "audio";
@@ -792,7 +794,12 @@ let
     ${idPrelude}
     exec ${vsockRelay}/bin/vsock-relay host --cid "$cid" ${
       lib.concatStringsSep " " (
-        lib.optional audio "pulse=${hostRuntimeDir}/pulse/native"
+        lib.optional audio "pulse=${
+          if broker then
+            "${hostRuntimeDir}/sbx-broker/${brokerName}.pulse"
+          else
+            "${hostRuntimeDir}/pulse/native"
+        }"
         ++ lib.optional bus ''dbus="$rt/bus/bus.sock"''
         ++ lib.optional broker "broker=${hostRuntimeDir}/sbx-broker/${brokerName}.sock"
         ++ lib.optional grants ''grants="$rt/grants/guest.sock"''
@@ -1546,6 +1553,16 @@ in
     netUnits = lib.optional network' netUnitPattern;
     grantPaths = if grants then "${grantPathsScript}" else null;
     camera = if camera then "${cameraCtl}" else null;
+    # The broker's PulseAudio filter (lib/broker/broker.py), which the relay's
+    # pulse service reaches: playback, and recording after approval if any
+    # member has the microphone capability.
+    audio =
+      if !audio then
+        null
+      else if anyCap "microphone" then
+        "microphone"
+      else
+        "playback";
     inherit fido;
   };
 

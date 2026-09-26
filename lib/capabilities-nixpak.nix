@@ -85,11 +85,19 @@ lib.mkMerge [
     ];
   })
 
+  # Audio: PulseAudio only, at $XDG_RUNTIME_DIR/pulse/native — the sandbox
+  # broker's filtered socket (playback; recording only with the microphone
+  # capability and your approval), which the backends put there. Never
+  # PipeWire's own socket: that is the whole media graph (every microphone,
+  # every app's sound, screen casts) with nothing in between. No shared memory:
+  # descriptors don't cross the filter.
   (lib.mkIf caps.audio {
-    bubblewrap.sockets = {
-      pulse = true;
-      pipewire = true;
-    };
+    bubblewrap.sockets.pulse = true;
+    bubblewrap.env.PULSE_CLIENTCONFIG = "${pkgs.writeText "sandbox-pulse-client.conf" ''
+      enable-shm = no
+      enable-memfd = no
+      autospawn = no
+    ''}";
   })
 
   (lib.mkIf caps.wayland {

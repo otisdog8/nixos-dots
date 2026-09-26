@@ -13,6 +13,11 @@
 #   camera                 attach the host's camera(s) to a running VM
 #   fido                   (VMs' virtual security key, not sbx-request) relay
 #                          CTAPHID to the key plugged in now
+# Sandboxes with audio also get <name>.pulse, a PulseAudio socket in front of the
+# user's (in place of pulse/native in containers; the VM relay's pulse service):
+# playback passes, recording asks (op "microphone" for rules) and only for
+# sandboxes with the microphone capability, and commands that reconfigure the
+# server or touch other clients are refused.
 # Anything no rule covers is a prompt; the answer can cover the rest of the login
 # session (capped at 12 h), except root commands.
 {
@@ -34,6 +39,7 @@ let
           "grant-path"
           "fido"
           "camera"
+          "microphone"
         ];
         default = "exec";
       };
@@ -145,6 +151,16 @@ in
               type = lib.types.nullOr lib.types.str;
               default = null;
               description = "Program that attaches a folder to the running sandbox (grant-path).";
+            };
+            audio = lib.mkOption {
+              type = lib.types.nullOr (
+                lib.types.enum [
+                  "playback"
+                  "microphone"
+                ]
+              );
+              default = null;
+              description = "The sandbox's PulseAudio socket (<name>.pulse): playback only, or recording too after approval.";
             };
             camera = lib.mkOption {
               type = lib.types.nullOr lib.types.str;

@@ -42,6 +42,9 @@ let
         };
       };
       inherit (m) gpuDevices;
+      # The group's one broker socket for audio too (bound by every member's
+      # module at the same place).
+      pulseSocketName = "sbx-broker/group-${name}.pulse";
     }).appModule;
 
   first = lib.head members;
@@ -100,6 +103,11 @@ let
 in
 {
   inherit appId;
+  # The broker's audio mode for the whole group (lib/audio-mode.nix).
+  audio = import ../audio-mode.nix {
+    audio = lib.any (m: m.appCfg.capabilities.audio) members;
+    microphone = lib.any (m: m.appCfg.capabilities.microphone) members;
+  };
   socket = "${runDir}/agent.sock";
   service = {
     description = "Sandbox group ${name} (shared container)";

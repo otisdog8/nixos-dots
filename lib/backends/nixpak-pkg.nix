@@ -50,6 +50,11 @@
   # relative to the sandbox's $XDG_RUNTIME_DIR; bound at /run/sbx/broker.sock.
   # Soft: absent when the broker isn't running. null → none.
   brokerSocketName ? null,
+  # The broker's filtered PulseAudio socket for this sandbox, relative to
+  # $XDG_RUNTIME_DIR, bound over pulse/native (same-uid apps, whose runtime dir
+  # is the user's own). null → the sandbox's own pulse/native as is (the systemd
+  # backend relays the filtered socket there itself).
+  pulseSocketName ? null,
 }:
 let
   nixpakSrc = inputs.nixpak or (builtins.throw "nixpak not available - add nixpak to flake inputs");
@@ -160,7 +165,12 @@ let
         ++ lib.optional (brokerSocketName != null) [
           (sloth.concat' sloth.runtimeDir "/${brokerSocketName}")
           "/run/sbx/broker.sock"
+        ]
+        ++ lib.optional (pulseSocketName != null && appCfg.capabilities.audio) [
+          (sloth.concat' sloth.runtimeDir "/${pulseSocketName}")
+          (sloth.concat' sloth.runtimeDir "/pulse/native")
         ];
+      bubblewrap.sockets.pulse = lib.mkIf (pulseSocketName != null) (lib.mkForce false);
     };
 
   built = mkNixPak {

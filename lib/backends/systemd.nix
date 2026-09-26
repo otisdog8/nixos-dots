@@ -205,40 +205,40 @@ let
       # right before the privilege drop (see the setpriv exec below).
       ${co}/rm -rf "${runtimeDir}"
       ${co}/mkdir -m 0700 "${runtimeDir}"
-      for __s in ${jrtRuntime}/pipewire-*; do
-        # Sockets only (the glob also matches pipewire-0.lock); __bind_checked
-        # still refuses symlinks, non-sockets and non-jrt-owned inodes.
-        [ -S "$__s" ] && [ ! -L "$__s" ] || continue
-        __n="$(${co}/basename "$__s")"
-        ${co}/touch "${runtimeDir}/$__n"
-        __bind_checked "$__s" "${runtimeDir}/$__n" S || ${co}/rm -f "${runtimeDir}/$__n" 2>/dev/null || true
-      done
+      # No PipeWire socket: it is the whole media graph (every microphone, every
+      # app's sound, screen casts). Audio goes through PulseAudio below.
       ${lib.optionalString usesWayland ''
         # Wayland: the launcher's security-context socket at the pinned name.
         # Never the raw compositor socket — if it's missing, no display at all.
         ${co}/touch "${runtimeDir}/${waylandSocket}"
         __bind_checked "${wlSock}" "${runtimeDir}/${waylandSocket}" S || ${co}/rm -f "${runtimeDir}/${waylandSocket}" 2>/dev/null || true
       ''}
-      # Pulse: bind ONLY the native socket FILE, never jrt's pulse dir. Reaching a
-      # file bound at the app's own path needs no permission on jrt's dir — which
-      # matters because jrt-side libpulse clients (pavucontrol, waybar, swayosd)
-      # redo libpulse's "secure directory" setup and chmod jrt's pulse dir back to
-      # 0700; on a dir carrying ACLs, chmod resets the ACL mask to ---, silently
-      # cutting off every dedicated app's grant (transient no-audio: cubeb EACCES).
-      # The socket inode itself is 0666, so the bind alone suffices — no ACL.
-      # Trade-off: a file bind pins the inode, so a pipewire-pulse restart needs an
-      # app relaunch (same as the pipewire-0 bind above).
-      __pn="${jrtRuntime}/pulse/native"
-      if [ -d "${jrtRuntime}/pulse" ] && [ ! -L "${jrtRuntime}/pulse" ]; then
-        # Session start can race the socket unit: give native a moment to appear.
-        for __i in $(${co}/seq 1 40); do [ -e "$__pn" ] && break; ${co}/sleep 0.05; done
-        # Cheap pre-filter; __bind_checked does the authoritative, race-free check.
-        if [ -S "$__pn" ] && [ ! -L "$__pn" ]; then
-          ${co}/mkdir -m 0700 "${runtimeDir}/pulse"
-          ${co}/touch "${runtimeDir}/pulse/native"
-          __bind_checked "$__pn" "${runtimeDir}/pulse/native" S || ${co}/rm -f "${runtimeDir}/pulse/native" 2>/dev/null || true
+      ${lib.optionalString appCfg.capabilities.audio ''
+        # Pulse: the sandbox broker's filtered socket for this app (playback;
+        # recording only with the microphone capability and your approval), or
+        # jrt's own without the broker, at the app's pulse/native.
+        # Bind ONLY the socket FILE, never jrt's pulse dir. Reaching a
+        # file bound at the app's own path needs no permission on jrt's dir — which
+        # matters because jrt-side libpulse clients (pavucontrol, waybar, swayosd)
+        # redo libpulse's "secure directory" setup and chmod jrt's pulse dir back to
+        # 0700; on a dir carrying ACLs, chmod resets the ACL mask to ---, silently
+        # cutting off every dedicated app's grant (transient no-audio: cubeb EACCES).
+        # The socket carries its own grant (the broker ACLs it to the app's uid;
+        # pipewire-pulse's is 0666), so the bind alone suffices.
+        # Trade-off: a file bind pins the inode, so restarting the broker (or
+        # pipewire-pulse) needs an app relaunch.
+        __pn="${pulseSource}"
+        if [ -d "$(${co}/dirname "$__pn")" ] && [ ! -L "$(${co}/dirname "$__pn")" ]; then
+          # Session start can race the socket unit: give native a moment to appear.
+          for __i in $(${co}/seq 1 40); do [ -e "$__pn" ] && break; ${co}/sleep 0.05; done
+          # Cheap pre-filter; __bind_checked does the authoritative, race-free check.
+          if [ -S "$__pn" ] && [ ! -L "$__pn" ]; then
+            ${co}/mkdir -m 0700 "${runtimeDir}/pulse"
+            ${co}/touch "${runtimeDir}/pulse/native"
+            __bind_checked "$__pn" "${runtimeDir}/pulse/native" S || ${co}/rm -f "${runtimeDir}/pulse/native" 2>/dev/null || true
+          fi
         fi
-      fi
+      ''}
       # Cross-uid document portal: jrt's doc FUSE lives under jrt's 0700 runtime dir
       # (the app can't traverse there), so root relays it into the app's own runtime
       # dir. Scoped to this app's by-app/<appId> subtree (NOT the whole FUSE) so the
@@ -604,6 +604,13 @@ let
   # Where the app may connect (lib/netpolicy.nix), enforced on this unit by
   # systemd's cgroup IP filter. Containers default to open; DNS goes through
   # resolved's stub on loopback, kept reachable in the restricted modes.
+  # Where the app's pulse/native comes from (runScript): the broker's filter.
+  pulseSource =
+    if config.modules.sandbox.broker.enable then
+      "${jrtRuntime}/sbx-broker/${appName}.pulse"
+    else
+      "${jrtRuntime}/pulse/native";
+
   netPolicy = (import ../netpolicy.nix { inherit lib; }).lower {
     policy = cfg.sandbox.network;
     backendDefault = "open";
@@ -661,6 +668,7 @@ in
       label = "${appName} (container)";
       uid = if dedicated then appUser else null;
       netUnits = [ "${unitName}.service" ];
+      audio = import ../audio-mode.nix appCfg.capabilities;
     };
     modules.sandbox.dnsAllow = lib.optional (netPolicy.names != [ ]) {
       units = [ "${unitName}.service" ];

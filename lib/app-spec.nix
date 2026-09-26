@@ -238,6 +238,11 @@
         default = false;
         description = "App needs a Wayland socket.";
       };
+      microphone = lib.mkOption {
+        type = lib.types.bool;
+        default = false;
+        description = "App may record audio (the microphone, or other apps' sound), each time after your approval. Without it, `audio` is playback only.";
+      };
       camera = lib.mkOption {
         type = lib.types.bool;
         default = false;

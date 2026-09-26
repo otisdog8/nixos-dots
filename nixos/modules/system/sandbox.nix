@@ -458,7 +458,11 @@ in
       n: grp: lib.nameValuePair "sbx-group-${n}" grp.service
     ) cfg.containerGroups;
     modules.sandbox.broker.sandboxes = lib.mapAttrs' (
-      n: _: lib.nameValuePair "group-${n}" { label = "${n} sandbox (container)"; }
+      n: grp:
+      lib.nameValuePair "group-${n}" {
+        label = "${n} sandbox (container)";
+        inherit (grp) audio;
+      }
     ) cfg.containerGroups;
 
     # Container mode: a group's members each get its projects and shared home

@@ -12,7 +12,7 @@
       ../../../lib/features/gui.nix
       ../../../lib/features/needs-gpu.nix
       ../../../lib/features/network.nix
-      ../../../lib/features/audio.nix
+      ../../../lib/features/microphone.nix
       ../../../lib/features/camera.nix
       ../../../lib/features/screen-capture.nix
       ../../../lib/features/xdg-desktop.nix

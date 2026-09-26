@@ -24,6 +24,12 @@ of JSON lines, the last one final:
         host's own traffic with the key.
   any refusal → {"type": "denied", "reason": "..."}; bad input → {"type": "error", ...}
 
+Audio: a sandbox with audio also gets $XDG_RUNTIME_DIR/sbx-broker/<sandbox>.pulse,
+a PulseAudio socket in front of the user's own (PulseFilter below): playback
+passes, recording (the microphone, or a monitor of what other apps play) needs
+the sandbox's microphone capability and the user's approval, and whatever
+reconfigures the sound server for everyone is refused.
+
 Every request not covered by a rule asks the user with sbx-prompt (a desktop
 dialog naming the sandbox, what it wants, and the sandbox's stated reason,
 labelled as such). Rules come from the Nix config (modules.sandbox.broker).
@@ -35,6 +41,7 @@ import json
 import os
 import select
 import shlex
+import struct
 import socket
 import stat
 import subprocess
@@ -341,10 +348,240 @@ class Broker:
         s.listen(16)
         return s
 
+    def serve_pulse(self, sandbox, s):
+        upstream = os.path.join(os.environ["XDG_RUNTIME_DIR"], "pulse", "native")
+        while True:
+            conn, _ = s.accept()
+
+            def run(conn=conn):
+                try:
+                    PulseFilter(self, sandbox, conn, upstream).run()
+                except OSError as e:
+                    log(f"{sandbox}: audio: {e}")
+                    conn.close()
+
+            threading.Thread(target=run, daemon=True).start()
+
     def serve(self, sandbox, s):
         while True:
             conn, _ = s.accept()
             threading.Thread(target=self.handle, args=(sandbox, conn), daemon=True).start()
+
+
+# ── Audio ────────────────────────────────────────────────────────────────────
+# PulseAudio's native protocol (pulsecore/native-common.h, pstream.c): packets of
+# a 20-byte descriptor (length, channel, offset hi/lo, flags; big-endian u32s)
+# and a payload. Channel 0xffffffff is a control packet, a tagstruct starting
+# with the command and its tag (both 'L' u32s); any other channel is audio.
+PA_DESC = struct.Struct("!IIIII")
+PA_CONTROL = 0xFFFFFFFF
+PA_MAX_PACKET = 16 * 1024 * 1024
+PA_ERROR, PA_REPLY, PA_CREATE_RECORD_STREAM, PA_AUTH = 0, 2, 5, 8
+PA_ERR_ACCESS = 1
+# Shared memory can't cross the filter (it forwards no descriptors), so it is
+# negotiated away in both directions of AUTH (PA_PROTOCOL_FLAG_SHM, _MEMFD).
+PA_PROTOCOL_SHM_FLAGS = 0x80000000 | 0x40000000
+# Commands that act on the server or on other clients rather than on the
+# client's own streams: refused for every sandbox.
+PA_REFUSED = {
+    7: "EXIT",
+    36: "SET_SINK_VOLUME",
+    38: "SET_SOURCE_VOLUME",
+    39: "SET_SINK_MUTE",
+    40: "SET_SOURCE_MUTE",
+    44: "SET_DEFAULT_SINK",
+    45: "SET_DEFAULT_SOURCE",
+    48: "KILL_CLIENT",
+    49: "KILL_SINK_INPUT",
+    50: "KILL_SOURCE_OUTPUT",
+    51: "LOAD_MODULE",
+    52: "UNLOAD_MODULE",
+    53: "ADD_AUTOLOAD",
+    54: "REMOVE_AUTOLOAD",
+    67: "MOVE_SINK_INPUT",
+    68: "MOVE_SOURCE_OUTPUT",
+    70: "SUSPEND_SINK",
+    71: "SUSPEND_SOURCE",
+    87: "EXTENSION",
+    90: "SET_CARD_PROFILE",
+    96: "SET_SINK_PORT",
+    97: "SET_SOURCE_PORT",
+    100: "SET_PORT_LATENCY_OFFSET",
+    104: "SEND_OBJECT_MESSAGE",
+}
+
+
+def pa_read_packet(sock):
+    """(descriptor tuple, payload), or None at EOF. Descriptors (SCM_RIGHTS)
+    are never taken: the kernel closes any that were sent."""
+    head = recv_exact(sock, PA_DESC.size)
+    if head is None:
+        return None
+    desc = PA_DESC.unpack(head)
+    if desc[0] > PA_MAX_PACKET:
+        raise ValueError("packet too large")
+    payload = recv_exact(sock, desc[0]) if desc[0] else b""
+    if payload is None:
+        return None
+    return desc, payload
+
+
+def pa_command(payload):
+    """(command, tag) of a control packet's tagstruct, or None."""
+    if len(payload) >= 10 and payload[0:1] == b"L" and payload[5:6] == b"L":
+        return struct.unpack("!I", payload[1:5])[0], struct.unpack("!I", payload[6:10])[0]
+    return None
+
+
+def pa_packet(payload):
+    return PA_DESC.pack(len(payload), PA_CONTROL, 0, 0, 0) + payload
+
+
+def pa_error(tag, error=PA_ERR_ACCESS):
+    return pa_packet(b"L" + struct.pack("!I", PA_ERROR) + b"L" + struct.pack("!I", tag) + b"L" + struct.pack("!I", error))
+
+
+def pa_clear_shm(payload, offset):
+    """Clear the shm/memfd flag bits of the 'L' u32 at payload[offset:]."""
+    if payload[offset : offset + 1] != b"L":
+        return payload
+    (v,) = struct.unpack("!I", payload[offset + 1 : offset + 5])
+    return payload[: offset + 1] + struct.pack("!I", v & ~PA_PROTOCOL_SHM_FLAGS) + payload[offset + 5 :]
+
+
+def pa_record_source(payload):
+    """The source name a CREATE_RECORD_STREAM names ('' for the default or by
+    index), from its tagstruct: sample spec, channel map, source index, name."""
+    try:
+        i = 10
+        if payload[i : i + 1] != b"a":  # sample spec: format, channels, rate
+            return ""
+        i += 1 + 1 + 1 + 4
+        if payload[i : i + 1] != b"m":  # channel map: count, positions
+            return ""
+        i += 2 + payload[i + 1]
+        if payload[i : i + 1] != b"L":  # source index
+            return ""
+        i += 5
+        if payload[i : i + 1] == b"t":
+            end = payload.index(b"\0", i + 1)
+            return payload[i + 1 : end].decode("utf-8", "replace")
+    except (IndexError, ValueError):
+        pass
+    return ""
+
+
+class PulseFilter:
+    """One sandbox client's connection to the user's PulseAudio server."""
+
+    def __init__(self, broker, sandbox, client, upstream_path):
+        self.broker = broker
+        self.sandbox = sandbox
+        self.client = client
+        self.server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM | socket.SOCK_CLOEXEC)
+        self.server.connect(upstream_path)
+        self.to_client = threading.Lock()
+        self.to_server = threading.Lock()
+        self.auth_tag = None
+        self.mic = broker.sandboxes[sandbox].get("audio") == "microphone"
+
+    def send_client(self, data):
+        with self.to_client:
+            self.client.sendall(data)
+
+    def send_server(self, data):
+        with self.to_server:
+            self.server.sendall(data)
+
+    def run(self):
+        t = threading.Thread(target=self.from_server, daemon=True)
+        t.start()
+        try:
+            self.from_client()
+        finally:
+            for s in (self.client, self.server):
+                try:
+                    s.shutdown(socket.SHUT_RDWR)
+                except OSError:
+                    pass
+            t.join(2)
+            self.client.close()
+            self.server.close()
+
+    def from_server(self):
+        try:
+            while True:
+                pkt = pa_read_packet(self.server)
+                if pkt is None:
+                    break
+                desc, payload = pkt
+                if desc[1] == PA_CONTROL:
+                    cmd = pa_command(payload)
+                    if cmd and cmd[0] == PA_REPLY and cmd[1] == self.auth_tag:
+                        payload = pa_clear_shm(payload, 10)
+                self.send_client(PA_DESC.pack(len(payload), *desc[1:]) + payload)
+        except (OSError, ValueError):
+            pass
+        finally:
+            try:
+                self.client.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
+
+    def from_client(self):
+        try:
+            while True:
+                pkt = pa_read_packet(self.client)
+                if pkt is None:
+                    break
+                desc, payload = pkt
+                if desc[1] != PA_CONTROL:
+                    if desc[4] & 0xFF000000:  # shm-referenced audio: never negotiated
+                        break
+                    self.send_server(PA_DESC.pack(*desc) + payload)
+                    continue
+                cmd = pa_command(payload)
+                if cmd is None:
+                    break
+                command, tag = cmd
+                if command == PA_AUTH:
+                    self.auth_tag = tag
+                    payload = pa_clear_shm(payload, 10)
+                elif command in PA_REFUSED:
+                    log(f"{self.sandbox}: audio: refused {PA_REFUSED[command]}")
+                    self.send_client(pa_error(tag))
+                    continue
+                elif command == PA_CREATE_RECORD_STREAM:
+                    # Decided off this thread, so the prompt doesn't stall the
+                    # connection's playback meanwhile.
+                    threading.Thread(target=self.record, args=(tag, payload), daemon=True).start()
+                    continue
+                self.send_server(pa_packet(payload))
+        except (OSError, ValueError):
+            pass
+
+    def record(self, tag, payload):
+        source = pa_record_source(payload)
+        try:
+            if not self.mic:
+                ok, why = False, "this sandbox has no microphone access"
+            else:
+                what = (
+                    f"record the sound other apps play ({source})"
+                    if source.endswith(".monitor")
+                    else "use your microphone"
+                )
+                ok, why = self.broker.decide(
+                    self.sandbox, "microphone", ("microphone", source.endswith(".monitor")), what,
+                    "until you close the app or the answer's session expires",
+                )
+            log(f"{self.sandbox}: audio: record {source or '(default source)'}: {why}")
+            if ok:
+                self.send_server(pa_packet(payload))
+            else:
+                self.send_client(pa_error(tag))
+        except OSError:
+            pass
 
 
 # ── FIDO ─────────────────────────────────────────────────────────────────────
@@ -465,9 +702,18 @@ def main():
         name: broker.bind(os.path.join(rundir, f"{name}.sock"), sb.get("uid"))
         for name, sb in config["sandboxes"].items()
     }
+    pulse = {
+        name: broker.bind(os.path.join(rundir, f"{name}.pulse"), sb.get("uid"))
+        for name, sb in config["sandboxes"].items()
+        if sb.get("audio")
+    }
     threads = []
     for name, s in sockets.items():
         t = threading.Thread(target=broker.serve, args=(name, s), daemon=True)
+        t.start()
+        threads.append(t)
+    for name, s in pulse.items():
+        t = threading.Thread(target=broker.serve_pulse, args=(name, s), daemon=True)
         t.start()
         threads.append(t)
     log(f"serving {len(threads)} sandboxes")

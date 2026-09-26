@@ -25,8 +25,11 @@ let
     stashAtHome = false;
     gpuDevices = config.modules.sandbox.gpuDevices;
     brokerSocketName = "sbx-broker/${appName}.sock";
+    pulseSocketName = if brokerOn then "sbx-broker/${appName}.pulse" else null;
   };
   binName = appCfg.packageName;
+  brokerOn = config.modules.sandbox.broker.enable;
+  audioMode = import ../audio-mode.nix;
   wlSecure = import ./wayland-security-context.nix pkgs;
   username = builtins.head appCfg.defaultUsernames;
 
@@ -122,7 +125,10 @@ in
     systemd.tmpfiles.rules = storage.tmpfilesRules;
     environment.persistence = storage.homePersistence;
     assertions = storage.assertions;
-    modules.sandbox.broker.sandboxes.${appName}.label = "${appName} (container)";
+    modules.sandbox.broker.sandboxes.${appName} = {
+      label = "${appName} (container)";
+      audio = audioMode appCfg.capabilities;
+    };
     # nixpak runs in the user's session, where systemd can't attach the cgroup IP
     # filter the other backends use, so only "open" is enforceable here.
     warnings =

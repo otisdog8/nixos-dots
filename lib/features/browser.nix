@@ -15,7 +15,7 @@ in
     ./gui.nix
     ./network.nix
     ./fido.nix
-    ./audio.nix
+    ./microphone.nix # audio out, and the mic when you allow it (WebRTC calls)
     ./screen-capture.nix
   ];
 
