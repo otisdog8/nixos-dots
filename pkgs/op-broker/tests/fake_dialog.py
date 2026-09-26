@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""Stand-in for sbx-prompt ("prompt") and op-broker-choose ("choose") in the
-tests: logs [mode, argv...] to $FAKE_DIALOG_LOG and answers from
-$FAKE_PROMPT_ANSWER (once/session/deny) or $FAKE_CHOOSE_ANSWER (an index, or
-empty to cancel)."""
+"""Stand-in for sbx-prompt ("prompt"), op-broker-choose ("choose") and
+op-broker-notice ("notice") in the tests: logs [mode, argv...] to
+$FAKE_DIALOG_LOG and answers from $FAKE_PROMPT_ANSWER (once/session/deny),
+$FAKE_CHOOSE_ANSWER (an index, or empty to cancel) or $FAKE_NOTICE_ANSWER
+(block/dismiss)."""
 
 import json
 import os
@@ -17,6 +18,10 @@ if mode == "choose":
     if ans == "":
         sys.exit(1)
     print(ans)
+    sys.exit(0)
+
+if mode == "notice":
+    print(os.environ.get("FAKE_NOTICE_ANSWER", "dismiss"))
     sys.exit(0)
 
 ans = os.environ.get("FAKE_PROMPT_ANSWER", "deny")

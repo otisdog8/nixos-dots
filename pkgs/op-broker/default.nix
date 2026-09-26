@@ -1,6 +1,7 @@
 # op-broker: per-item 1Password autofill for sandboxed browsers (docs/op-broker.md).
 #
-#   broker      bin/op-broker (serve | uplink | bridge) and bin/op-broker-choose.
+#   broker      bin/op-broker (serve | uplink | bridge), bin/op-broker-choose
+#               (which login?) and bin/op-broker-notice (possible probing).
 #               Runs next to 1Password, never in a browser sandbox.
 #   nativeHost  bin/op-broker-native-host plus its manifests, for the browser
 #               sandbox: lib/mozilla/native-messaging-hosts/ (Firefox family,
@@ -50,6 +51,7 @@ let
         ./op_broker.py
         ./native_host.py
         ./choose.sh
+        ./notice.sh
         ./tests
       ];
     };
@@ -73,6 +75,8 @@ let
       ${pyScript "op-broker" "op_broker.py"}
       install -Dm755 /dev/null $out/bin/op-broker-choose
       { echo "#!${bash}/bin/bash"; sed 's|@zenity@|${zenity}/bin/zenity|g' choose.sh; } > $out/bin/op-broker-choose
+      install -Dm755 /dev/null $out/bin/op-broker-notice
+      { echo "#!${bash}/bin/bash"; sed 's|@zenity@|${zenity}/bin/zenity|g' notice.sh; } > $out/bin/op-broker-notice
       runHook postInstall
     '';
     meta = {

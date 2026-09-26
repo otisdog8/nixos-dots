@@ -229,6 +229,18 @@ def match_rank(origin, item):
     return 0 if origin.host == item.host else 1
 
 
+def best_match(origin, urls, mode):
+    """(rank, saved Origin) of an item's best-matching saved URL for `origin`,
+    or None. Rank 0 is the page's own host, 1 a subdomain of the saved host."""
+    best = None
+    for u in urls:
+        if url_matches(origin, u, mode):
+            r = match_rank(origin, u)
+            if best is None or r < best[0]:
+                best = (r, u)
+    return best
+
+
 # ── Display ──────────────────────────────────────────────────────────────────
 
 
@@ -497,6 +509,72 @@ class Limiter:
             if st:
                 st["denials"] = 0
 
+    def block(self, who, seconds, now=None):
+        """Refuse every request from `who` (as a cooldown) for `seconds`."""
+        now = time.monotonic() if now is None else now
+        with self.lock:
+            st = self._st(who, now)
+            st["until"] = max(st["until"], now + seconds)
+
+
+class ProbeWatch:
+    """Notices a requester that looks like it is probing which sites have a
+    saved login: several different origins with no match in a short window, or
+    hitting the rate limit. A `no-match` answer needs no dialog, so without this
+    a compromised browser could enumerate your accounts silently (at the rate
+    limit). The notice is itself rate-limited per requester, so it can't be used
+    to flood the screen either."""
+
+    def __init__(self, cfg):
+        self.distinct = max(1, int(cfg.get("distinct", 4)))
+        self.window = float(cfg.get("window", 120))
+        self.interval = float(cfg.get("interval", 600))
+        self.lock = threading.Lock()
+        self.seen = {}  # who -> deque[(t, origin)]
+        self.last = {}  # who -> time of the last notice
+
+    def _recent(self, who, now, origin):
+        dq = self.seen.setdefault(who, collections.deque())
+        if origin is not None:
+            dq.append((now, str(origin)))
+        while dq and (now - dq[0][0] > self.window or len(dq) > 256):
+            dq.popleft()
+        out = []
+        for _, o in dq:
+            if o in out:
+                out.remove(o)
+            out.append(o)
+        return out  # distinct, oldest first
+
+    def _due(self, who, now):
+        last = self.last.get(who)
+        if last is not None and now - last < self.interval:
+            return False
+        self.last[who] = now
+        return True
+
+    def miss(self, who, origin, now=None):
+        """A no-match for `origin`. Returns the distinct recent origins when a
+        notice is due, else None."""
+        now = time.monotonic() if now is None else now
+        with self.lock:
+            recent = self._recent(who, now, origin)
+            if len(recent) >= self.distinct and self._due(who, now):
+                return recent
+            return None
+
+    def limited(self, who, origin, now=None):
+        """A request refused by the rate limit: worth a notice by itself (at
+        most one per interval). Returns the recent no-match origins plus this
+        one (whose match wasn't looked up)."""
+        now = time.monotonic() if now is None else now
+        with self.lock:
+            recent = self._recent(who, now, None)
+            if not self._due(who, now):
+                return None
+            o = str(origin)
+            return [x for x in recent if x != o] + [o]
+
 
 class Sessions:
     """"Allow until it stops" answers. A requester's session lasts while it has a
@@ -577,9 +655,15 @@ class Broker:
         self.allow_session = bool(prompt.get("allowSession", True))
         self.queue_wait = float(prompt.get("queueWait", 5))
         self.max_candidates = int(prompt.get("maxCandidates", 12))
+        # The probing notice (op-broker-notice); none configured: audit only.
+        self.notice_cmd = list(prompt.get("notice") or [])
         limits = cfg.get("limits") or {}
         self.limiter = Limiter(limits)
         self.sessions = Sessions(limits)
+        probe = cfg.get("probe") or {}
+        self.probes = ProbeWatch(probe)
+        self.probe_block = float(probe.get("block", 3600))
+        self.notice_lock = threading.Lock()  # one notice on screen at a time
         self.op = op or Op(dict(cfg["op"], listCacheTtl=limits.get("listCacheTtl", 60)), token=token)
         self.dialog = threading.Lock()  # one dialog on screen at a time
         self.inflight_lock = threading.Lock()
@@ -635,6 +719,60 @@ class Broker:
         idx = int(out)
         return idx if 0 <= idx < len(options) else None
 
+    # ── Probing notice ──
+    def _probe_notice(self, who, origins, why):
+        """Tell the user `who` looks like it's probing for saved logins. Runs in
+        the background (the request is answered meanwhile); at most one notice
+        per requester per interval (ProbeWatch) and one on screen at a time."""
+        shown = origins[-8:]
+        audit("probe-notice", requester=who, reason=why, origins=shown, count=len(origins))
+        if not self.notice_cmd:
+            return None
+        if why == "rate-limited":
+            summary = "sent more login requests than a person filling forms would"
+        else:
+            summary = "asked for logins on several sites that have none saved"
+        mins = max(1, round(self.probes.window / 60))
+        lines = [
+            "This can mean it is probing which sites you have accounts on.",
+            "Nothing was filled. All it learned is that no login is saved for:",
+        ]
+        lines += [f"  {o}" for o in shown]
+        if len(origins) > len(shown):
+            lines.append(f"  … and {len(origins) - len(shown)} more")
+        lines.append(f"({len(origins)} sites in the last {mins} min.)")
+        if why == "rate-limited":
+            lines.append("The request that hit the limit was refused without a lookup.")
+        detail = "\n".join(lines)
+
+        def run():
+            if not self.notice_lock.acquire(blocking=False):
+                return
+            try:
+                argv = list(self.notice_cmd) + ["--timeout", str(max(self.prompt_timeout, 120))]
+                argv += ["--", self.label(who), summary, detail]
+                try:
+                    p = subprocess.run(
+                        argv,
+                        stdin=subprocess.DEVNULL,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.DEVNULL,
+                        timeout=max(self.prompt_timeout, 120) + 15,
+                        close_fds=True,
+                    )
+                    answer = p.stdout.decode("ascii", "replace").strip()
+                except (OSError, subprocess.TimeoutExpired):
+                    answer = ""
+                if answer == "block":
+                    self.limiter.block(who, self.probe_block)
+                    audit("probe-block", requester=who, seconds=self.probe_block)
+            finally:
+                self.notice_lock.release()
+
+        t = threading.Thread(target=run, daemon=True)
+        t.start()
+        return t
+
     def handle(self, who, req, peer=None):
         """Serve one parsed request for requester `who`. Returns the reply dict."""
         if req["op"] == "hello":
@@ -659,26 +797,35 @@ class Broker:
         limited = self.limiter.take(who)
         if limited:
             audit("fill", decision=limited, **base)
+            if limited == "rate-limited":
+                recent = self.probes.limited(who, origin)
+                if recent:
+                    self._probe_notice(who, recent, "rate-limited")
             return {"ok": False, "error": limited}
         try:
             items = self.op.list_logins()
         except OpError as e:
             audit("fill", decision="unavailable", reason=str(e), **base)
             return {"ok": False, "error": "unavailable"}
+        # Candidates: (item, rank, the saved URL it matched on). Rank 0 is the
+        # page's own host, 1 a subdomain of the saved host (shown as such).
         cands = []
         for it in items:
-            ranks = [match_rank(origin, u) for u in it[5] if url_matches(origin, u, self.mode)]
-            if ranks:
-                cands.append((min(ranks), it[3].lower(), it))
+            m = best_match(origin, it[5], self.mode)
+            if m is not None:
+                cands.append((m[0], it[3].lower(), (it, m[0], m[1])))
         cands.sort(key=lambda c: (c[0], c[1]))
         cands = [c[2] for c in cands]
         if not cands:
             audit("fill", decision="no-match", **base)
+            recent = self.probes.miss(who, origin)
+            if recent:
+                self._probe_notice(who, recent, "no-match")
             return {"ok": False, "error": "no-match"}
 
         # A standing "until it stops" grant for exactly one candidate fills
         # without asking again.
-        granted = [c for c in cands if self.sessions.covers(who, c[0], origin, want)]
+        granted = [c for c in cands if self.sessions.covers(who, c[0][0], origin, want)]
         if len(granted) == 1:
             return self._deliver(who, granted[0], origin, want, "session-cached", base)
 
@@ -689,17 +836,19 @@ class Broker:
             chosen = cands[0]
             if len(cands) > 1:
                 shown = cands[: self.max_candidates]
-                opts = [self._describe(c) for c in shown]
+                opts = [self._option(c, origin) for c in shown]
                 text = f"Choose the login to fill on {origin}" + (
                     f" (embedded in {top})" if top is not None else ""
                 )
+                if any(c[1] for c in shown):
+                    text += "\nLogins marked SUBDOMAIN are saved for a parent site of this page."
                 idx = self._choose(who, text, opts)
                 if idx is None:
                     self._denied(who)
                     audit("fill", decision="deny", stage="choose", candidates=len(cands), **base)
                     return {"ok": False, "error": "denied"}
                 chosen = shown[idx]
-            if self.sessions.covers(who, chosen[0], origin, want):
+            if self.sessions.covers(who, chosen[0][0], origin, want):
                 answer = "session-cached"
             else:
                 answer = self._prompt(who, *self._prompt_text(chosen, origin, top, want))
@@ -707,11 +856,11 @@ class Broker:
             self.dialog.release()
         if answer == "deny":
             self._denied(who)
-            audit("fill", decision="deny", item=chosen[0], title=chosen[3], **base)
+            audit("fill", decision="deny", item=chosen[0][0], title=chosen[0][3], **base)
             return {"ok": False, "error": "denied"}
         self.limiter.allowed(who)
         if answer == "session":
-            self.sessions.grant(who, chosen[0], origin, want)
+            self.sessions.grant(who, chosen[0][0], origin, want)
         return self._deliver(who, chosen, origin, want, answer, base)
 
     def _denied(self, who):
@@ -721,23 +870,48 @@ class Broker:
     def _describe(self, it):
         return f"{it[3]} ({it[4]})" if it[4] else it[3]
 
-    def _prompt_text(self, it, origin, top, want):
+    def _option(self, cand, origin):
+        """A chooser row: the item, and whether it only matched as a subdomain."""
+        it, rank, saved = cand
+        text = self._describe(it)
+        if rank:
+            text += f"  [SUBDOMAIN: saved for {saved.host}, page is {origin.host}]"
+        return text
+
+    def _prompt_text(self, cand, origin, top, want):
+        it, rank, saved = cand
         fields = ", ".join(FIELD_NAMES[f] for f in FIELDS if f in want)
         summary = f'fill the 1Password login "{self._describe(it)}" on {origin}'
-        lines = [f"Fields: {fields}", f"Vault: {it[2] or '?'}"]
+        lines = []
+        if rank:
+            # Subdomain matching is on by default; make it impossible to miss.
+            summary += f"\n  SUBDOMAIN MATCH: saved for {saved.host}, not for {origin.host}"
+            lines.append(
+                f"This login is saved for {saved}; the page is on {origin.host}, a subdomain of it."
+            )
+        lines += [f"Fields: {fields}", f"Vault: {it[2] or '?'}"]
         if top is not None:
             lines.append(f"The login form is embedded in a page from {top}.")
-        saved = ", ".join(str(u) for u in it[5][:3])
-        lines.append(f"Saved for: {saved}")
+        saved_all = ", ".join(str(u) for u in it[5][:3])
+        lines.append(f"Saved for: {saved_all}")
         return summary, "\n".join(lines)
 
-    def _deliver(self, who, it, origin, want, how, base):
+    def _deliver(self, who, cand, origin, want, how, base):
+        it, rank, _ = cand
         try:
             got = self.op.get_fields(it[0], it[1], want)
         except OpError as e:
             audit("fill", decision="unavailable", item=it[0], reason=str(e), **base)
             return {"ok": False, "error": "unavailable"}
-        audit("fill", decision=how, item=it[0], title=it[3], delivered=sorted(got), **base)
+        audit(
+            "fill",
+            decision=how,
+            item=it[0],
+            title=it[3],
+            match="subdomain" if rank else "exact",
+            delivered=sorted(got),
+            **base,
+        )
         reply = {"ok": True, "title": it[3]}
         reply.update(got)
         return reply

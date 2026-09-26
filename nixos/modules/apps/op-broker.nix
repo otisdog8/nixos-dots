@@ -109,6 +109,7 @@ let
     prompt = {
       command = [ "${sbxPrompt}/bin/sbx-prompt" ];
       chooser = [ "${opb.broker}/bin/op-broker-choose" ];
+      notice = lib.optional cfg.probe.notice "${opb.broker}/bin/op-broker-notice";
       inherit (cfg.prompt) timeout allowSession;
       queueWait = 5;
     };
@@ -116,6 +117,14 @@ let
       inherit (cfg.match) mode allowHttp;
     };
     limits = cfg.limits;
+    probe = {
+      inherit (cfg.probe)
+        distinct
+        window
+        interval
+        block
+        ;
+    };
     audit.file = if cfg.auditFile then "/var/lib/op-broker/audit.jsonl" else null;
   };
   configFile = pkgs.writeText "op-broker.json" (
@@ -345,7 +354,8 @@ in
         description = ''
           "exact": the page's host must equal the saved host. "subdomain": it may
           also be a subdomain of it (saved github.com fills on gist.github.com,
-          never the reverse).
+          never the reverse); such a match is marked SUBDOMAIN in the chooser
+          and the approval dialog.
         '';
       };
       allowHttp = lib.mkOption {
@@ -398,6 +408,40 @@ in
         the item list (metadata only) is cached; how long a session grant
         outlives the browser's last connection, and its hard maximum.
       '';
+    };
+
+    probe = {
+      notice = lib.mkOption {
+        type = lib.types.bool;
+        default = true;
+        description = ''
+          Show a notice (with a "block it for an hour" button) when a browser
+          looks like it is probing which sites have a saved login: `distinct`
+          different sites with no saved login within `window` seconds, or
+          hitting the rate limit. At most one notice per browser per `interval`
+          seconds. Off: the events are still in the audit log.
+        '';
+      };
+      distinct = lib.mkOption {
+        type = lib.types.ints.positive;
+        default = 4;
+        description = "Different no-login sites within `window` that count as probing.";
+      };
+      window = lib.mkOption {
+        type = lib.types.ints.positive;
+        default = 120;
+        description = "Seconds of no-login requests considered together.";
+      };
+      interval = lib.mkOption {
+        type = lib.types.ints.positive;
+        default = 600;
+        description = "Minimum seconds between two notices about the same browser.";
+      };
+      block = lib.mkOption {
+        type = lib.types.ints.positive;
+        default = 3600;
+        description = "Seconds the notice's block button refuses that browser's requests for.";
+      };
     };
 
     auditFile = lib.mkOption {

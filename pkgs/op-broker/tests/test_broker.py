@@ -108,6 +108,7 @@ class Env:
         os.environ["FAKE_DIALOG_LOG"] = self.dialog_log
         os.environ["FAKE_PROMPT_ANSWER"] = "once"
         os.environ["FAKE_CHOOSE_ANSWER"] = "0"
+        os.environ["FAKE_NOTICE_ANSWER"] = "dismiss"
         ob.audit = ob.Audit(self.audit)
         sockdir = os.path.join(self.dir, "clients")
         os.makedirs(os.path.join(sockdir, "firefox"))
@@ -132,10 +133,12 @@ class Env:
             "prompt": {
                 "command": [sys.executable, FAKE_DIALOG, "prompt"],
                 "chooser": [sys.executable, FAKE_DIALOG, "choose"],
+                "notice": [sys.executable, FAKE_DIALOG, "notice"],
                 "timeout": 5,
                 "queueWait": 1,
             },
             "limits": {"burst": 50, "perMinute": 600, "listCacheTtl": 0},
+            "probe": {"distinct": 4, "window": 120, "interval": 600, "block": 3600},
         }
         for k, v in over.items():
             if isinstance(v, dict):
@@ -151,6 +154,16 @@ class Env:
 
     def choosers(self):
         return [l for l in lines(self.dialog_log) if l[0] == "choose"]
+
+    def notices(self, want=None, wait=3.0):
+        """The notices shown so far. They run in the background: with `want`,
+        wait (bounded) until that many have been logged."""
+        deadline = time.monotonic() + wait
+        while True:
+            got = [l for l in lines(self.dialog_log) if l[0] == "notice"]
+            if want is None or len(got) >= want or time.monotonic() > deadline:
+                return got
+            time.sleep(0.05)
 
 
 def fill(broker, who, origin, want=("username", "password"), top=None):
@@ -424,11 +437,135 @@ class TestBroker(unittest.TestCase):
             self.assertEqual(fill(self.b, "firefox", origin)["error"], "no-match", origin)
         self.assertEqual(self.env.prompts(), [])
         self.assertEqual(self.env.choosers(), [])
+        # Three sites is below the probing threshold.
+        self.assertEqual(self.env.notices(wait=0.3), [])
 
     def test_subdomain_and_exact(self):
         self.assertTrue(fill(self.b, "firefox", "https://a.login.example.com")["ok"])
         env = Env(match={"mode": "exact"})
         self.assertEqual(fill(env.broker(), "firefox", "https://a.login.example.com")["error"], "no-match")
+
+    def test_subdomain_match_is_called_out(self):
+        # Exact host: no marker.
+        fill(self.b, "firefox", "https://login.example.com")
+        summary, detail = self.env.prompts()[0][-2:]
+        self.assertNotIn("SUBDOMAIN", summary)
+        self.assertNotIn("subdomain", detail)
+        # Subdomain of the saved host: in the summary line, and explained.
+        fill(self.b, "firefox", "https://a.login.example.com")
+        summary, detail = self.env.prompts()[1][-2:]
+        self.assertIn("on https://a.login.example.com", summary)
+        self.assertIn("SUBDOMAIN MATCH: saved for login.example.com, not for a.login.example.com", summary)
+        self.assertTrue(detail.startswith("This login is saved for https://login.example.com; the page is on a.login.example.com"))
+        match = [l["match"] for l in lines(self.env.audit) if l["event"] == "fill" and "match" in l]
+        self.assertEqual(match, ["exact", "subdomain"])
+
+    def test_subdomain_in_chooser(self):
+        env = Env()
+        # A third GitHub login saved for gist.github.com itself: exact, so first.
+        db = json.loads(open(env.db).read())
+        db.append(
+            {
+                "id": "f" * 26,
+                "title": "Gist",
+                "category": "LOGIN",
+                "vault": {"id": V1, "name": "Personal"},
+                "urls": [{"href": "https://gist.github.com"}],
+                "fields": [{"id": "password", "purpose": "PASSWORD", "value": "gist-pw"}],
+            }
+        )
+        with open(env.db, "w") as f:
+            json.dump(db, f)
+        os.environ["FAKE_CHOOSE_ANSWER"] = "1"
+        r = fill(env.broker(), "firefox", "https://gist.github.com")
+        self.assertEqual(r["username"], "jacob")
+        ch = env.choosers()[0]
+        text = ch[ch.index("--") + 2]
+        opts = ch[ch.index("--") + 3 :]
+        self.assertIn("SUBDOMAIN", text)
+        self.assertEqual(
+            opts,
+            [
+                "Gist",
+                "GitHub (jacob)  [SUBDOMAIN: saved for github.com, page is gist.github.com]",
+                "GitHub ?evil (jacob-work)  [SUBDOMAIN: saved for github.com, page is gist.github.com]",
+            ],
+        )
+        self.assertIn("SUBDOMAIN MATCH: saved for github.com, not for gist.github.com", env.prompts()[0][-2])
+
+    # ── Probing notice ──
+
+    def test_probe_notice(self):
+        for i in range(3):
+            self.assertEqual(fill(self.b, "firefox", f"https://site{i}.test")["error"], "no-match")
+        # The same site again doesn't count twice.
+        fill(self.b, "firefox", "https://site0.test")
+        self.assertEqual(self.env.notices(wait=0.3), [])
+        fill(self.b, "firefox", "https://site3.test")
+        n = self.env.notices(want=1)
+        self.assertEqual(len(n), 1)
+        argv = n[0][1:]
+        who, summary, detail = argv[argv.index("--") + 1 :]
+        self.assertEqual(who, "Firefox (test)")
+        self.assertIn("several sites", summary)
+        for i in range(4):
+            self.assertIn(f"https://site{i}.test", detail)
+        # Rate-limited: more misses within the interval show nothing new.
+        for i in range(4, 10):
+            fill(self.b, "firefox", f"https://site{i}.test")
+        self.assertEqual(len(self.env.notices(want=2, wait=0.5)), 1)
+        # Per requester.
+        for i in range(4):
+            fill(self.b, "chromium", f"https://other{i}.test")
+        self.assertEqual(len(self.env.notices(want=2)), 2)
+        # Nothing was prompted or fetched, and the audit has the events.
+        self.assertEqual(self.env.prompts(), [])
+        ev = [l for l in lines(self.env.audit) if l["event"] == "probe-notice"]
+        self.assertEqual([e["requester"] for e in ev], ["firefox", "chromium"])
+
+    def test_probe_notice_after_interval(self):
+        w = ob.ProbeWatch({"distinct": 2, "window": 100, "interval": 50})
+        self.assertIsNone(w.miss("x", "https://a.test", now=0))
+        self.assertEqual(w.miss("x", "https://b.test", now=1), ["https://a.test", "https://b.test"])
+        self.assertIsNone(w.miss("x", "https://c.test", now=2))
+        # Outside the window the old ones are forgotten.
+        self.assertIsNone(w.miss("x", "https://d.test", now=200))
+        self.assertEqual(w.miss("x", "https://e.test", now=201), ["https://d.test", "https://e.test"])
+
+    def test_probe_block(self):
+        os.environ["FAKE_NOTICE_ANSWER"] = "block"
+        for i in range(4):
+            fill(self.b, "firefox", f"https://site{i}.test")
+        self.env.notices(want=1)
+        deadline = time.monotonic() + 3
+        while time.monotonic() < deadline:
+            if fill(self.b, "firefox", "https://login.example.com").get("error") == "cooldown":
+                break
+            time.sleep(0.05)
+        self.assertEqual(fill(self.b, "firefox", "https://login.example.com")["error"], "cooldown")
+        self.assertTrue(fill(self.b, "chromium", "https://login.example.com")["ok"])
+        self.assertTrue([l for l in lines(self.env.audit) if l["event"] == "probe-block"])
+
+    def test_rate_limit_notice(self):
+        env = Env(limits={"burst": 2, "perMinute": 0.0001})
+        b = env.broker()
+        codes = [fill(b, "firefox", f"https://s{i}.test").get("error") for i in range(4)]
+        self.assertEqual(codes, ["no-match", "no-match", "rate-limited", "rate-limited"])
+        n = env.notices(want=1)
+        self.assertEqual(len(n), 1)
+        summary, detail = n[0][-2:]
+        self.assertIn("more login requests", summary)
+        self.assertIn("https://s2.test", detail)
+        self.assertEqual(len(env.notices(want=2, wait=0.3)), 1)
+
+    def test_no_notice_command(self):
+        env = Env()
+        env.cfg["prompt"]["notice"] = []
+        b = env.broker()
+        for i in range(5):
+            fill(b, "firefox", f"https://site{i}.test")
+        self.assertEqual(env.notices(wait=0.3), [])
+        self.assertTrue([l for l in lines(env.audit) if l["event"] == "probe-notice"])
 
     def test_http_needs_allow_http(self):
         with self.assertRaises(ob.BadRequest):
