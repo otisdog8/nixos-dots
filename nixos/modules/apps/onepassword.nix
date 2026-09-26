@@ -68,6 +68,10 @@
         { config, lib, ... }:
         {
           modules.apps.onepassword.sandbox.dedicatedUser = true;
+          # In its VM by default: only there can the app authorize op-broker's
+          # `op` and offer system authentication (docs/op-broker.md, "Why not
+          # the container"); the container stays available per host.
+          modules.apps.onepassword.sandbox.mode = lib.mkDefault "vm";
           users.users."app-onepassword".extraGroups = [
             "video"
             "audio"
