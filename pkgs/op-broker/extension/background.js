@@ -134,12 +134,22 @@ async function fillTab(tab, frameId) {
     if (top.protocol !== "https:" && top.protocol !== "http:") {
       return feedback(tabId, false, "unsupported-page");
     }
-    const target = frameTarget(tabId, frameId);
-    await api.scripting.executeScript({ target, files: ["content.js"] });
-    const results = await api.scripting.executeScript({
-      target,
-      func: () => globalThis.__opBroker.detect(),
-    });
+    const detect = async (target) => {
+      await api.scripting.executeScript({ target, files: ["content.js"] });
+      return api.scripting.executeScript({
+        target,
+        func: () => globalThis.__opBroker.detect(),
+      });
+    };
+    let results;
+    try {
+      results = await detect(frameTarget(tabId, frameId));
+    } catch (e) {
+      // activeTab covers the tab's own origin; if a frame we may not touch
+      // makes the all-frames injection fail, fall back to the top frame.
+      if (frameId !== undefined) throw e;
+      results = await detect({ tabId, frameIds: [0] });
+    }
     const best = pickFrame(results);
     if (!best) return feedback(tabId, false, "no-form");
     const found = best.result;
