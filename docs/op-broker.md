@@ -10,7 +10,12 @@ the user approves that one item, for the origin the dialog shows, and the approv
 comes from a component the browser can't reach.
 
 Code: `pkgs/op-broker/` (broker, native host, extension, tests).
-NixOS: `nixos/modules/apps/op-broker.nix` (`modules.apps.op-broker`, off by default).
+NixOS: `nixos/modules/apps/op-broker.nix` (`modules.apps.op-broker`), on by default
+where 1Password runs in its VM, for every supported browser that is enabled.
+1Password's own authorization of the broker (and its system-authentication unlock):
+`nixos/modules/apps/onepassword-system-auth.nix`, see *1Password's own prompt and
+system authentication* below. **1Password in its container can't serve op-broker**
+(nor use system authentication): see *1Password in its container* below.
 
 ```
  browser sandbox (container or VM)            │  1Password's trust domain (app-onepassword / 1Password VM)
@@ -71,11 +76,19 @@ What it can get:
   origin (and no more fields than approved) again without a dialog until its
   session ends (below). The same compromise could then refetch it; that is the
   trade-off the button makes, and the default "Allow once" doesn't.
-- **Metadata oracle, rate-limited:** a `no-match` answer (no dialog) reveals that
-  no item is saved for an origin, so a compromised browser can probe which sites
-  you have logins for. Every probe costs a token (default burst 5, 10/min,
-  120/hour per requester) and is logged; probing the top 1000 sites takes over
-  8 hours. Titles and usernames are never returned without approval.
+- **Metadata oracle, rate-limited and visible:** a `no-match` answer (no dialog)
+  reveals that no item is saved for an origin, so a compromised browser can probe
+  which sites you have logins for. Every probe costs a token (default burst 5,
+  10/min, 120/hour per requester) and is logged; probing the top 1000 sites takes
+  over 8 hours. And it doesn't stay silent: 4 different no-login sites within 2
+  minutes, or hitting the rate limit, shows a notice naming the browser and the
+  sites (see *Probing notice*). Titles and usernames are never returned without
+  approval.
+- **Subdomain matches are labelled.** With the default `subdomain` matching, a
+  login saved for `github.com` is offered on `gist.github.com`; the chooser and the
+  approval dialog then say `SUBDOMAIN MATCH: saved for github.com, not for
+  gist.github.com`, so a login offered on a subdomain you don't trust (user
+  content, a takeover) is visible as such.
 - Nothing else: no listing, no search, no item ids, no vault names, no session,
   no `op` command line. The protocol has two operations (`hello`, `fill`).
 
@@ -187,7 +200,13 @@ Items match on their saved URLs, parsed leniently (`github.com` means
   `login.example.com` never fills on `example.com` or `evil.example.com`;
   `github.com.evil.com` never matches). There's no public-suffix list in the
   stdlib, so single-label hosts and IPs match exactly only. `"exact"` turns
-  subdomains off.
+  subdomains off. Subdomain matching stays the default (a decision: logins saved
+  for `example.com` should work on `accounts.example.com`), but such a match is
+  always **labelled**: chooser rows get `[SUBDOMAIN: saved for github.com, page is
+  gist.github.com]` (with a line explaining the tag), and the approval dialog's
+  summary line carries `SUBDOMAIN MATCH: saved for github.com, not for
+  gist.github.com` plus an explanation as the first detail line. The audit log
+  records `match: exact|subdomain`.
 
 Candidates are ordered exact-host first, then by title. One candidate → the
 approval dialog. Several → `op-broker-choose` (a zenity list with the requester
@@ -206,6 +225,18 @@ Firefox asks to:
   Vault: Personal
   The login form is embedded in a page from https://news.example.   (only if top ≠ origin)
   Saved for: https://github.com
+```
+
+A subdomain match (page `https://gist.github.com`, login saved for `github.com`):
+
+```
+Firefox asks to:
+  fill the 1Password login "GitHub (jacob)" on https://gist.github.com
+    SUBDOMAIN MATCH: saved for github.com, not for gist.github.com
+
+  This login is saved for https://github.com; the page is on gist.github.com, a subdomain of it.
+  Fields: username, password
+  ...
 ```
 
 REQUESTER is the broker's label for the socket. Titles and usernames come from the
@@ -232,18 +263,77 @@ misses and session fills all cost a token. One in-flight fill per requester
 `busy`). After `denyLimit` (3) denials or timeouts in a row: `cooldown` for
 `denyCooldown` (300 s). All in `modules.apps.op-broker.limits`.
 
+### Probing notice
+
+A `no-match` answer needs no dialog, so on its own a compromised browser could
+check which sites have a saved login without the user ever noticing. The broker
+watches each requester (`ProbeWatch`): **4 different origins with no saved login
+within 2 minutes** (repeats of the same origin don't count), or **hitting the rate
+limit**, is treated as probing. A person filling forms does neither: each request
+needs a user gesture on a page with a login form, and a no-login site means they
+tried the extension where they have no account.
+
+It then shows `op-broker-notice` in the background (the request is answered
+meanwhile): "Firefox asked for logins on several sites that have none saved",
+the sites (the last 8, canonical origins the broker validated), how many, and that
+nothing was filled. It can't be used to spam the screen: **at most one notice per
+requester per 10 minutes, and one notice on screen at a time** (another is simply
+skipped). Its one choice besides Dismiss is **Block it for an hour** (every request
+from that requester answers `cooldown`). Each notice and block is in the audit log
+(`probe-notice`, `probe-block`). Thresholds: `modules.apps.op-broker.probe`
+(`distinct`, `window`, `interval`, `block`; `notice = false` keeps only the audit
+events).
+
+Whether a request followed a user gesture isn't knowable to the broker: the
+extension only sends on one, but a compromised browser can send anything.
+
 ### Audit log
 
 One JSON line per event on stderr (the journal: `journalctl -u op-broker`) and
 in `/var/lib/op-broker/audit.jsonl` (0600, app-onepassword): time, requester,
 peer pid/uid/cgroup, origin and top origin, requested fields, item id and title,
 decision (`once`, `session`, `session-cached`, `deny`, `no-match`,
-`rate-limited`, `cooldown`, `busy`, `unavailable`) and delivered field names.
+`rate-limited`, `cooldown`, `busy`, `unavailable`), `match` (`exact` or
+`subdomain`) and delivered field names; `probe-notice` / `probe-block` events.
 Never a secret; the tests check that.
 
 ## Deployments
 
-### 1Password in its container (default), browsers in containers — wired
+### 1Password in its container — wired, but the app refuses the broker
+
+**This deployment can't work, and op-broker is off by default with 1Password in
+its container (enabling it anyway warns).** Found by reading the 1Password
+8.12.34 binary (`resources/app.asar.unpacked/index.node`, which has symbols):
+
+- For a CLI connection the app runs
+  `op_sys_info::process_information::linux::verify_process_and_parent_permissions`:
+  it takes the peer's pid (`SO_PEERCRED`), then `add_root_ownership_checks` →
+  `is_owned_by_root` on the peer's executable and its parent process's, and on
+  their directories: `fstat` uid must be 0 (gid 0, or the `onepassword` group),
+  permissions from a short list (0755, 0555, 0644, …), and not on FUSE
+  (`statfs` magic `0x65735546`). It also checks the peer's effective gid
+  (`InvalidIpcPeerEffectiveGid`).
+- Before using polkit at all, `op_system_auth::linux::get_system_connector` checks
+  that the system bus socket's directory is owned by root
+  (`is_owned_by_root(parent(/run/dbus/system_bus_socket))`), else it logs
+  "insecure system D-Bus detected … Ignoring the current PolKit interface".
+- Its polkit checks use its **own** pid as the subject
+  (`zbus_polkit::Subject::new_for_owner(std::process::id(), …)`).
+
+nixpak runs the app with `--unshare-user-try --unshare-pid`. In that unprivileged
+user namespace only app-onepassword's own uid/gid are mapped: every root-owned
+file (the store, `/run/dbus`) shows up as uid 65534, and a peer gid other than the
+app's own shows up as 65534 too. In the pid namespace the broker's `op` (outside
+it) has pid 0 as seen by the app, and the app's own pid means nothing to polkitd
+on the host. So the CLI connection is refused and system authentication is
+disabled, whatever the broker or polkit do. Making it work would need 1Password's
+container without a user namespace and in the host pid namespace (a setuid-root
+bubblewrap restricted to app-onepassword, or the root runScript building the
+sandbox itself) — a sandbox-core change, not done here (a decision for later).
+1Password in its VM has neither namespace (see below), which is where op-broker
+and system authentication are wired to work.
+
+What the module still generates for it:
 
 - `op-broker.service`: `User=app-onepassword`, `Group=onepassword-cli`,
   `WantedBy=`/`BindsTo=sandbox-onepassword.service` (it runs exactly while
@@ -293,7 +383,84 @@ browser (container or VM) ─► /run/op-broker/clients/<app>/sock ─► op-bro
 
 The in-guest broker needs gid `onepassword-cli` in the guest (the app checks it
 there), and runs with the guest's config file from
-`modules.apps.op-broker.guestBroker`.
+`modules.apps.op-broker.guestBroker`. Its guest service runs as the guest's root
+(`sandbox.vm.guestServices.<n>.root`) only to prepare: it copies `op` and
+`timeout` to `/run/sbx/op-bin/` (tmpfs, root:root 0755), creates the group, then
+`setpriv`s to the user with primary group `onepassword-cli` and runs the broker,
+which runs `op` as `/run/sbx/op-bin/timeout 60 /run/sbx/op-bin/op …`. Why: the
+app's root-ownership checks above apply to the CLI's binary **and its parent's**,
+and the guest's `/nix/store` is virtio-fs, i.e. FUSE, with the host's root-owned
+files showing as nobody's (crosvm's jailed fs device maps only its own uid). The
+copies are root-owned and on tmpfs; `timeout` forks `op` and waits, so it is op's
+parent (the broker's interpreter is a store path). Requires
+`modules.apps.onepassword-system-auth` (below), which the app needs to authorize
+the CLI session at all.
+
+### 1Password's own prompt and system authentication (VM)
+
+The flow the user asked for: log in to 1Password in its VM; the first time the
+broker's `op` connects, **1Password asks** (its CLI authorization, through polkit
+action `com.1password.1Password.authorizeCLI`); then every fill asks through
+op-broker's dialog. And "unlock using system authentication" (polkit action
+`com.1password.1Password.unlock`) where possible. Both are polkit checks the app
+makes with **its own process** as the subject and user interaction allowed; on
+Linux, CLI integration requires system authentication to be on. In the guest
+nothing could answer them: the guest user has no password, the app runs over SSH
+without a logind session, and there is no polkit. `onepassword-system-auth.nix`
+(on by default with 1Password in its VM) adds:
+
+1. **polkit in the guest** (`modules.sandbox.vm.guestModules`, a hook for extra
+   modules in the one generic guest system: polkitd is D-Bus activated, so it only
+   runs in VMs that use it) and **1Password's policy** from the package's
+   `com.1password.1Password.policy.tpl`, with `POLICY_OWNERS=unix-user:<user>`:
+   the app only offers system authentication when its user is an owner
+   (`is_user_polkit_owner`), and an owner may pass details (authorizeCLI's
+   message) with its checks. Defaults stay `auth_self`; with no session polkit
+   uses `allow_any`, i.e. `auth_self`, so the identity asked for is the user.
+2. **`sbx-polkit-agent`** (`lib/vm/polkit-agent.py`, guest root service): polkit
+   agents can be scoped to one unix-process subject, and root may register them
+   for any process. It scans `/proc` every 0.5 s and registers itself, **one D-Bus
+   connection per registration** (polkitd drops exactly that one when it closes),
+   for every process of the user whose executable is `1password` (main process,
+   helpers; the Rust core's pid is whichever calls polkit), and drops dead ones.
+   `BeginAuthentication` for anything but the two actions, or without the user's
+   identity on offer, is refused. For the two actions it sends
+   `{"op":"authenticate","action":…}` to the host over the VM's broker socket
+   (`/run/sbx/broker.sock`) and waits.
+3. **The host asks you, with your own polkit agent.** `sbx-broker` (your session)
+   maps the action through `modules.sandbox.broker.sandboxes.vm-onepassword.authenticate`
+   to a host action (`org.otisroot.sandbox.onepassword.unlock` /
+   `…authorize-cli`, installed with fixed messages, `allow_active = auth_self`,
+   nothing for inactive/any, never `_keep`) and runs `pkcheck --process
+   <its own pid>,<start>,<uid> --allow-user-interaction`. The broker is a process
+   of yours outside a logind session, so polkitd finds your graphical session
+   (`sd_uid_get_display`) and its agent (hyprpolkitagent) shows the dialog:
+   **real system authentication** (password; fingerprint if PAM's `polkit-1`
+   stack has it). One authentication on screen per VM, a 5-minute pause after 3
+   failed/dismissed ones in a row (a compromised guest can't keep your password
+   dialog up), 5-minute cap; if the guest cancels (polkit's CancelAuthentication)
+   the agent closes the connection and the broker kills pkcheck, which cancels
+   your dialog.
+4. Granted: the guest agent (root) answers polkitd itself
+   (`AuthenticationAgentResponse2(0, cookie, unix-user:<user>)`) and returns, and
+   1Password's check succeeds. Denied/dismissed: an error, and the app sees a
+   failed authorization.
+
+Trust: the host decides, and only for the two actions mapped for exactly this VM;
+the guest's root and agent are inside the VM boundary like the app. What the host
+gives the guest is one bit ("the user authenticated just now"); no password or
+PAM conversation crosses into the guest. Unlike a rule returning YES, nothing is
+authorized without the user doing something at that moment.
+
+Assumptions (see the hardware checklist): the subject pid is one of the app's
+`1password` processes; the agent registers before the app's first check (0.5 s
+scan; a check that comes earlier fails and the app falls back to its password);
+1Password accepts a CLI whose parent is `timeout`; the helper scripts' copies
+work (`coreutils` is multi-call, dispatched by argv[0]'s basename).
+
+Nested (`sandbox.vm.nested`) is refused by an assertion: the nixpak namespaces
+inside the guest would bring back the container's problem.
+
 
 ### Service-account mode (opt-in)
 
@@ -303,9 +470,12 @@ The broker runs as its own `op-broker` uid (network allowed) with the token from
 see Personal/Private/Employee vaults (web logins would have to live in a shared
 vault granted to the account), have request rate limits, and the token reads
 those vaults without any 1Password-side prompt: op-broker's dialog is then the
-only gate. Its dialogs need a display: set `prompt.waylandSocket` to a socket the
-`op-broker` uid may connect to (otherwise the module warns and every request is
-denied).
+only gate. Its dialogs get a display of their own: `op-broker-display.service`
+(a user service in your graphical session) holds a wp_security_context_v1 socket
+at `/run/op-broker/display/wayland-0` (directory `0750 <user>:op-broker`, socket
+`0660` through `UMask=0007`), which the broker uses directly: nothing to bind, so
+it works whether the session starts before or after the broker.
+`prompt.waylandSocket` overrides it.
 
 ## Installing the extension
 
@@ -369,9 +539,13 @@ Wired through three generic per-app VM options (`lib/apps.nix`,
    as jrt in `sandbox-vm-<app>-relay.service`, which the broker's peer check expects).
 2. `sandbox.vm.relays.op-uplink` on the 1Password VM: host
    `/run/op-broker/uplink/sock`, guest `/run/sbx/op-uplink/sock`.
-3. `sandbox.vm.guestServices.op-broker` on the 1Password VM: the guest starts
-   `guestBroker.command` as the user with primary group `onepassword-cli`
-   (created in the guest if missing), with the VM's Wayland display and session bus.
+3. `sandbox.vm.guestServices.op-broker` on the 1Password VM, with `root = true`
+   (new: guest services may run as the guest's root): `guestBroker.command`
+   prepares the root-owned `op`/`timeout` copies, creates `onepassword-cli`, and
+   drops to the user with that primary group, with the VM's Wayland display and
+   session bus. `onepassword-system-auth.nix` adds `guestServices.polkit-agent`
+   (root) and a host-wide `modules.sandbox.vm.guestModules` entry (new: extra
+   NixOS modules for the one generic guest system) for polkit and the policy.
 4. `sandbox.vm.guestBinds` on browser VMs: the native-messaging manifest, bound
    read-only where the browser looks (as the container binds do).
 5. Not done: **end sessions on sandbox stop** (an `ExecStopPost=` telling the
@@ -383,52 +557,112 @@ per-app relay unit.
 ## Verification status
 
 Tested (`python3 -m unittest discover -s pkgs/op-broker/tests`, also run in the
-package's `checkPhase`; 37 tests): origin and item-URL validation and matching,
+package's `checkPhase`; 45 tests): origin and item-URL validation and matching,
 request validation, exact `op` command lines (fake `op` rejects anything else),
 dialogs never containing a secret, audit never containing a secret, deny and
 cooldown, session grants (scope, idle expiry, max age, `--no-session`), chooser
 (ordering, bidi cleaning, cancel, out of range), TOTP (JSON and `--otp`), rate
 limits, busy, vault restriction, `--account`, `op` failures, minimal `op`
-environment, peer-uid and cgroup refusal, the socket server, the native host
-(framing, limits, broker down), and bridge + uplink (pool replacement, header
-validation). NixOS: excelsior evaluates with the module disabled, and enabled in
-container, VM and service-account variants. The JavaScript is syntax-checked by
-node at build time.
+environment, the `op` launcher, peer-uid and cgroup refusal, the socket server,
+the native host (framing, limits, broker down), bridge + uplink (pool
+replacement, header validation), the SUBDOMAIN labels (dialog summary and
+explanation, chooser rows, audit `match`), and the probing notice (threshold,
+repeats not counted, per-requester, one per interval, window expiry, the rate-limit
+trigger, the block button → `cooldown`, no notice command → audit only).
 
-**Not verified on hardware** (needs a running session):
+`sbx-polkit-agent` (`lib/vm/tests/test_polkit_agent.py`, run when
+`lib/vm/polkit-agent.nix` builds; 9 tests) against a private dbus-daemon, a fake
+polkitd and a fake host broker: the registration wire format (unix-process
+subject with pid/start-time/uid), one connection per registered process, only
+matching processes, granted → `AuthenticationAgentResponse2(0, cookie,
+unix-user)` then a method return, denied / host unreachable / wrong identity /
+unhandled action → an error without a response (and without asking the host for
+the last two), CancelAuthentication → `Cancelled` and the host connection
+closed, process exit → registration dropped.
 
-- that the 1Password app's CLI socket appears in `/run/app-onepassword` once the
-  sandbox binds its runtime dir (`ls -la /run/app-onepassword` as root after
-  starting 1Password with the module enabled), and that nixpak doesn't put a tmpfs
-  over it;
-- that `op` connects from the broker service (`journalctl -u op-broker`, a fill
-  attempt → `unavailable` with op's error in the log if not);
-- the desktop app's authorization of a tty-less CLI: on Linux the app keys CLI
-  sessions on the tty and its start time, and authorizes through polkit action
-  `com.1password.1Password.authorizeCLI` (see open questions);
-- zenity dialogs from the service on the bound security-context socket;
-- Firefox MV3 `activeTab` + `scripting.executeScript` with `allFrames` in Zen,
-  and Chromium's native port keeping the service worker alive.
+NixOS (evaluated): excelsior, galaxy and constitution as configured (1Password in
+its container: op-broker and system auth off); excelsior with op-broker forced on
+(container: wired, warned); with 1Password and Zen in VMs (op-broker, the bridge,
+the guest broker and polkit agent, guest polkit + policy, host auth actions, all
+on by default; built); with a service account (own display service). The
+JavaScript is syntax-checked by node at build time. Not tested: `sbx-broker`'s
+`authenticate` op (pkcheck against a live polkitd), the guest start script.
+
+## Hardware test checklist
+
+Everything below needs the real desktop. 1Password in its VM
+(`modules.apps.onepassword.sandbox.mode = "vm"`), a browser with the extension.
+
+1. Guest basics, as root in the 1Password VM (e.g. `sbx-request exec` is
+   host-side; use the VM's serial console or `sandbox-vm status onepassword` and
+   the guest journal): `systemctl status sbx-svc-polkit-agent sbx-svc-op-broker`
+   running; `ls -la /run/sbx/op-bin` shows `op` and `timeout` root:root 0755;
+   `pkaction | grep 1password` lists the three actions and
+   `pkaction --action-id com.1password.1Password.authorizeCLI --verbose` shows
+   `org.freedesktop.policykit.owner: unix-user:jrt`; `ls -ld /run/dbus` root-owned.
+2. `stat -f -c %T /nix/store` in the guest says `fuseblk`/`fuse` and `stat -c %U`
+   of a store file says `nobody` (confirms why op is copied). If it says root and
+   not FUSE, the copies are unnecessary but harmless.
+3. Start 1Password; the agent's journal shows `serving … processes` and no
+   registration errors; `journalctl -u polkit` in the guest shows "Registered
+   Authentication Agent for unix-process:<pid>…" for the 1password processes.
+4. In 1Password: Settings → Security → "Unlock using system authentication" is
+   offered and can be turned on (if greyed out: its journal/logs say why; look for
+   "insecure system D-Bus" or polkit owner messages).
+5. Lock 1Password, unlock with system authentication: **hyprpolkitagent on the
+   host** asks "1Password, in its sandbox VM, asks you to authenticate to unlock
+   it." Correct password → unlocked; Cancel → stays locked, 1Password offers the
+   account password. `journalctl --user -u sbx-broker` shows `authenticate
+   com.1password.1Password.unlock (as …): authenticated` / `dismissed`.
+6. Settings → Developer → "Integrate with 1Password CLI" can be turned on.
+7. Trigger a fill (Ctrl+Shift+L on a login page with a saved login): first, the
+   host's polkit dialog for the CLI ("The 1Password CLI in 1Password's sandbox
+   VM (op-broker …)"), possibly also 1Password's own in-app prompt; then
+   op-broker's approval dialog. If the fill answers `unavailable`: the guest's
+   `journalctl -u sbx-svc-op-broker` has op's error — look for a rejected peer
+   (binary permissions, gid, parent) — that tests the root-owned-copies and
+   `timeout`-as-parent assumptions.
+8. Cancel the host dialog while 1Password waits: it reports the failure, no
+   authorization; three cancels in a row → the next request is refused for 5 min
+   without a dialog.
+9. Subdomain: a login saved for `example.com`, fill on a subdomain: the dialog's
+   second line says `SUBDOMAIN MATCH: saved for …`; with two candidates the
+   chooser tags rows `[SUBDOMAIN: …]`.
+10. Probing: from the browser, trigger fills on 4 different sites without saved
+    logins within 2 minutes: one notice naming the browser and the 4 sites; more
+    misses within 10 minutes: no second notice. "Block it for an hour" → fills
+    answer "Paused …" for an hour; Dismiss → nothing changes.
+11. Allow until it stops: unchanged behaviour (grant survives until the browser's
+    port is gone for 5 min).
+12. Container (optional, expected to fail): with op-broker forced on and 1Password
+    in its container, a fill answers `unavailable` and 1Password's logs show it
+    rejected the CLI; "Unlock using system authentication" isn't offered. That
+    confirms the analysis above.
+
+## Decisions (the former open questions)
+
+1. **1Password's authorization of the CLI:** desktop-app integration (not a
+   service account), with 1Password's own polkit prompt answered by real system
+   authentication on the host, as above, and system-authentication unlock too.
+   Container: not possible (above), so op-broker defaults to on only where
+   1Password runs in its VM.
+2. **Probing:** `no-match` stays dialog-free per request, but probing shows a
+   rate-limited notice (*Probing notice*).
+3. **Firefox signing:** handled separately (Firefox Developer Edition, which
+   honours `xpinstall.signatures.required = false`, with op-broker force-installed).
+4. **"Allow until it stops":** kept as is.
+5. **Subdomain matching:** kept as the default, and labelled in the chooser and
+   the dialog.
 
 ## Open questions
 
-1. **CLI integration needs system authentication.** On Linux "Integrate with
-   1Password CLI" requires "Unlock using system authentication" (polkit), and each
-   CLI session is authorized through polkit action
-   `com.1password.1Password.authorizeCLI` (`auth_self`). The current 1Password
-   setup deliberately dropped polkit/system unlock (`auth.nix`), and a service
-   running as `app-onepassword` has no polkit agent. Options: install the app's
-   polkit policy with `app-onepassword` as owner plus a rule that returns YES for
-   `authorizeCLI` when `subject.user == "app-onepassword"` (op-broker's dialog then
-   being the only gate, which is its job anyway), or use service-account mode.
-   Which do you want?
-2. Should `no-match` be silent (current; leaks "no login for this site" to a
-   compromised browser at 120 probes/hour), or show a small notice so probing is
-   visible?
-3. Firefox release needs a signed XPI: OK to sign it as an unlisted AMO add-on
-   (your Mozilla account), or switch the Firefox app to ESR/Developer Edition?
-4. Keep "Allow until it stops" (default on), or `prompt.allowSession = false`?
-5. Is `subdomain` matching the right default, or `exact`?
+1. Container: implement a 1Password container without user/pid namespaces
+   (setuid-root bubblewrap limited to app-onepassword, or the root runScript
+   building the sandbox), so op-broker and system auth work there too? It weakens
+   the container (host pid namespace; a privileged bwrap) for the one app that
+   holds the vault; the VM already provides both.
+2. Thresholds: 4 sites / 2 min, one notice per 10 min, block for 1 h — adjust
+   after living with it?
 
 ## Sources
 
@@ -441,7 +675,25 @@ node at build time.
 - The app binary itself (1password 8.12.34): `op-ipc/src/ipc/unix.rs` places the
   socket under `$XDG_RUNTIME_DIR` and refuses a too-open directory;
   `com.1password.1Password.policy.tpl` defines `unlock`, `authorizeCLI`,
-  `authorizeSshAgent`.
+  `authorizeSshAgent`. From `resources/app.asar.unpacked/index.node`'s symbols
+  and disassembly (`nm`, `objdump`): `op_system_auth::linux::challenge_with_action`
+  (subject `Subject::new_for_owner(std::process::id())`, `CheckAuthorization`
+  with details), `is_user_polkit_owner` (`EnumerateActions`, owner annotation vs
+  the user name), `get_system_connector` (`is_owned_by_root` on the system bus
+  socket's directory), `op_sys_info::process_information::linux::{is_owned_by_root,
+  add_root_ownership_checks, verify_process_and_parent_permissions}` (fstat
+  uid/gid/mode, FUSE `statfs` check, the `onepassword` group).
+- polkit 127 sources: `polkitbackendinteractiveauthority.c` (callers may check
+  other identities' subjects or pass details only as root or an action owner;
+  agents may be registered for a unix-process subject, by root for any process;
+  agent lookup is by exact subject, then the subject's session;
+  `AuthenticationAgentResponse2` is root-only and must name an offered identity),
+  `polkitbackendsessionmonitor-systemd.c` (a process without a session falls back
+  to its user's display session: `sd_uid_get_display`), `polkitunixprocess.c`
+  (subjects compare by pid and start time), `polkitagenthelper-pam.c` and NixOS's
+  socket-activated `polkit-agent-helper`.
+- crosvm `src/crosvm/sys/linux/config.rs`: a shared dir's default uid map is
+  `0 <crosvm's euid> 1` (host root unmapped in the fs device's namespace).
 - Firefox `ExtensionSettings` policy (`file:///` install URLs, `force_installed`):
   <https://firefox-admin-docs.mozilla.org/reference/policies/extensionsettings/>;
   extension signing and `xpinstall.signatures.required` (ESR/Dev/Nightly only):
