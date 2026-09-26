@@ -7,6 +7,26 @@
     pkgs,
     ...
   }:
+  let
+    browserSettings = import ../../../lib/browser-settings.nix { inherit lib; };
+    # Native Wayland (a dedicated uid can't auth to XWayland), the PipeWire screen
+    # capturer, VA-API and no first-run page (browserSettings.chromiumPackage).
+    # Brave's own wrapper passes VA-API features in an --enable-features that ours
+    # (the last one, which is the one Chromium keeps) replaces, so they're repeated
+    # here via hardwareVideoDecoding.
+    mkPackage =
+      args:
+      browserSettings.chromiumPackage (
+        {
+          inherit pkgs;
+          name = "brave-wayland";
+          base = pkgs.brave;
+          bin = "brave";
+        }
+        // args
+      );
+    policyRoot = "/etc/brave/policies";
+  in
   {
     imports = [
       ../../../lib/features/chromium.nix
@@ -18,18 +38,8 @@
 
     config.app = {
       name = "brave";
-      # Force native Wayland (a dedicated uid can't auth to XWayland) + PipeWire
-      # screen capturer, exactly as zen/ungoogled-chromium do.
-      package = pkgs.symlinkJoin {
-        name = "brave-wayland";
-        paths = [ pkgs.brave ];
-        nativeBuildInputs = [ pkgs.makeWrapper ];
-        postBuild = ''
-          rm $out/bin/brave
-          makeWrapper ${pkgs.brave}/bin/brave $out/bin/brave \
-            --add-flags "--ozone-platform=wayland --enable-features=WebRtcPipeWireCapturer"
-        '';
-      };
+      # Default build; customConfig rebuilds it from modules.apps.brave.browser.
+      package = mkPackage { };
       packageName = "brave";
       desktopFileName = "brave-browser.desktop";
 
@@ -45,18 +55,49 @@
       # profile persisted, caches carved to /cache (chromium.nix).
       defaultBackend = "systemd";
 
-      customConfig =
-        { config, lib, ... }:
-        {
-          modules.apps.brave.sandbox.dedicatedUser = true;
-          # Downloads land in jrt's ~/Downloads/brave (host-visible, persisted)
-          # instead of the app's 0700 home, which jrt can't open.
-          modules.apps.brave.sandbox.sharedDownloads = true;
-          users.users."app-brave".extraGroups = [
-            "video"
-            "audio"
-          ];
+      capabilities.binds.ro = browserSettings.chromiumBinds {
+        appName = "brave";
+        inherit policyRoot;
+      };
+
+      # modules.apps.brave.browser.* — see lib/browser-settings.nix. Brave Search is
+      # already a private default, so the search engine is left alone.
+      customOptions =
+        _:
+        browserSettings.mkOptions {
+          appName = "brave";
+          family = "chromium";
+          searchEngine = null;
         };
+
+      customConfig =
+        { config, lib, ... }@args:
+        lib.mkMerge [
+          {
+            modules.apps.brave.sandbox.dedicatedUser = true;
+            # Downloads land in jrt's ~/Downloads/brave (host-visible, persisted)
+            # instead of the app's 0700 home, which jrt can't open.
+            modules.apps.brave.sandbox.sharedDownloads = true;
+            users.users."app-brave".extraGroups = [
+              "video"
+              "audio"
+            ];
+          }
+          (browserSettings.chromiumConfig {
+            appName = "brave";
+            inherit policyRoot mkPackage;
+            # Brave Shields already block ads and trackers.
+            defaultExtensions = { };
+            # Brave's own telemetry (P3A, stats ping, Web Discovery) and Rewards,
+            # its Brave Ads programme.
+            extraManaged = {
+              BraveP3AEnabled = false;
+              BraveStatsPingEnabled = false;
+              BraveWebDiscoveryEnabled = false;
+              BraveRewardsDisabled = true;
+            };
+          } args)
+        ];
     };
   }
 )
