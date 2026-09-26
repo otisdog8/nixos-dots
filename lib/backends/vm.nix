@@ -148,6 +148,9 @@ in
     modules.sandbox.units = lib.optionals (group == null) instance.polkitUnits;
     modules.sandbox.unitTemplates = lib.optionals (group == null) instance.polkitTemplates;
     assertions = lib.optionals (group == null) instance.assertions;
+    modules.sandbox.broker.sandboxes = lib.optionalAttrs (group == null) {
+      ${instance.brokerName} = instance.brokerEntry;
+    };
 
     warnings =
       lib.optional (cfg.sandbox.mode == "vm" && unsupported != [ ])

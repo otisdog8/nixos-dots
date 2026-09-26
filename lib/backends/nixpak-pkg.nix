@@ -46,6 +46,10 @@
   # Host override for the gpu capability's device-node list
   # (modules.sandbox.gpuDevices). null → capabilities-nixpak.nix default (all GPUs).
   gpuDevices ? null,
+  # The sandbox broker's socket for this sandbox (modules/system/sandbox-broker.nix),
+  # relative to the sandbox's $XDG_RUNTIME_DIR; bound at /run/sbx/broker.sock.
+  # Soft: absent when the broker isn't running. null → none.
+  brokerSocketName ? null,
 }:
 let
   nixpakSrc = inputs.nixpak or (builtins.throw "nixpak not available - add nixpak to flake inputs");
@@ -94,10 +98,9 @@ let
           # XAUTHORITY — nixpak's sockets.x11 handler DOES read XAUTHORITY and panics
           # when unset, which is why we go through the capability, not that socket).
           ++ [
-            (import ../capabilities-nixpak.nix
-              ({ inherit lib; } // lib.optionalAttrs (gpuDevices != null) { inherit gpuDevices; })
-              (appCfg.capabilities // { x11 = appCfg.capabilities.x11 || x11Forward; })
-            )
+            (import ../capabilities-nixpak.nix (
+              { inherit lib; } // lib.optionalAttrs (gpuDevices != null) { inherit gpuDevices; }
+            ) (appCfg.capabilities // { x11 = appCfg.capabilities.x11 || x11Forward; }))
           ]
           ++ cfg.sandbox.nixpakModules;
 
@@ -158,7 +161,11 @@ let
           ]
           # Cross-uid doc-portal identity bind (dedicated). Soft (--bind-try): the
           # runScript only relays it when jrt actually has a doc portal running.
-          ++ lib.optional (docBind != null) docBind;
+          ++ lib.optional (docBind != null) docBind
+          ++ lib.optional (brokerSocketName != null) [
+            (sloth.concat' sloth.runtimeDir "/${brokerSocketName}")
+            "/run/sbx/broker.sock"
+          ];
       };
   };
 in

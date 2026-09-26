@@ -130,6 +130,9 @@ let
       ;
     stashAtHome = true;
     gpuDevices = config.modules.sandbox.gpuDevices;
+    # The broker socket: same-uid apps reach it in jrt's runtime dir; a dedicated
+    # app's is relayed into its own runtime dir by the runScript below.
+    brokerSocketName = if dedicated then "sbx-broker.sock" else "sbx-broker/${appName}.sock";
     # dedicated: shared jrt data (extraBinds like the vault) lives in jrt's home,
     # not the app's own home.
     sharedHome = if dedicated then sharedHome else null;
@@ -257,6 +260,12 @@ let
       # __bind_checked refuses a symlinked / foreign-owned bridge socket.
       ${co}/touch "${runtimeDir}/bus"
       __bind_checked "${bridgeSock}" "${runtimeDir}/bus" S || ${co}/rm -f "${runtimeDir}/bus" 2>/dev/null || true
+      # The sandbox broker's socket for this app (modules/system/sandbox-broker.nix;
+      # the broker ACLs it for this uid), when the broker is running.
+      if [ -S "${jrtRuntime}/sbx-broker/${appName}.sock" ]; then
+        ${co}/touch "${runtimeDir}/sbx-broker.sock"
+        __bind_checked "${jrtRuntime}/sbx-broker/${appName}.sock" "${runtimeDir}/sbx-broker.sock" S || ${co}/rm -f "${runtimeDir}/sbx-broker.sock" 2>/dev/null || true
+      fi
     ''}
     ${lib.optionalString (needsWaylandDisplay && usesWayland) (
       if dedicated then
@@ -648,6 +657,11 @@ in
     # Explicit unit name for the polkit start/stop/ref allowlist (sandbox.nix) —
     # not a prefix scan.
     modules.sandbox.units = [ "${unitName}.service" ];
+    modules.sandbox.broker.sandboxes.${appName} = {
+      label = "${appName} (container)";
+      uid = if dedicated then appUser else null;
+      netUnits = [ "${unitName}.service" ];
+    };
     modules.sandbox.stashMigrations = lib.optional (storage.stashEntries != [ ]) {
       app = appName;
       bin = binName;

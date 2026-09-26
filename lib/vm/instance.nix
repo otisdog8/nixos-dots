@@ -113,12 +113,17 @@ let
   dbusArgs = lib.unique (lib.concatMap (m: if m.dbusArgs == null then [ ] else m.dbusArgs) members);
   flatpakInfoFile = lib.findFirst (i: i != null) null (map (m: m.flatpakInfoFile) members);
   bus = dbusArgs != [ ] && flatpakInfoFile != null;
-  relayServices = lib.optional audio "pulse" ++ lib.optional bus "dbus";
+  # The sandbox broker (modules/system/sandbox-broker.nix): escapes and grants.
+  broker = config.modules.sandbox.broker.enable;
+  brokerName = "vm-${name}";
+  relayServices =
+    lib.optional audio "pulse" ++ lib.optional bus "dbus" ++ lib.optional broker "broker";
   relay = relayServices != [ ];
   vsockRelay = import ./vsock-relay.nix pkgs;
   guestSockets = {
     pulse = "/run/sbx/pulse/native";
     dbus = "/run/sbx/bus/bus";
+    broker = "/run/sbx/broker.sock";
   };
   pulseClientConf = pkgs.writeText "sandbox-vm-pulse-client.conf" ''
     enable-shm = no
@@ -474,6 +479,7 @@ let
       lib.concatStringsSep " " (
         lib.optional audio "pulse=${hostRuntimeDir}/pulse/native"
         ++ lib.optional bus ''dbus="$rt/bus/bus.sock"''
+        ++ lib.optional broker "broker=${hostRuntimeDir}/sbx-broker/${brokerName}.sock"
       )
     }
   '';
@@ -1006,6 +1012,15 @@ in
   // lib.optionalAttrs gpuDevice { "${unit}-gpu${tmpl}" = gpuService; }
   // lib.optionalAttrs relay { "${unit}-relay${tmpl}" = relayService; }
   // lib.optionalAttrs bus { "${unit}-bus${tmpl}" = busService; };
+
+  # The broker's view of this VM (modules.sandbox.broker.sandboxes.<brokerName>).
+  inherit brokerName;
+  brokerEntry = {
+    label = "${label} (VM)";
+    netUnits = lib.optional network' (
+      if perCwd then "${unit}-net@*.service" else "${unit}-net.service"
+    );
+  };
 
   # For the polkit allowlist (modules/system/sandbox.nix): the user starts/stops
   # only the VM unit; its helpers come along as dependencies.

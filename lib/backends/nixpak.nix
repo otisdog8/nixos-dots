@@ -24,6 +24,7 @@ let
       ;
     stashAtHome = false;
     gpuDevices = config.modules.sandbox.gpuDevices;
+    brokerSocketName = "sbx-broker/${appName}.sock";
   };
   binName = appCfg.packageName;
   wlSecure = import ./wayland-security-context.nix pkgs;
@@ -73,6 +74,7 @@ in
     systemd.tmpfiles.rules = storage.tmpfilesRules;
     environment.persistence = storage.homePersistence;
     assertions = storage.assertions;
+    modules.sandbox.broker.sandboxes.${appName}.label = "${appName} (container)";
     # nixpak runs in the user's session, where systemd can't attach the cgroup IP
     # filter the other backends use, so only "open" is enforceable here.
     warnings =

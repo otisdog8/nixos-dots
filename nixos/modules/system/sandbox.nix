@@ -343,6 +343,24 @@ in
       '';
     };
 
+    propertyUnits = lib.mkOption {
+      internal = true;
+      default = [ ];
+      type = lib.types.listOf lib.types.str;
+      description = ''
+        Exact units whose properties the user may change at runtime (only the
+        set-property verb): the sandbox broker's grant-net extends their
+        IPAddressAllow= (modules/system/sandbox-broker.nix).
+      '';
+    };
+
+    propertyTemplates = lib.mkOption {
+      internal = true;
+      default = [ ];
+      type = lib.types.listOf lib.types.str;
+      description = "Template prefixes (\"sandbox-vm-<app>-net@\") like propertyUnits.";
+    };
+
     unitTemplates = lib.mkOption {
       internal = true;
       default = [ ];
@@ -442,6 +460,19 @@ in
               unit.lastIndexOf(".service") == unit.length - 8;
           }
           if (ok && (verb == "start" || verb == "stop" || verb == "ref")) {
+            return polkit.Result.YES;
+          }
+          // The sandbox broker's grant-net: runtime property changes only, only on
+          // the registered network units.
+          var props = ${builtins.toJSON cfg.propertyUnits};
+          var propTemplates = ${builtins.toJSON cfg.propertyTemplates};
+          var okProp = unit && props.indexOf(unit) >= 0;
+          for (var j = 0; unit && !okProp && j < propTemplates.length; j++) {
+            var q = propTemplates[j];
+            okProp = unit.length > q.length + 8 && unit.indexOf(q) == 0 &&
+              unit.lastIndexOf(".service") == unit.length - 8;
+          }
+          if (okProp && verb == "set-property") {
             return polkit.Result.YES;
           }
         }
