@@ -479,6 +479,14 @@ it works whether the session starts before or after the broker.
 
 ## Installing the extension
 
+Done automatically by the browser modules (`lib/browser-settings.nix`): every
+browser in `modules.apps.op-broker.browsers` gets the extension force-installed
+and the official 1Password extension blocked, as described below (Firefox/Zen:
+`browser.extensions` + `browser.allowUnsignedExtensions` +
+`browser.blockedExtensions`; Chromium family: `browser.unpackedExtensions` +
+`browser.blockedExtensions`). The `firefox` app is Firefox Developer Edition
+for this reason. The rest of this section is the mechanism.
+
 The module exposes everything read-only in `config.modules.apps.op-broker.extension`:
 
 | | |
@@ -501,7 +509,9 @@ order of preference: (1) sign it once as an *unlisted* add-on on AMO
 automatic signing) and force-install the signed XPI by path/hash; (2) use
 `firefox-esr` or `firefox-devedition` with `xpinstall.signatures.required = false`;
 (3) an unbranded build. Same `ExtensionSettings` policy either way. The id must
-stay `op-broker@otisroot.com` (the native host manifest allows only it).
+stay `op-broker@otisroot.com` (the native host manifest allows only it). Chosen:
+(2), the `firefox` app runs `firefox-devedition` (nixpkgs builds it without
+`MOZ_REQUIRE_SIGNING`, so the pref is honoured, as in Zen).
 
 **Chromium, ungoogled-chromium, Brave**: add
 `--load-extension=${extension.chromiumDir}` to the browser's wrapper flags. It
@@ -522,12 +532,12 @@ bound in from the store (the sandboxes have a tmpfs `/etc`). Browsers find hosts
 only by manifest location; the manifest's absolute `path` is a store path, and
 the store is visible in every sandbox and VM guest.
 
-The official 1Password extension should then be removed/blocked
+The official 1Password extension is blocked
 (`ExtensionSettings."{d634138d-c276-4fc8-924b-40a0ea21d284}".installation_mode =
 "blocked"` for Firefox, `ExtensionInstallBlocklist` with
-`aeblfdkhhhdcdjpifhhbdiojplfjncoa` for Chromium), and the old
-`lib/features/onepassword*.nix` binds (`1Password-BrowserSupport`) dropped from the
-browsers.
+`aeblfdkhhhdcdjpifhhbdiojplfjncoa` and the beta `khgocmkkpikpnmmkgmdnfckapcdkgfaf`
+for Chromium). Not done yet: dropping the old `lib/features/onepassword*.nix`
+binds (`1Password-BrowserSupport`) from the browsers.
 
 ## Sandbox-core hooks
 
