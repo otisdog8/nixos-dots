@@ -185,6 +185,8 @@ in
     modules.sandbox.unitTemplates = lib.optionals (group == null) instance.polkitTemplates;
     assertions = lib.optionals (group == null) instance.assertions;
     modules.sandbox.dnsAllow = lib.optionals (group == null) instance.dnsAllow;
+    users.users = lib.optionalAttrs (group == null) (instance.gpuUsers.users or { });
+    users.groups = lib.optionalAttrs (group == null) (instance.gpuUsers.groups or { });
     modules.sandbox.broker.sandboxes = lib.optionalAttrs (group == null) {
       ${instance.brokerName} = instance.brokerEntry;
     };

@@ -22,8 +22,9 @@
     };
     # virtio-nvgpu: GPU + Wayland display for the VM sandbox tier
     # (lib/vm/nvgpu.nix). The local checkout's committed display-passthrough
-    # branch for now (not pushed yet); switch to github:otisdog8/virtio-nvgpu
-    # once it is. Update with `nix flake update virtio-nvgpu`.
+    # branch: github:otisdog8/virtio-nvgpu only has an older `dev`. Switch the
+    # url to the fork once that branch is pushed there. Update with
+    # `nix flake update virtio-nvgpu`.
     virtio-nvgpu = {
       url = "git+file:///home/jrt/Documents/nixos-dots/virtio-nvgpu?ref=display-passthrough";
       flake = false;

@@ -106,6 +106,20 @@ let
   crossDomain = vmHost.graphics == "cross-domain" && gui;
   gpuDevice = nvgpu || crossDomain;
   crosvmPkg = if nvgpu then vmHost.nvgpu.crosvm else pkgs.crosvm;
+  # The virtio-nvgpu backend runs as a user of this VM's own (virtio-nvgpu's
+  # DEPLOY.md, "Per-VM users"), never the desktop user or the VMM's: a
+  # compromised backend is then neither a step from the session nor the VMM.
+  gpuUserName =
+    let
+      n = "sbx-gpu-${name}";
+    in
+    # 31: the longest group name NixOS accepts.
+    if lib.stringLength n <= 31 then
+      n
+    else
+      "sbx-gpu-${builtins.substring 0 16 (builtins.hashString "sha256" name)}";
+  gpuUser = if nvgpu then gpuUserName else principal;
+  gpuGroup = if nvgpu then gpuUserName else principalGroup;
   # The guest's Wayland socket (mirrors guest-graphics.nix) and the host
   # compositor's, pinned like the systemd backend's.
   guestWaylandDisplay = if vmHost.graphics == "nvgpu" then "/run/sbx/wl/wayland-0" else "wayland-0";
@@ -345,7 +359,7 @@ let
       ${co}/install -d -m 0711 -o ${username} -g ${hostUser.group} "$rt/wl"
     ''}
     ${lib.optionalString gpuDevice ''
-      ${co}/install -d -m 0700 -o ${principal} -g ${principalGroup} "$rt/gpu"
+      ${co}/install -d -m 0700 -o ${gpuUser} -g ${gpuGroup} "$rt/gpu"
     ''}
     ${lib.optionalString bus ''
       ${co}/install -d -m 0700 -o ${username} -g ${hostUser.group} "$rt/bus"
@@ -497,8 +511,8 @@ let
       echo "${unit}: no security-context Wayland socket (is the compositor running?)" >&2
       exit 1
     fi
-    ${lib.optionalString (principal != username) ''
-      ${pkgs.acl}/bin/setfacl -m "u:${principal}:rw" "$sock"
+    ${lib.optionalString (gpuUser != username) ''
+      ${pkgs.acl}/bin/setfacl -m "u:${gpuUser}:rw" "$sock"
     ''}
     wait "$pid"
   '';
@@ -629,6 +643,30 @@ let
         ''
     }
     if [ "$ok" != 1 ]; then echo "${label} isn't running, or the grant failed" >&2; exit 1; fi
+  '';
+
+  # Root, once the backend has bound its socket (virtio-nvgpu's
+  # contrib/systemd/nvgpu-socket-open, with an ACL for the VMM's uid instead of
+  # a group: the VMM's group may be the shared `users`). The directory becomes
+  # root's, so the backend can no longer swap what's in it.
+  gpuSocketOpen = pkgs.writeShellScript "${unit}-gpu-socket" ''
+    set -eu
+    dir="''${1:-}"
+    ${idPrelude}
+    d="$rt/gpu"
+    sock="$d/gpu.sock"
+    owner="$(${co}/stat -c %u -- "$d")"
+    i=0
+    while [ ! -S "$sock" ]; do
+      i=$((i + 1))
+      [ "$i" -le 100 ] || { echo "${unit}: no backend socket after 10 s" >&2; exit 1; }
+      ${co}/sleep 0.1
+    done
+    ${co}/chown root:root -- "$d"
+    ${co}/chmod 0711 -- "$d"
+    [ ! -L "$sock" ] && [ -S "$sock" ] || { echo "${unit}: $sock is not a socket" >&2; exit 1; }
+    [ "$(${co}/stat -c %u -- "$sock")" = "$owner" ] || { echo "${unit}: $sock is not the backend's" >&2; exit 1; }
+    ${pkgs.acl}/bin/setfacl -m "u:${principal}:rw" -- "$sock"
   '';
 
   # Host-GPU device nodes for the virtio-nvgpu backend: the host's
@@ -1100,10 +1138,11 @@ let
     afterPrep (lib.optional gui (ref "${unit}-wl"))
     // {
       description = "Sandbox VM GPU (${if nvgpu then "virtio-nvgpu" else "cross-domain"}): ${label}";
+      environment = lib.optionalAttrs nvgpu { RUST_LOG = "warn"; };
       serviceConfig = {
         ExecStart = "${gpuScript}${instArg}";
-        User = principal;
-        Group = principalGroup;
+        User = gpuUser;
+        Group = gpuGroup;
         NoNewPrivileges = true;
         CapabilityBoundingSet = "";
         AmbientCapabilities = "";
@@ -1132,6 +1171,23 @@ let
         DeviceAllow = lib.optionals nvgpu nvgpuDeviceAllow;
         UMask = "0077";
         LimitCORE = 0;
+      }
+      # The rest of virtio-nvgpu's own unit (contrib/systemd/vhost-user-nvgpu@.service).
+      // lib.optionalAttrs nvgpu {
+        Type = "exec";
+        ExecStartPost = "+${gpuSocketOpen}${instArg}";
+        SupplementaryGroups = [
+          "video"
+          "render"
+          "kvm"
+        ];
+        MemoryMax = "2G";
+        MemorySwapMax = 0;
+        TasksMax = 256;
+        OOMScoreAdjust = 500;
+        TimeoutStopSec = 10;
+        MemoryDenyWriteExecute = true;
+        ProtectProc = "invisible";
       };
     }
   );
@@ -1361,6 +1417,16 @@ in
     netUnits = lib.optional network' netUnitPattern;
     grantPaths = if grants then "${grantPathsScript}" else null;
     inherit fido;
+  };
+
+  # The backend's own user and group (nvgpu only), for users.users/groups.
+  gpuUsers = lib.optionalAttrs nvgpu {
+    users.${gpuUserName} = {
+      isSystemUser = true;
+      group = gpuUserName;
+      description = "virtio-nvgpu backend of sandbox VM ${name}";
+    };
+    groups.${gpuUserName} = { };
   };
 
   # For sbx-dnsallow (modules.sandbox.dnsAllow).
