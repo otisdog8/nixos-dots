@@ -9,6 +9,7 @@
   imports = [ ./xdg.nix ];
 
   config.app = {
+    capabilities.camera = true;
     portalInterfaces = [ "Camera" ];
 
     nixpakModules = [

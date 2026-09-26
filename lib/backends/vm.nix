@@ -98,7 +98,7 @@ let
     package = if nested then nestedPkg else cfg.package;
     entries = storage.entries;
     x11Forward = cfg.sandbox.x11Forward;
-    inherit (cfg.sandbox.vm) relays guestBinds guestServices;
+    inherit (cfg.sandbox.vm) relays guestBinds guestServices cameraOnLaunch;
     # Home-relative or absolute binds (./-relative ones are dropped with a warning).
     bindReqs =
       lib.optionals caps.gitConfig [

@@ -8,6 +8,8 @@
       Ask for a folder (read-only, or read-write with --write) while running.
   sbx-request grant-net [--reason TEXT] ADDRESS[/PREFIX]
       Ask to reach an address the sandbox's network policy blocks.
+  sbx-request camera [--reason TEXT]
+      Ask for the host's camera(s) (VMs: attached until the VM stops).
 
 The broker socket is /run/sbx/broker.sock in sandboxes (SBX_BROKER overrides).
 Exit status 126 when the request is denied, 125 on errors.
@@ -37,6 +39,8 @@ def main():
     n = sub.add_parser("grant-net")
     n.add_argument("--reason", default="")
     n.add_argument("addr")
+    c = sub.add_parser("camera")
+    c.add_argument("--reason", default="")
     a = ap.parse_args()
 
     if a.op == "exec":
@@ -57,6 +61,8 @@ def main():
             "write": a.write,
             "reason": a.reason,
         }
+    elif a.op == "camera":
+        req = {"op": "camera", "reason": a.reason}
     else:
         req = {"op": "grant-net", "addr": a.addr, "reason": a.reason}
 

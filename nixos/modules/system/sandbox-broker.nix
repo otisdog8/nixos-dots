@@ -10,6 +10,7 @@
 #   grant-net ADDR         let the sandbox reach an address its network policy
 #                          blocks (VMs and systemd-backend apps; until it stops)
 #   grant-path [--write] P give a running VM a folder (see the VM instances)
+#   camera                 attach the host's camera(s) to a running VM
 #   fido                   (VMs' virtual security key, not sbx-request) relay
 #                          CTAPHID to the key plugged in now
 # Anything no rule covers is a prompt; the answer can cover the rest of the login
@@ -32,6 +33,7 @@ let
           "grant-net"
           "grant-path"
           "fido"
+          "camera"
         ];
         default = "exec";
       };
@@ -143,6 +145,11 @@ in
               type = lib.types.nullOr lib.types.str;
               default = null;
               description = "Program that attaches a folder to the running sandbox (grant-path).";
+            };
+            camera = lib.mkOption {
+              type = lib.types.nullOr lib.types.str;
+              default = null;
+              description = "Program that attaches the host's camera(s) to the running sandbox (`PROG attach`).";
             };
             fido = lib.mkOption {
               type = lib.types.bool;

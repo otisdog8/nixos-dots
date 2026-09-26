@@ -133,6 +133,11 @@
               defaultText = lib.literalExpression "config.modules.sandbox.vm.nested";
               description = "Inside its VM, also run ${appName} in its nixpak sandbox (defense in depth).";
             };
+            cameraOnLaunch = lib.mkOption {
+              type = lib.types.bool;
+              default = true;
+              description = "VM only, apps with the camera capability: ask (through the broker) to attach the camera when ${appName} starts. Otherwise: `sbx-request camera` inside, or `sandbox-vm camera ${appName}`.";
+            };
             # Hooks for other modules (e.g. op-broker) to reach into the guest.
             relays = lib.mkOption {
               type = lib.types.attrsOf (

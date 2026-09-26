@@ -59,11 +59,21 @@ let
     case "''${1:-list}" in
       list)
         ${pkgs.systemd}/bin/systemctl list-units --no-legend --plain --state=active 'sandbox-vm-*.service' \
-          | ${pkgs.gnugrep}/bin/grep -Ev -- '-(prep|net|wl|gpu|relay|bus|grantsfs|grants|docs)(@.*)?\.service' \
+          | ${pkgs.gnugrep}/bin/grep -Ev -- '-(prep|net|wl|gpu|relay|bus|grantsfs|grants|docs|camera)(@.*)?\.service' \
           | ${pkgs.gawk}/bin/awk '{print $1}' | ${pkgs.gnused}/bin/sed -E 's/^sandbox-vm-//; s/\.service$//' || true ;;
       stop) ${pkgs.systemd}/bin/systemctl stop "$(unit_for "$2" "''${3:-}")" ;;
+      camera)
+        # sandbox-vm camera NAME [attach|detach] [PROJECT-DIR]: you asking is the approval.
+        u="$(unit_for "$2" "''${4:-}")"
+        cu="''${u%%@*}"; cu="''${cu%.service}-camera"
+        case "$u" in *@*) cu="$cu@''${u#*@}" ;; *) cu="$cu.service" ;; esac
+        case "''${3:-attach}" in
+          attach) ${pkgs.systemd}/bin/systemctl start "$cu" ;;
+          detach) ${pkgs.systemd}/bin/systemctl stop "$cu" ;;
+          *) echo "usage: sandbox-vm camera NAME [attach|detach] [PROJECT-DIR]" >&2; exit 2 ;;
+        esac ;;
       status) ${pkgs.systemd}/bin/systemctl status --no-pager "$(unit_for "$2" "''${3:-}")" ;;
-      *) echo "usage: sandbox-vm list | stop NAME [PROJECT-DIR] | status NAME [PROJECT-DIR]" >&2; exit 2 ;;
+      *) echo "usage: sandbox-vm list | stop NAME [PROJECT-DIR] | status NAME [PROJECT-DIR] | camera NAME [attach|detach] [PROJECT-DIR]" >&2; exit 2 ;;
     esac
   '';
 
@@ -79,11 +89,16 @@ let
       kernelPackages = config.boot.kernelPackages;
       # virtio-nvgpu guests run NVIDIA's userspace at exactly the host driver's
       # release, so they take the host's own driver package.
-      nvidiaPackage = if hasNvidia then config.hardware.nvidia.package else null;
-      nvgpu = {
-        inherit (nvgpu) wlGuest;
-        kmod = nvgpu.kmod config.boot.kernelPackages;
-      };
+      nvidiaPackage = if cfg.nvgpuAvailable then config.hardware.nvidia.package else null;
+      # null: no VM on this host gets virtio-nvgpu, so the guest carries none of it.
+      nvgpu =
+        if cfg.nvgpuAvailable then
+          {
+            inherit (nvgpu) wlGuest;
+            kmod = nvgpu.kmod config.boot.kernelPackages;
+          }
+        else
+          null;
     };
     modules = [
       ../../../lib/vm/guest.nix
@@ -127,24 +142,42 @@ in
 
     graphics = lib.mkOption {
       type = lib.types.enum [
+        "auto"
         "nvgpu"
         "cross-domain"
         "none"
       ];
-      default = if hasNvidia then "nvgpu" else "cross-domain";
-      defaultText = lib.literalMD ''"nvgpu" on NVIDIA hosts, else "cross-domain"'';
+      default = "auto";
       description = ''
-        How GUI apps in VMs reach the display (and, for nvgpu, the GPU):
-        - nvgpu: virtio-nvgpu (lib/vm/nvgpu.nix). The guest runs NVIDIA's own
-          driver against the host GPU, and its Wayland clients are clients of the
-          host compositor with zero-copy GPU buffers. Apps with the gpu capability
-          also get compute (CUDA). NVIDIA hosts only.
-        - cross-domain: crosvm's virtio-gpu cross-domain Wayland; the guest renders
-          in software. Any host.
+        How apps in VMs reach the display and the GPU. Two mechanisms:
+        - virtio-nvgpu (lib/vm/nvgpu.nix): the guest runs NVIDIA's own driver
+          against the host GPU, and its Wayland clients are clients of the host
+          compositor with zero-copy GPU buffers. Apps with the gpu capability also
+          get compute (CUDA). NVIDIA hosts only.
+        - cross-domain: crosvm's virtio-gpu cross-domain Wayland; the guest
+          renders in software, and no host GPU is reachable at all. Any host.
+        Modes:
+        - auto: virtio-nvgpu for VMs with an app that has the gpu capability (on
+          NVIDIA hosts), cross-domain for every other GUI app.
+        - nvgpu: virtio-nvgpu for every GUI app too.
+        - cross-domain: cross-domain for every GUI app; no VM gets the GPU.
         - none: no display; GUI apps start but show nothing.
         Either way the guest's windows reach Hyprland through a
         wp_security_context_v1 socket, like the container backends.
       '';
+    };
+
+    nvgpuAvailable = lib.mkOption {
+      type = lib.types.bool;
+      readOnly = true;
+      internal = true;
+      default =
+        hasNvidia
+        && lib.elem cfg.graphics [
+          "auto"
+          "nvgpu"
+        ];
+      description = "Whether any VM may get virtio-nvgpu on this host.";
     };
 
     nvgpu = lib.mkOption {

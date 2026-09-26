@@ -185,6 +185,20 @@ let
         echo "sbx-setup: could not start $name" >&2
     done
 
+    # GPU and display, per VM (guest-graphics.nix): virtio-nvgpu only in the VMs
+    # given the device, cross-domain for the other GUI VMs.
+    if [ "$(jq '.gpu' "$spec")" = true ]; then
+      modprobe virtio_gpu_nv || echo "sbx-setup: no virtio-nvgpu module" >&2
+    fi
+    case "$(jq -r '.display // empty' "$spec")" in
+      nvgpu)
+        echo "WAYLAND_DISPLAY=/run/sbx/wl/wayland-0" > /run/sbx/display.env
+        systemctl start --no-block sbx-wayland-nvgpu.service || true ;;
+      cross-domain)
+        echo "WAYLAND_DISPLAY=wayland-0" > /run/sbx/display.env
+        systemctl start --no-block sbx-wayland-cross-domain.service || true ;;
+    esac
+
     # X11 apps: Xwayland on the guest's Wayland socket (guest-graphics.nix).
     if [ "$(jq '.x11' "$spec")" = true ]; then
       systemctl start --no-block sbx-xwayland.service || true
@@ -295,6 +309,7 @@ in
       findutils
       shadow
       glibc.getent
+      kmod
     ];
     serviceConfig = {
       Type = "oneshot";

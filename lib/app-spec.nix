@@ -238,6 +238,11 @@
         default = false;
         description = "App needs a Wayland socket.";
       };
+      camera = lib.mkOption {
+        type = lib.types.bool;
+        default = false;
+        description = "App uses the camera (containers: /dev/video*; VMs: the camera attached on approval).";
+      };
       x11 = lib.mkOption {
         type = lib.types.bool;
         default = false;

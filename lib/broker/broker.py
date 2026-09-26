@@ -13,6 +13,9 @@ of JSON lines, the last one final:
       → {"type": "granted"}
   {"op": "grant-path", "path": "/abs/path", "write": bool, "reason": "..."?}
       → {"type": "granted"}
+  {"op": "camera", "reason": "..."?}
+      → {"type": "granted"} once the host's camera(s) are attached to the
+        sandbox (VMs: USB passthrough, until the VM stops)
   {"op": "fido"}
       → {"type": "granted"}, then the connection carries raw 64-byte CTAPHID
         reports both ways to the security key plugged in now (VMs: their guest
@@ -223,6 +226,24 @@ class Broker:
             return send({"type": "error", "message": r.stderr.strip() or "could not grant the folder"})
         send({"type": "granted"})
 
+    def op_camera(self, sandbox, req, send):
+        prog = self.sandboxes[sandbox].get("camera")
+        if not prog:
+            return send({"type": "denied", "reason": "this sandbox has no camera access"})
+        reason = str(req.get("reason", ""))[:500]
+        detail = "until the sandbox stops; meanwhile no other app can use the camera"
+        if reason:
+            detail += f"\n\nThe sandbox says why (unverified): {reason}"
+        ok, why = self.decide(sandbox, "camera", ("camera",), "use your camera", detail)
+        log(f"{sandbox}: camera: {why}")
+        if not ok:
+            return send({"type": "denied", "reason": why})
+        r = subprocess.run([prog, "attach"], capture_output=True, text=True)
+        if r.returncode != 0:
+            log(f"{sandbox}: camera: {r.stderr.strip()}")
+            return send({"type": "error", "message": r.stderr.strip() or "could not attach the camera"})
+        send({"type": "granted"})
+
     def op_fido(self, sandbox, req, send, conn):
         if not self.sandboxes[sandbox].get("fido"):
             return send({"type": "denied", "reason": "this sandbox has no security key access"})
@@ -294,6 +315,7 @@ class Broker:
                 "exec": self.op_exec,
                 "grant-net": self.op_grant_net,
                 "grant-path": self.op_grant_path,
+                "camera": self.op_camera,
                 "fido": lambda sb, r, snd: self.op_fido(sb, r, snd, conn),
             }.get(op)
             if fn is None:

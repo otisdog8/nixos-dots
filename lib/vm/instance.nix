@@ -102,8 +102,11 @@ let
   x11 = gui && lib.any (m: m.caps.x11 || m.x11Forward) members;
   gpuCap = anyCap "gpu";
   # virtio-nvgpu carries both the GPU and the display; GPU-only apps get it too.
-  nvgpu = vmHost.graphics == "nvgpu" && (gui || gpuCap);
-  crossDomain = vmHost.graphics == "cross-domain" && gui;
+  # virtio-nvgpu only for VMs whose apps need the GPU (graphics = "auto"), or
+  # for every GUI VM (graphics = "nvgpu"); every other GUI VM gets cross-domain,
+  # which reaches no host GPU at all.
+  nvgpu = vmHost.nvgpuAvailable && (gpuCap || (vmHost.graphics == "nvgpu" && gui));
+  crossDomain = gui && !nvgpu;
   gpuDevice = nvgpu || crossDomain;
   crosvmPkg = if nvgpu then vmHost.nvgpu.crosvm else pkgs.crosvm;
   # The virtio-nvgpu backend runs as a user of this VM's own (virtio-nvgpu's
@@ -122,7 +125,7 @@ let
   gpuGroup = if nvgpu then gpuUserName else principalGroup;
   # The guest's Wayland socket (mirrors guest-graphics.nix) and the host
   # compositor's, pinned like the systemd backend's.
-  guestWaylandDisplay = if vmHost.graphics == "nvgpu" then "/run/sbx/wl/wayland-0" else "wayland-0";
+  guestWaylandDisplay = if nvgpu then "/run/sbx/wl/wayland-0" else "wayland-0";
   guestRuntimeDir = "/run/user/${guestUid}";
   hostRuntimeDir = "/run/user/${guestUid}";
   hostWaylandSocket = "wayland-1";
@@ -161,6 +164,10 @@ let
   # Security keys: a virtual FIDO device in the guest, relayed through the
   # broker to whichever key is plugged in (lib/vm/fido-guest.py).
   fido = anyCap "fido" && broker;
+  # Cameras: USB passthrough of the host's video-class devices into the running
+  # VM, only on approval (the broker's camera op, or `sandbox-vm camera`), until
+  # the VM stops. The VM has an xHCI controller only when it may get one.
+  camera = anyCap "camera";
   grantCwd' = grantCwd && grants;
   grantsPkg = import ./grants.nix pkgs;
   crosvmFs = import ./crosvm-fs.nix pkgs;
@@ -180,6 +187,9 @@ let
     ++ lib.attrNames extraRelays;
   relay = relayServices != [ ];
   vsockRelay = import ./vsock-relay.nix pkgs;
+  sbxRequest = pkgs.writeScriptBin "sbx-request" (
+    "#!${pkgs.python3}/bin/python3 -IS\n" + builtins.readFile ../broker/request.py
+  );
   guestSockets = {
     pulse = "/run/sbx/pulse/native";
     dbus = "/run/sbx/bus/bus";
@@ -308,6 +318,15 @@ let
       }) binds;
       cwd = perCwd;
       inherit grants fido docs;
+      # Which GPU/display stack the guest brings up (guest-graphics.nix).
+      gpu = nvgpu;
+      display =
+        if nvgpu && gui then
+          "nvgpu"
+        else if crossDomain then
+          "cross-domain"
+        else
+          null;
       guestBinds = lib.mapAttrsToList (target: source: {
         target = expandHome' target;
         inherit source;
@@ -407,7 +426,7 @@ let
       --name ${lib.escapeShellArg "sbx-${name}"}
       --mem size=${toString memory}
       --cpus num-cores=${toString vcpus}
-      --no-usb
+      ${lib.optionalString (!camera) "--no-usb"}
       --balloon-page-reporting
       --serial type=stdout,hardware=serial,console=true
       --vsock "cid=$cid"
@@ -614,6 +633,82 @@ let
       ${pkgs.acl}/bin/setfacl -m "u:${principal}:rw" "$rt/docs/fs.sock"
     ''}
     wait "$pid"
+  '';
+
+  # Root: attach every USB video-class device (a webcam, as the host's uvcvideo
+  # sees it) to the running VM, recording the xHCI ports; on stop, detach them
+  # and let the host's drivers take them back.
+  cameraAttach = pkgs.writeShellScript "${unit}-camera-attach" ''
+    set -euo pipefail
+    dir="''${1:-}"
+    ${idPrelude}
+    sock="$rt/ctl/crosvm.sock"
+    [ -S "$sock" ] || { echo "${unit}: the VM isn't running" >&2; exit 1; }
+    ${co}/install -d -m 0700 "$rt/camera"
+    : > "$rt/camera/ports"
+    found=0
+    for d in /sys/bus/usb/devices/*; do
+      name="$(${co}/basename "$d")"
+      case "$name" in *:* | usb*) continue ;; esac
+      [ -f "$d/busnum" ] || continue
+      video=0
+      for c in "$d"/"$name":*/bInterfaceClass; do
+        [ "$(${co}/cat "$c" 2>/dev/null)" = 0e ] && video=1
+      done
+      [ "$video" = 1 ] || continue
+      bus="$(${co}/cat "$d/busnum")"
+      num="$(${co}/cat "$d/devnum")"
+      node="$(printf '/dev/bus/usb/%03d/%03d' "$bus" "$num")"
+      out="$(${crosvm} usb attach "1:1:$bus:$num" "$node" "$sock" || true)"
+      case "$out" in
+        "ok "*)
+          echo "''${out#ok } $name" >> "$rt/camera/ports"
+          found=1
+          echo "attached $(${co}/cat "$d/product" 2>/dev/null || echo "$name") (xHCI port ''${out#ok })" ;;
+        *) echo "could not attach $node: $out" >&2 ;;
+      esac
+    done
+    [ "$found" = 1 ] || { echo "${unit}: no camera to attach" >&2; exit 1; }
+  '';
+  cameraDetach = pkgs.writeShellScript "${unit}-camera-detach" ''
+    set -uo pipefail
+    dir="''${1:-}"
+    ${idPrelude}
+    [ -f "$rt/camera/ports" ] || exit 0
+    while read -r port name; do
+      [ -S "$rt/ctl/crosvm.sock" ] && ${crosvm} usb detach "$port" "$rt/ctl/crosvm.sock" >/dev/null
+      # Its interfaces were claimed away from the host's drivers: probe again.
+      for i in /sys/bus/usb/devices/"$name":*; do
+        [ -e "$i" ] && ${co}/basename "$i" > /sys/bus/usb/drivers_probe 2>/dev/null
+      done
+    done < "$rt/camera/ports"
+    ${co}/rm -f "$rt/camera/ports"
+    exit 0
+  '';
+
+  # The user (and the broker, as the user): attach or detach the cameras of the
+  # running VM(s). Per-project VMs share one broker socket, so every running one.
+  cameraCtl = pkgs.writeShellScript "${unit}-camera" ''
+    set -uo pipefail
+    action="''${1:-attach}"
+    case "$action" in attach) verb=start ;; detach) verb=stop ;; *) echo "usage: attach|detach" >&2; exit 2 ;; esac
+    ok=0
+    ${
+      if perCwd then
+        ''
+          while read -r u; do
+            inst="''${u#${unit}@}"
+            ${systemctl} "$verb" "${unit}-camera@$inst" && ok=1
+          done < <(${systemctl} list-units --plain --no-legend --state=active '${unit}@*.service' | ${pkgs.gawk}/bin/awk '{print $1}')
+        ''
+      else
+        ''
+          if ${systemctl} is-active --quiet ${unit}.service; then
+            ${systemctl} "$verb" ${unit}-camera.service && ok=1
+          fi
+        ''
+    }
+    [ "$ok" = 1 ] || { echo "${label} isn't running, or its camera couldn't be ''${action}ed" >&2; exit 1; }
   '';
 
   # For the broker (grant-path PATH rw|ro). Per-project VMs share one broker
@@ -849,6 +944,16 @@ let
         echo "${member.bin}: the VM did not come up (see: journalctl -u '$unit')" >&2
         finish 1
       fi
+      ${lib.optionalString (member.caps.camera && broker && member.cameraOnLaunch or false) ''
+        # The camera, if you allow it (asked in the background, so the app
+        # starts meanwhile), unless it's already attached.
+        camunit="''${unit%%@*}"; camunit="''${camunit%.service}-camera"
+        case "$unit" in *@*) camunit="$camunit@''${unit#*@}" ;; *) camunit="$camunit.service" ;; esac
+        if ! ${systemctl} is-active --quiet "$camunit"; then
+          SBX_BROKER="''${XDG_RUNTIME_DIR:-/run/user/$(${co}/id -u)}/sbx-broker/${brokerName}.sock" \
+            ${sbxRequest}/bin/sbx-request camera --reason "${member.appName} was started" >/dev/null 2>&1 &
+        fi
+      ''}
       ${lib.optionalString (!perCwd && grantCwd') ''
         if [ "$grantHere" = 1 ] && ! ${grantsPkg}/bin/sbx-grants request "$rt/grants" "$here" rw; then
           echo "${member.bin}: couldn't give ${label} $here; starting in ~" >&2
@@ -1302,6 +1407,29 @@ let
     }
   );
 
+  # Not a helper: attaching must never start the VM (Requisite=), and it goes
+  # when the VM does (PartOf=).
+  cameraService = {
+    description = "Sandbox VM camera (USB passthrough): ${label}";
+    requisite = [ (ref unit) ];
+    after = [ (ref unit) ];
+    partOf = [ (ref unit) ];
+    restartIfChanged = false;
+    stopIfChanged = false;
+    serviceConfig = {
+      Type = "oneshot";
+      RemainAfterExit = true;
+      ExecStart = "${cameraAttach}${instArg}";
+      ExecStop = "${cameraDetach}${instArg}";
+      PrivateNetwork = true;
+      ProtectHome = true;
+      NoNewPrivileges = true;
+      DevicePolicy = "closed";
+      DeviceAllow = [ "char-usb_device rw" ];
+      RestrictAddressFamilies = [ "AF_UNIX" ];
+    };
+  };
+
   docsService = helper (
     afterPrep [ ]
     // {
@@ -1405,6 +1533,7 @@ in
   // lib.optionalAttrs relay { "${unit}-relay${tmpl}" = relayService; }
   // lib.optionalAttrs bus { "${unit}-bus${tmpl}" = busService; }
   // lib.optionalAttrs docs { "${unit}-docs${tmpl}" = docsService; }
+  // lib.optionalAttrs camera { "${unit}-camera${tmpl}" = cameraService; }
   // lib.optionalAttrs grants {
     "${unit}-grantsfs${tmpl}" = grantsFsService;
     "${unit}-grants${tmpl}" = grantsHubService;
@@ -1416,6 +1545,7 @@ in
     label = "${label} (VM)";
     netUnits = lib.optional network' netUnitPattern;
     grantPaths = if grants then "${grantPathsScript}" else null;
+    camera = if camera then "${cameraCtl}" else null;
     inherit fido;
   };
 
@@ -1437,8 +1567,10 @@ in
 
   # For the polkit allowlist (modules/system/sandbox.nix): the user starts/stops
   # only the VM unit; its helpers come along as dependencies.
-  polkitUnits = lib.optional (!perCwd) "${unit}.service";
-  polkitTemplates = lib.optional perCwd "${unit}@";
+  polkitUnits = lib.optionals (!perCwd) (
+    [ "${unit}.service" ] ++ lib.optional camera "${unit}-camera.service"
+  );
+  polkitTemplates = lib.optionals perCwd ([ "${unit}@" ] ++ lib.optional camera "${unit}-camera@");
 
   assertions = [
     {
