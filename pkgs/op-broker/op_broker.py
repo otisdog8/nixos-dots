@@ -315,6 +315,11 @@ class Op:
 
     def __init__(self, cfg, token=None):
         self.path = cfg["path"]
+        # Run op under this (e.g. a root-owned copy of `timeout` in a VM guest:
+        # 1Password checks that the CLI's binary and its parent's are owned by
+        # root and not on FUSE; a guest's virtio-fs /nix/store is FUSE, with the
+        # host's root-owned files showing up as nobody's).
+        self.launcher = [str(a) for a in cfg.get("launcher") or []]
         self.account = cfg.get("account")
         self.vaults = list(cfg.get("vaults") or [])
         self.timeout = int(cfg.get("timeout", 30))
@@ -335,7 +340,7 @@ class Op:
         self._list_lock = threading.Lock()
 
     def _run(self, args):
-        argv = [self.path] + args
+        argv = self.launcher + [self.path] + args
         if self.account:
             argv += ["--account", self.account]
         try:

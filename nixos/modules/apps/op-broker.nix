@@ -1,17 +1,22 @@
 # op-broker: 1Password autofill for sandboxed browsers, one approved item at a
 # time (design: docs/op-broker.md; code: pkgs/op-broker).
 #
+# On by default where 1Password runs in its VM (the one setup where the desktop
+# app lets a CLI in; see the doc for why its container can't).
+#
 # The broker runs next to 1Password, never in a browser sandbox:
-#   - 1Password in its container (the default): `op-broker.service`, as
-#     app-onepassword with primary group onepassword-cli, bound to the lifetime of
+#   - 1Password in its container: `op-broker.service`, as app-onepassword with
+#     primary group onepassword-cli, bound to the lifetime of
 #     sandbox-onepassword.service, reaching the desktop app's CLI socket in the
-#     app's runtime dir.
+#     app's runtime dir. (Wired, but the app refuses the connection: warned.)
 #   - service-account auth: the same service as its own `op-broker` uid, with the
 #     token from a root-only file; no desktop app involved.
 #   - 1Password in its VM: the broker runs INSIDE that guest (uplink mode) and the
 #     host runs only `op-broker-bridge.service`, a byte relay. The guest gets the
 #     broker through sandbox.vm.guestServices and its uplink through
-#     sandbox.vm.relays.
+#     sandbox.vm.relays. 1Password's own authorization of the broker's CLI
+#     session (and its system-authentication unlock) is asked of the host user
+#     by onepassword-system-auth.nix.
 #
 # Each browser in `browsers` gets its own socket, /run/op-broker/clients/<app>/sock.
 # The socket a request arrives on IS the requester the dialog names. Container
@@ -74,6 +79,23 @@ let
   # Who owns the client socket directories: the broker, or the host bridge.
   socketOwner = if desktop && opInVm then "op-broker-bridge" else runAs;
 
+  # The host broker's display (no host broker with 1Password in its VM).
+  #   - desktop auth, 1Password in its container: the security-context socket
+  #     the 1Password launcher holds (and ACLs for app-onepassword), bound in;
+  #   - service account: a security-context socket of the broker's own, held
+  #     by op-broker-display.service in the user's session, in a directory the
+  #     op-broker group may traverse (nothing to bind: it outlives sessions).
+  displayDir = "${base}/display";
+  bindSocket =
+    if cfg.prompt.waylandSocket != null then
+      cfg.prompt.waylandSocket
+    else if desktop then
+      "/run/user/${uid}/sandbox-onepassword-wayland"
+    else
+      null;
+  ownDisplay = !desktop && cfg.prompt.waylandSocket == null;
+  wlSecure = import ../../../lib/backends/wayland-security-context.nix pkgs;
+
   browserOn = b: has b && apps.${b}.enable && builtins.elem b cfg.browsers;
   browsers = lib.filter browserOn supported;
   inVm = b: apps.${b}.sandbox.mode == "vm";
@@ -130,10 +152,55 @@ let
   configFile = pkgs.writeText "op-broker.json" (
     builtins.toJSON (brokerConfig "/var/lib/op-broker/op")
   );
-  # For the broker inside a 1Password VM: op keeps its default config dir.
+  # For the broker inside a 1Password VM: op keeps its default config dir, and
+  # runs from root-owned copies on the guest's tmpfs (guestBrokerStart): the
+  # desktop app accepts a CLI only when its binary and its parent's are owned
+  # by root and not on FUSE, and the guest's virtio-fs /nix/store is FUSE with
+  # the host's root-owned files showing as nobody's.
+  guestOpDir = "/run/sbx/op-bin";
   guestConfigFile = pkgs.writeText "op-broker-guest.json" (
-    builtins.toJSON (brokerConfig null // { audit.file = null; })
+    builtins.toJSON (
+      lib.recursiveUpdate (brokerConfig null) {
+        audit.file = null;
+        op = {
+          path = "${guestOpDir}/op";
+          # timeout forks op and waits, so op's parent is this root-owned copy
+          # (the broker's own interpreter is a store path).
+          launcher = [
+            "${guestOpDir}/timeout"
+            "--kill-after=5"
+            "60"
+          ];
+        };
+      }
+    )
   );
+  # The guest service (as root): copy op and timeout to a root-owned tmpfs
+  # directory, then become the user with primary group onepassword-cli (the
+  # group the app checks a connecting CLI's gid against) and run the broker.
+  guestBrokerStart = pkgs.writeShellScript "op-broker-guest-start" ''
+    set -euo pipefail
+    export PATH=${
+      lib.makeBinPath [
+        pkgs.coreutils
+        pkgs.shadow
+        pkgs.glibc.getent
+        pkgs.util-linux
+      ]
+    }
+    d=${guestOpDir}
+    umask 022
+    install -d -m 0755 -o root -g root "$d"
+    install -m 0755 -o root -g root "$(readlink -f ${lib.getExe' cfg.opPackage "op"})" "$d/op.new"
+    mv -f "$d/op.new" "$d/op"
+    install -m 0755 -o root -g root "$(readlink -f ${pkgs.coreutils}/bin/timeout)" "$d/timeout.new"
+    mv -f "$d/timeout.new" "$d/timeout"
+    getent group onepassword-cli >/dev/null || groupadd -r onepassword-cli
+    home="$(getent passwd ${user} | cut -d: -f6)"
+    exec setpriv --reuid=${user} --regid=onepassword-cli --init-groups \
+      env HOME="$home" USER=${user} LOGNAME=${user} \
+      ${opb.broker}/bin/op-broker uplink --config ${guestConfigFile} --path /run/sbx/op-uplink/sock
+  '';
   bridgeConfigFile = pkgs.writeText "op-broker-bridge.json" (
     builtins.toJSON {
       clients = lib.mapAttrs (n: c: {
@@ -248,7 +315,8 @@ let
   ++ lib.optionals opInVm [
     "d ${uplinkDir} 0710 op-broker-bridge op-broker-bridge -"
     "a+ ${uplinkDir} - - - - u:${user}:--x"
-  ];
+  ]
+  ++ lib.optional ownDisplay "d ${displayDir} 0750 ${user} op-broker -";
 
   clientType = lib.types.submodule {
     options = {
@@ -270,11 +338,19 @@ let
 in
 {
   options.modules.apps.op-broker = {
-    enable = lib.mkEnableOption "op-broker, per-item 1Password autofill for sandboxed browsers";
+    enable = lib.mkOption {
+      type = lib.types.bool;
+      default = onepw != null && onepw.enable && opInVm;
+      defaultText = lib.literalMD ''
+        whether 1Password is enabled and runs in its VM (the one place the
+        desktop app lets a CLI in: see docs/op-broker.md on the container)'';
+      description = "Whether to enable op-broker, per-item 1Password autofill for sandboxed browsers.";
+    };
 
     browsers = lib.mkOption {
       type = lib.types.listOf (lib.types.enum supported);
-      default = [ ];
+      default = supported;
+      defaultText = lib.literalExpression (builtins.toJSON supported);
       example = [
         "zen-browser"
         "ungoogled-chromium"
@@ -378,14 +454,15 @@ in
       };
       waylandSocket = lib.mkOption {
         type = lib.types.nullOr lib.types.str;
-        default = if desktop then "/run/user/${uid}/sandbox-onepassword-wayland" else null;
-        defaultText = lib.literalMD ''
-          desktop auth: the security-context socket the 1Password launcher holds
-          for app-onepassword; service-account auth: null'';
+        default = null;
         description = ''
-          Wayland socket the broker's dialogs use, bound into the service by
-          systemd. The broker's uid must be allowed to connect to it. With null
-          there is no display, every dialog fails, and every request is denied.
+          A Wayland socket for the host broker's dialogs, bound into the service
+          by systemd (the broker's uid must be allowed to connect to it). null
+          (the default) derives one: with 1Password in its container, the
+          security-context socket its launcher holds for app-onepassword; with
+          a service account, a security-context socket of the broker's own,
+          held by op-broker-display.service in your session. (1Password in its
+          VM: the broker runs in that guest and uses the VM's display.)
         '';
       };
     };
@@ -489,14 +566,8 @@ in
       default = {
         package = opb.broker;
         configFile = guestConfigFile;
-        command = [
-          "${opb.broker}/bin/op-broker"
-          "uplink"
-          "--config"
-          "${guestConfigFile}"
-          "--path"
-          "/run/sbx/op-uplink/sock"
-        ];
+        # Run as the guest's root: it drops to the user itself (see guestBrokerStart).
+        command = [ "${guestBrokerStart}" ];
       };
       defaultText = lib.literalMD "the uplink-mode broker for the 1Password VM guest";
       description = "What runs inside the 1Password VM (wired through sandbox.vm.guestServices).";
@@ -536,7 +607,7 @@ in
           onepassword.sandbox.vm.guestServices = lib.mkIf (cfg.enable && desktop && opInVm) {
             op-broker = {
               argv = cfg.guestBroker.command;
-              group = "onepassword-cli";
+              root = true;
             };
           };
         };
@@ -549,15 +620,24 @@ in
           message = "modules.apps.op-broker: auth = \"desktop\" needs modules.apps.onepassword.enable.";
         }
         {
+          # The app authorizes each CLI session through polkit, which in the
+          # guest only that module answers.
+          assertion = !(desktop && opInVm) || config.modules.apps.onepassword-system-auth.enable;
+          message = "modules.apps.op-broker with 1Password in its VM needs modules.apps.onepassword-system-auth.enable (1Password authorizes the broker's CLI session through polkit).";
+        }
+        {
           assertion = desktop || cfg.serviceAccountTokenFile != null;
           message = "modules.apps.op-broker: auth = \"service-account\" needs serviceAccountTokenFile.";
         }
       ];
 
-      warnings =
-        lib.optional (cfg.prompt.waylandSocket == null && !(desktop && opInVm)) ''
-          op-broker: modules.apps.op-broker.prompt.waylandSocket is null, so the broker
-          can't show its dialogs and denies every request.'';
+      warnings = lib.optional (desktop && !opInVm) ''
+        op-broker: auth = "desktop" with 1Password in its container can't work: the
+        1Password app only lets a CLI in after checking that the CLI's binary and its
+        parent's are owned by root, by pid, and nixpak's user and pid namespaces make
+        every host-root file look owned by uid 65534 and hide the broker's pids. Run
+        1Password in its VM (modules.apps.onepassword.sandbox.mode = "vm"), or use
+        auth = "service-account". See docs/op-broker.md.'';
 
       users.groups.onepassword-cli = { };
       users.users.op-broker = lib.mkIf (!desktop) {
@@ -589,10 +669,12 @@ in
           # 1Password launcher recreates the directory on every start.
           XDG_RUNTIME_DIR = "/run/app-onepassword";
         }
-        // lib.optionalAttrs (cfg.prompt.waylandSocket != null) {
-          # The dialogs' display (by default the security-context socket the
-          # 1Password launcher holds and ACLs for app-onepassword), bound below.
+        # The dialogs' display (see displayDir / bindSocket above).
+        // lib.optionalAttrs (bindSocket != null) {
           WAYLAND_DISPLAY = "/run/op-broker-ui/wayland-0";
+        }
+        // lib.optionalAttrs ownDisplay {
+          WAYLAND_DISPLAY = "${displayDir}/wayland-0";
         };
         serviceConfig = hardening // {
           Type = "notify";
@@ -624,9 +706,9 @@ in
           # lib/backends/systemd.nix), so the socket is bound in by systemd (as
           # root), as the 1Password sandbox gets it. The unit restarts with
           # 1Password (bindsTo), so the bound inode is never stale.
-          RuntimeDirectory = lib.mkIf (cfg.prompt.waylandSocket != null) "op-broker-ui";
-          BindPaths = lib.mkIf (cfg.prompt.waylandSocket != null) [
-            "-${cfg.prompt.waylandSocket}:/run/op-broker-ui/wayland-0"
+          RuntimeDirectory = lib.mkIf (bindSocket != null) "op-broker-ui";
+          BindPaths = lib.mkIf (bindSocket != null) [
+            "-${bindSocket}:/run/op-broker-ui/wayland-0"
           ];
           RestrictAddressFamilies = [
             "AF_UNIX"
@@ -636,6 +718,28 @@ in
             "AF_INET6"
           ];
           IPAddressDeny = lib.mkIf desktop "any";
+        };
+      };
+
+      # Service account: the broker's own display, a security-context socket
+      # (sandboxed-client view of the compositor) held while the user's
+      # graphical session runs. UMask 0007: the op-broker group may connect.
+      systemd.user.services.op-broker-display = lib.mkIf ownDisplay {
+        description = "Display for op-broker's dialogs";
+        wantedBy = [ "graphical-session.target" ];
+        partOf = [ "graphical-session.target" ];
+        after = [ "graphical-session.target" ];
+        unitConfig.ConditionUser = user;
+        serviceConfig = {
+          UMask = "0007";
+          # Upstream: the session's display, else the compositor socket name the
+          # sandbox launchers pin (wayland-1).
+          ExecStart = pkgs.writeShellScript "op-broker-display" ''
+            export WAYLAND_DISPLAY="''${WAYLAND_DISPLAY:-wayland-1}"
+            exec ${wlSecure}/bin/wayland-security-context hold ${displayDir}/wayland-0 com.otisroot.op_broker
+          '';
+          Restart = "on-failure";
+          RestartSec = 2;
         };
       };
 

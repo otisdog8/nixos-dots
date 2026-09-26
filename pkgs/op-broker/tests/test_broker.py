@@ -23,6 +23,7 @@ import op_broker as ob  # noqa: E402
 
 FAKE_OP = os.path.join(HERE, "fake_op.py")
 FAKE_DIALOG = os.path.join(HERE, "fake_dialog.py")
+FAKE_LAUNCHER = os.path.join(HERE, "fake_launcher.py")
 NATIVE_HOST = os.path.join(SRC, "native_host.py")
 
 A = "a" * 26  # github, personal
@@ -618,6 +619,16 @@ class TestBroker(unittest.TestCase):
         fill(env.broker(), "firefox", "https://login.example.com")
         for l in lines(env.op_log):
             self.assertEqual(l[-2:], ["--account", "my.1password.com"])
+
+    def test_launcher(self):
+        env = Env()
+        log = os.path.join(env.dir, "launcher.log")
+        env.cfg["op"]["launcher"] = [sys.executable, FAKE_LAUNCHER]
+        env.cfg["op"]["extraEnv"]["FAKE_LAUNCHER_LOG"] = log
+        self.assertTrue(fill(env.broker(), "firefox", "https://login.example.com")["ok"])
+        with open(log) as f:
+            self.assertEqual(f.read().split(), [FAKE_OP, FAKE_OP])  # list, then get
+        self.assertEqual(len(lines(env.op_log)), 2)
 
     def test_op_failure(self):
         os.remove(self.env.db)
