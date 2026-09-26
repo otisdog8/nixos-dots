@@ -14,7 +14,7 @@
 #     (sandbox-vm-group-<g>, built once in nixos/modules/system/sandbox-vm.nix
 #     from every member's record in modules.sandbox.vm.members).
 #
-# Not lowered yet (the app still starts, without them): fido, device binds,
+# Not lowered yet (the app still starts, without them): device binds,
 # ./-relative binds, whatever raw nixpakModules add beyond gui/xdg/audio/D-Bus,
 # variantCommands, and file-descriptor passing over D-Bus (so the document
 # portal's file chooser results and screen capture don't work yet). Selecting
@@ -123,7 +123,7 @@ let
     lib.optional (caps.gpu && !instance.nvgpu) "gpu"
     ++ lib.optional (caps.wayland && !instance.gui) "wayland"
     ++ lib.optional (caps.x11 && !instance.x11) "x11"
-    ++ lib.optional caps.fido "fido"
+    ++ lib.optional (caps.fido && !instance.fido) "fido"
     ++ lib.optional (caps.binds.dev != [ ]) "device binds"
     ++ lib.optional (caps.dbus.policies != { } && !instance.bus) "D-Bus policies"
     ++ lib.optional (lib.any (b: paths.isPwdRelative b.path) member.bindReqs) "./-relative binds"

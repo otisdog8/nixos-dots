@@ -13,6 +13,12 @@ of JSON lines, the last one final:
       → {"type": "granted"}
   {"op": "grant-path", "path": "/abs/path", "write": bool, "reason": "..."?}
       → {"type": "granted"}
+  {"op": "fido"}
+      → {"type": "granted"}, then the connection carries raw 64-byte CTAPHID
+        reports both ways to the security key plugged in now (VMs: their guest
+        has a virtual FIDO device, lib/vm/fido-guest.py). Only the CTAPHID
+        channels the sandbox opened itself are relayed, so it never sees the
+        host's own traffic with the key.
   any refusal → {"type": "denied", "reason": "..."}; bad input → {"type": "error", ...}
 
 Every request not covered by a rule asks the user with sbx-prompt (a desktop
@@ -24,6 +30,7 @@ import base64
 import ipaddress
 import json
 import os
+import select
 import shlex
 import socket
 import stat
@@ -216,6 +223,32 @@ class Broker:
             return send({"type": "error", "message": r.stderr.strip() or "could not grant the folder"})
         send({"type": "granted"})
 
+    def op_fido(self, sandbox, req, send, conn):
+        if not self.sandboxes[sandbox].get("fido"):
+            return send({"type": "denied", "reason": "this sandbox has no security key access"})
+        node = find_fido_token()
+        if node is None:
+            return send({"type": "error", "message": "no security key is plugged in"})
+        ok, why = self.decide(
+            sandbox,
+            "fido",
+            ("fido",),
+            "use your security key (FIDO/WebAuthn)",
+            "until the sandbox stops; each sign-in still needs a touch on the key",
+        )
+        log(f"{sandbox}: fido {node}: {why}")
+        if not ok:
+            return send({"type": "denied", "reason": why})
+        try:
+            fd = os.open(node, os.O_RDWR | os.O_CLOEXEC)
+        except OSError as e:
+            return send({"type": "error", "message": f"could not open the security key: {e.strerror}"})
+        send({"type": "granted"})
+        try:
+            CtapRelay(fd, conn).run()
+        finally:
+            os.close(fd)
+
     def running_units(self, units):
         out = []
         for pattern in units:
@@ -261,6 +294,7 @@ class Broker:
                 "exec": self.op_exec,
                 "grant-net": self.op_grant_net,
                 "grant-path": self.op_grant_path,
+                "fido": lambda sb, r, snd: self.op_fido(sb, r, snd, conn),
             }.get(op)
             if fn is None:
                 return send({"type": "error", "message": f"unknown op {op!r}"})
@@ -289,6 +323,110 @@ class Broker:
         while True:
             conn, _ = s.accept()
             threading.Thread(target=self.handle, args=(sandbox, conn), daemon=True).start()
+
+
+# ── FIDO ─────────────────────────────────────────────────────────────────────
+FIDO_USAGE_PAGE = bytes([0x06, 0xD0, 0xF1])  # Usage Page (FIDO Alliance)
+CTAP_REPORT = 64
+CTAP_BROADCAST = b"\xff\xff\xff\xff"
+CTAP_INIT = 0x86  # CTAPHID_INIT with the initialization-packet bit
+
+
+def find_fido_token():
+    """The first hidraw node whose report descriptor declares the FIDO usage page."""
+    base = "/sys/class/hidraw"
+    try:
+        names = sorted(os.listdir(base), key=lambda n: int(n[6:]) if n[6:].isdigit() else 0)
+    except OSError:
+        return None
+    for name in names:
+        try:
+            with open(os.path.join(base, name, "device", "report_descriptor"), "rb") as f:
+                if FIDO_USAGE_PAGE in f.read():
+                    return f"/dev/{name}"
+        except OSError:
+            continue
+    return None
+
+
+def recv_exact(conn, n):
+    buf = b""
+    while len(buf) < n:
+        chunk = conn.recv(n - len(buf))
+        if not chunk:
+            return None
+        buf += chunk
+    return buf
+
+
+class CtapRelay:
+    """Pump CTAPHID reports between a sandbox and a hidraw key.
+
+    hidraw hands every input report to every process that has the key open, so
+    responses to the host's own clients would reach the sandbox too. Only
+    channels the sandbox allocated (CTAPHID_INIT on the broadcast channel,
+    matched by its nonce) are relayed back; the sandbox may only send on those
+    channels (or allocate new ones)."""
+
+    def __init__(self, fd, conn):
+        self.fd = fd
+        self.conn = conn
+        self.cids = set()
+        self.nonces = set()
+        self.lock = threading.Lock()
+        self.done = threading.Event()
+
+    def run(self):
+        t = threading.Thread(target=self.from_key, daemon=True)
+        t.start()
+        try:
+            while not self.done.is_set():
+                pkt = recv_exact(self.conn, CTAP_REPORT)
+                if pkt is None:
+                    break
+                cid = pkt[:4]
+                with self.lock:
+                    if cid == CTAP_BROADCAST:
+                        if pkt[4] != CTAP_INIT:
+                            continue
+                        self.nonces.add(pkt[7:15])
+                        if len(self.nonces) > 64:
+                            self.nonces.pop()
+                    elif cid not in self.cids:
+                        continue
+                os.write(self.fd, b"\0" + pkt)
+        except OSError:
+            pass
+        finally:
+            self.done.set()
+            t.join(2)
+
+    def from_key(self):
+        poll = select.poll()
+        poll.register(self.fd, select.POLLIN)
+        try:
+            while not self.done.is_set():
+                if not poll.poll(500):
+                    continue
+                pkt = os.read(self.fd, CTAP_REPORT)
+                if len(pkt) < CTAP_REPORT:
+                    pkt = pkt.ljust(CTAP_REPORT, b"\0")
+                cid = pkt[:4]
+                with self.lock:
+                    if cid == CTAP_BROADCAST and pkt[4] == CTAP_INIT and pkt[7:15] in self.nonces:
+                        self.nonces.discard(pkt[7:15])
+                        self.cids.add(pkt[15:19])
+                    elif cid not in self.cids:
+                        continue
+                self.conn.sendall(pkt)
+        except OSError:
+            pass  # the key was unplugged, or the sandbox went away
+        finally:
+            self.done.set()
+            try:
+                self.conn.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
 
 
 def main():

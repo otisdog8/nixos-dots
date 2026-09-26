@@ -29,6 +29,9 @@ let
   home = "/home/${user}";
   vsockRelay = import ./vsock-relay.nix pkgs;
   grantsPkg = import ./grants.nix pkgs;
+  fidoGuest = pkgs.writeScriptBin "sbx-fido-guest" (
+    "#!${pkgs.python3}/bin/python3 -IS\n" + builtins.readFile ./fido-guest.py
+  );
 
   # Mount everything the spec describes. Runs as root before any SSH session.
   setup = pkgs.writeShellScript "sbx-setup" ''
@@ -135,6 +138,11 @@ let
       vfs sbx-grants /run/sbx/grants/home
       printf '%s' "$cid" > /run/sbx/grants/cid
       systemctl start --no-block sbx-grantd.service || true
+    fi
+
+    # Security keys: a virtual FIDO device relayed to the host's key (fido-guest.py).
+    if [ "$(jq '.fido' "$spec")" = true ]; then
+      systemctl start --no-block sbx-fido.service || true
     fi
 
     # X11 apps: Xwayland on the guest's Wayland socket (guest-graphics.nix).
@@ -266,6 +274,25 @@ in
       RestartSec = 1;
     };
   };
+
+  systemd.services.sbx-fido = {
+    description = "Security key from the host (virtual FIDO device)";
+    after = [
+      "sbx-setup.service"
+      "systemd-udevd.service"
+    ];
+    serviceConfig = {
+      ExecStartPre = "${pkgs.kmod}/bin/modprobe uhid";
+      ExecStart = "${fidoGuest}/bin/sbx-fido-guest --broker /run/sbx/broker.sock";
+      Restart = "always";
+      RestartSec = 2;
+    };
+  };
+  # No logind seat session over SSH, so uaccess never applies: the virtual key
+  # (systemd's fido_id tags it) belongs to the user outright.
+  services.udev.extraRules = ''
+    SUBSYSTEM=="hidraw", ENV{ID_FIDO_TOKEN}=="1", OWNER="${user}", MODE="0600"
+  '';
 
   systemd.services.sbx-grantd = {
     description = "Folder grants from the host";

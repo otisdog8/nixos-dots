@@ -10,6 +10,8 @@
 #   grant-net ADDR         let the sandbox reach an address its network policy
 #                          blocks (VMs and systemd-backend apps; until it stops)
 #   grant-path [--write] P give a running VM a folder (see the VM instances)
+#   fido                   (VMs' virtual security key, not sbx-request) relay
+#                          CTAPHID to the key plugged in now
 # Anything no rule covers is a prompt; the answer can cover the rest of the login
 # session (capped at 12 h), except root commands.
 {
@@ -29,6 +31,7 @@ let
           "exec"
           "grant-net"
           "grant-path"
+          "fido"
         ];
         default = "exec";
       };
@@ -140,6 +143,11 @@ in
               type = lib.types.nullOr lib.types.str;
               default = null;
               description = "Program that attaches a folder to the running sandbox (grant-path).";
+            };
+            fido = lib.mkOption {
+              type = lib.types.bool;
+              default = false;
+              description = "The sandbox may ask to use the plugged-in security key (fido).";
             };
           };
         }

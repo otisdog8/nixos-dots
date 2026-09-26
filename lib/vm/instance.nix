@@ -39,6 +39,10 @@
 #     an undeclared folder of ~ (grantCwd), add a folder to the allowlist, and a
 #     root agent in the guest binds it at its real path. Grants last until the
 #     VM stops; "read-only" is the guest's bind only (the share allows writes).
+#   - fido → a virtual CTAPHID security key in the guest (uhid), relayed through
+#     the broker (prompted once) to whichever key is plugged in when it's used,
+#     so keys can be hotplugged. The broker only relays the channels the guest
+#     opened, never the host's own traffic with the key.
 #
 # Security shape: the apps' code runs behind KVM; the host-side attack surface is
 # crosvm (per-device minijail processes with seccomp, the main process confined by
@@ -128,6 +132,9 @@ let
   # Temporary folder grants (lib/vm/grants.py): a virtio-fs share of the user's
   # home behind an allowlist that starts empty. Only when the VM runs as the user.
   grants = principal == username;
+  # Security keys: a virtual FIDO device in the guest, relayed through the
+  # broker to whichever key is plugged in (lib/vm/fido-guest.py).
+  fido = anyCap "fido" && broker;
   grantCwd' = grantCwd && grants;
   grantsPkg = import ./grants.nix pkgs;
   crosvmFs = import ./crosvm-fs.nix pkgs;
@@ -261,7 +268,7 @@ let
         target = b.source;
       }) binds;
       cwd = perCwd;
-      inherit grants;
+      inherit grants fido;
       # Guest sockets for the relay (the grant agent dials the host directly).
       relay = map (n: {
         name = n;
@@ -1195,6 +1202,7 @@ in
     x11
     nvgpu
     bus
+    fido
     pwdBinds
     ;
 
@@ -1221,6 +1229,7 @@ in
       if perCwd then "${unit}-net@*.service" else "${unit}-net.service"
     );
     grantPaths = if grants then "${grantPathsScript}" else null;
+    inherit fido;
   };
 
   # For the polkit allowlist (modules/system/sandbox.nix): the user starts/stops
