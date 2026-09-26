@@ -74,7 +74,8 @@ let
   tmpl = lib.optionalString perCwd "@";
   # Units reference each other per instance; scripts get the project path.
   ref = u: if perCwd then "${u}@%i.service" else "${u}.service";
-  instArg = lib.optionalString perCwd " \"%I\"";
+  # %f = the instance unescaped as a path, with its leading "/" (%I drops it).
+  instArg = lib.optionalString perCwd " \"%f\"";
 
   # /run/sandbox-vm/<app>: <id>/ holds one launch's keys and sockets (root prep,
   # removed on stop); tree/ and cwd/ are mount points for the unit's private binds
@@ -438,7 +439,7 @@ let
         "-/large"
         "-/cache"
       ];
-      BindPaths = storageBinds ++ rwBinds ++ lib.optional perCwd (q "%I:${cwdMount}");
+      BindPaths = storageBinds ++ rwBinds ++ lib.optional perCwd (q "%f:${cwdMount}");
       BindReadOnlyPaths = roBinds;
       ReadWritePaths = [ base ];
       PrivateTmp = true;
