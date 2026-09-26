@@ -122,6 +122,12 @@
               default = 4;
               description = "vCPUs for ${appName}'s VM.";
             };
+            nested = lib.mkOption {
+              type = lib.types.bool;
+              default = config.modules.sandbox.vm.nested;
+              defaultText = lib.literalExpression "config.modules.sandbox.vm.nested";
+              description = "Inside its VM, also run ${appName} in its nixpak sandbox (defense in depth).";
+            };
           };
 
           dedicatedUser = lib.mkOption {
@@ -257,6 +263,7 @@
               config
               lib
               pkgs
+              inputs
               storage
               ;
             principal = if dedicated then "app-${appName}" else username;

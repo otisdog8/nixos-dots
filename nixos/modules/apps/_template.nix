@@ -244,6 +244,7 @@
 #     # mode picks which one the command runs (default: modules.sandbox.mode).
 #     sandbox.mode = "vm";
 #     sandbox.vm = { memory = 4096; vcpus = 4; };
+#     sandbox.vm.nested = true;  # also nixpak-sandbox it inside the VM (defense in depth)
 #     sandbox.extraBinds = [   # Extra binds: home-relative, ./ or ../ ($PWD), or absolute
 #       "Documents/vault"      # Relative: expands to $HOME/Documents/vault
 #       "/mnt/data"            # Absolute: used as-is

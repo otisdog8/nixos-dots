@@ -26,6 +26,7 @@
   config,
   lib,
   pkgs,
+  inputs,
   storage,
   # The uid/group that owns the app's data and runs the VMM (the user, or
   # app-<name> for a systemd dedicatedUser app).
@@ -48,6 +49,38 @@ let
   bin = appCfg.packageName;
   caps = appCfg.capabilities;
 
+  # sandbox.vm.nested: inside the guest, the app runs in its nixpak sandbox too.
+  # The guest grafts every storage entry onto ~/path, which is the systemd
+  # backend's layout (stashAtHome). The guest's host services live outside the
+  # runtime dir nixpak binds from, so the wrapper links them in first.
+  nested = cfg.sandbox.vm.nested && appCfg.defaultBackend != "none";
+  nestedInner = import ./nixpak-pkg.nix {
+    inherit
+      appCfg
+      cfg
+      lib
+      pkgs
+      inputs
+      storage
+      ;
+    stashAtHome = true;
+    brokerSocketName = "sbx-broker.sock";
+  };
+  nestedPkg = pkgs.writeShellScriptBin bin ''
+    rt="''${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+    link() { [ -e "$1" ] && ${pkgs.coreutils}/bin/ln -sfn "$1" "$2"; }
+    link /run/sbx/broker.sock "$rt/sbx-broker.sock"
+    if [ -S /run/sbx/pulse/native ]; then
+      ${pkgs.coreutils}/bin/mkdir -p "$rt/pulse"
+      link /run/sbx/pulse/native "$rt/pulse/native"
+      export PULSE_SERVER="unix:$rt/pulse/native"
+    fi
+    case "''${WAYLAND_DISPLAY:-}" in
+      /*) link "$WAYLAND_DISPLAY" "$rt/sbx-wayland-0" && export WAYLAND_DISPLAY=sbx-wayland-0 ;;
+    esac
+    exec ${nestedInner.package}/bin/${bin} "$@"
+  '';
+
   # This app as a VM member (the record groups are built from).
   member = {
     inherit
@@ -60,7 +93,7 @@ let
       dbusArgs
       flatpakInfoFile
       ;
-    package = cfg.package;
+    package = if nested then nestedPkg else cfg.package;
     entries = storage.entries;
     x11Forward = cfg.sandbox.x11Forward;
     # Home-relative or absolute binds (./-relative ones are dropped with a warning).

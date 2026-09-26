@@ -101,6 +101,18 @@ in
       description = "The host user whose session launches VM-sandboxed apps; mirrored (same name/uid) inside the guest.";
     };
 
+    nested = lib.mkOption {
+      type = lib.types.bool;
+      default = false;
+      description = ''
+        Default for modules.apps.<app>.sandbox.vm.nested: inside the VM, run the
+        app in its nixpak (bwrap) sandbox too, so a compromised app is still
+        confined within the guest (its other members, the broker and grant
+        sockets, the rest of the guest filesystem). Defense in depth; off by
+        default until it has been tried on hardware.
+      '';
+    };
+
     dns = lib.mkOption {
       type = lib.types.listOf lib.types.str;
       default = [
