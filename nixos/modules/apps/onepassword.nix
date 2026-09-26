@@ -4,8 +4,13 @@
 # Scope (per the deliberate decision): GUI + vault only. NO browser integration and
 # NO SSH agent — the two hard cross-uid channels — so this is "just another dedicated
 # Electron app" with an extra-sensitive stash. Consequences:
-#   - Unlock is by the 1Password ACCOUNT password (system-auth/polkit unlock is gone
-#     with programs._1password-gui; see auth.nix). Arguably better — no system-auth tie.
+#   - In its container, unlock is by the 1Password ACCOUNT password: the app refuses
+#     polkit inside nixpak's user namespace (root-owned files show as uid 65534,
+#     and it checks the system bus directory is root's), so there is no
+#     system-auth unlock and no CLI integration (docs/op-broker.md).
+#   - In its VM (sandbox.mode = "vm"), onepassword-system-auth.nix gives it
+#     "unlock using system authentication" and CLI authorization (op-broker),
+#     answered by you authenticating on the HOST with your polkit agent.
 #   - We do NOT grant the Secret Service (org.freedesktop.secrets) DBus policy, so the
 #     app can't stash its local key in jrt's kwallet — which would defeat the hiding.
 #     It keeps the vault key material inside its OWN app-onepassword profile instead.
