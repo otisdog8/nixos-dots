@@ -259,7 +259,7 @@ Never a secret; the tests check that.
   `/run/sbx/op` (a directory, so a restarted broker's new socket is seen) and the
   native host manifest where it looks, via `modules.apps.<browser>.sandbox.nixpakModules`.
 
-### Browser in a VM — needs a core hook
+### Browser in a VM
 
 The browser VM's native host connects to `/run/sbx/op/sock` in the guest; the VM's
 vsock relay carries it to the host as service `op`, and the per-VM host relay
@@ -268,7 +268,7 @@ vsock relay carries it to the host as service `op`, and the per-VM host relay
 jrt **and** its cgroup is `/system.slice/sandbox-vm-<app>-relay(@…).service`.
 Nothing else changes: requester identity is still "which socket".
 
-### 1Password in its VM — needs core hooks
+### 1Password in its VM
 
 The host can't reach into a guest (the relay is guest→host only), so the broker
 inside the 1Password guest **dials out**:
@@ -359,32 +359,26 @@ The official 1Password extension should then be removed/blocked
 `lib/features/onepassword*.nix` binds (`1Password-BrowserSupport`) dropped from the
 browsers.
 
-## Sandbox-core hooks (not done here)
+## Sandbox-core hooks
 
-`lib/apps.nix`, `lib/backends/*`, `lib/vm/*` and `nixos/modules/system/sandbox*.nix`
-are untouched. What op-broker needs from them:
+Wired through three generic per-app VM options (`lib/apps.nix`,
+`lib/vm/instance.nix`, `lib/vm/guest.nix`), which this module sets:
 
-1. **Relay service `op` for browser VMs** (`lib/backends/vm.nix`): for each app in
-   `config.modules.apps.op-broker.relayServices.<app>`, add the service to
-   `relayServices`, map it on the host (`op=/run/op-broker/clients/<app>/sock` in
-   `relayScript`) and in the guest (`guestSockets.op = "/run/sbx/op/sock"`). The
-   host relay already runs as jrt in `sandbox-vm-<app>-relay.service`, which is
-   exactly what the broker's peer check expects.
-2. **Relay service `op-uplink` for the 1Password VM**: same mechanism,
-   `op-uplink=/run/op-broker/uplink/sock` on the host, `/run/sbx/op-uplink/sock` in
-   the guest.
-3. **Run the uplink broker in the 1Password guest** next to the app, as the guest
-   user with gid `onepassword-cli` (and that group in the guest's `/etc/group`), with
-   the guest's Wayland display for its dialogs: `modules.apps.op-broker.guestBroker.command`.
-   E.g. an app-spec "companion command" the guest launcher starts with the app.
-4. **Native-messaging manifest in browser VM guests**: the guest's `/etc` is the
-   generic guest's, so either bind `extension.nativeHost/etc/chromium/…` /
-   `…/lib/mozilla/…` like the container binds, or have the browser package carry
-   it (wrapFirefox `nativeMessagingHosts`).
-5. Optional: **end sessions on sandbox stop**: an `ExecStopPost=` on
-   `sandbox-<browser>` / `sandbox-vm-<browser>` telling the broker to drop that
-   requester's grants now instead of after `sessionIdle`. (Needs a small control
-   socket in the broker; not implemented.)
+1. `sandbox.vm.relays.op` on browser VMs: host `/run/op-broker/clients/<app>/sock`,
+   guest `/run/sbx/op/sock`, carried by the VM's vsock relay (the host end runs
+   as jrt in `sandbox-vm-<app>-relay.service`, which the broker's peer check expects).
+2. `sandbox.vm.relays.op-uplink` on the 1Password VM: host
+   `/run/op-broker/uplink/sock`, guest `/run/sbx/op-uplink/sock`.
+3. `sandbox.vm.guestServices.op-broker` on the 1Password VM: the guest starts
+   `guestBroker.command` as the user with primary group `onepassword-cli`
+   (created in the guest if missing), with the VM's Wayland display and session bus.
+4. `sandbox.vm.guestBinds` on browser VMs: the native-messaging manifest, bound
+   read-only where the browser looks (as the container binds do).
+5. Not done: **end sessions on sandbox stop** (an `ExecStopPost=` telling the
+   broker to drop that requester's grants; needs a control socket in the broker).
+
+Grouped VMs (modules.sandbox.groups) aren't covered: the peer checks name the
+per-app relay unit.
 
 ## Verification status
 

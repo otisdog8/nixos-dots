@@ -128,6 +128,49 @@
               defaultText = lib.literalExpression "config.modules.sandbox.vm.nested";
               description = "Inside its VM, also run ${appName} in its nixpak sandbox (defense in depth).";
             };
+            # Hooks for other modules (e.g. op-broker) to reach into the guest.
+            relays = lib.mkOption {
+              type = lib.types.attrsOf (
+                lib.types.submodule {
+                  options = {
+                    host = lib.mkOption {
+                      type = lib.types.str;
+                      description = "Host unix socket the service connects to (as the user).";
+                    };
+                    guest = lib.mkOption {
+                      type = lib.types.str;
+                      description = "Where the guest's end listens.";
+                    };
+                  };
+                }
+              );
+              default = { };
+              description = "Extra host services relayed into ${appName}'s VM over vsock, by service name.";
+            };
+            guestBinds = lib.mkOption {
+              type = lib.types.attrsOf lib.types.str;
+              default = { };
+              example = {
+                "~/.mozilla/native-messaging-hosts/x.json" = "/nix/store/…/x.json";
+              };
+              description = "Read-only binds in ${appName}'s guest: target (absolute or ~/…) = source (a store path).";
+            };
+            guestServices = lib.mkOption {
+              type = lib.types.attrsOf (
+                lib.types.submodule {
+                  options = {
+                    argv = lib.mkOption { type = lib.types.listOf lib.types.str; };
+                    group = lib.mkOption {
+                      type = lib.types.nullOr lib.types.str;
+                      default = null;
+                      description = "Run with this primary group (created in the guest if missing).";
+                    };
+                  };
+                }
+              );
+              default = { };
+              description = "Commands ${appName}'s guest keeps running as the user (with the VM's display, when it has one).";
+            };
           };
 
           dedicatedUser = lib.mkOption {

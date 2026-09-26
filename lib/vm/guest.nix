@@ -155,6 +155,36 @@ let
       systemctl start --no-block sbx-fido.service || true
     fi
 
+    # Other modules' read-only files (sandbox.vm.guestBinds), e.g. native-messaging
+    # manifests: an empty mount point of the source's type, then a bind.
+    jq -r '.guestBinds[] | [.target, .source] | @tsv' "$spec" |
+      while IFS=$'\t' read -r target source; do
+        mkparents "$target"
+        if [ -d "$source" ]; then
+          [ -d "$target" ] || install -d -m 0755 -- "$target"
+        elif [ ! -e "$target" ]; then
+          install -m 0644 /dev/null "$target"
+        fi
+        mount --bind -- "$source" "$target" && mount -o remount,bind,ro -- "$target" ||
+          echo "sbx-setup: could not bind $source at $target" >&2
+      done
+
+    # Other modules' long-running helpers (sandbox.vm.guestServices), as the user.
+    jq -c '.services[]' "$spec" | while read -r sv; do
+      name="$(jq -r .name <<<"$sv")"
+      grp="$(jq -r '.group // empty' <<<"$sv")"
+      opts=(--unit="sbx-svc-$name" --uid="$user" -p Restart=on-failure -p RestartSec=2 --no-block)
+      if [ -n "$grp" ]; then
+        getent group "$grp" >/dev/null || groupadd -r "$grp"
+        opts+=(--gid="$grp")
+      fi
+      mapfile -t env < <(jq -r '.env[]' <<<"$sv")
+      for e in "''${env[@]}"; do opts+=(-E "$e"); done
+      mapfile -t argv < <(jq -r '.argv[]' <<<"$sv")
+      systemd-run "''${opts[@]}" -- "''${argv[@]}" ||
+        echo "sbx-setup: could not start $name" >&2
+    done
+
     # X11 apps: Xwayland on the guest's Wayland socket (guest-graphics.nix).
     if [ "$(jq '.x11' "$spec")" = true ]; then
       systemctl start --no-block sbx-xwayland.service || true
@@ -263,6 +293,8 @@ in
       jq
       systemd
       findutils
+      shadow
+      glibc.getent
     ];
     serviceConfig = {
       Type = "oneshot";

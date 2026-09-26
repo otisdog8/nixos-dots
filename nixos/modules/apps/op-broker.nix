@@ -9,14 +9,16 @@
 #   - service-account auth: the same service as its own `op-broker` uid, with the
 #     token from a root-only file; no desktop app involved.
 #   - 1Password in its VM: the broker runs INSIDE that guest (uplink mode) and the
-#     host runs only `op-broker-bridge.service`, a byte relay. Needs the sandbox
-#     core hooks listed in the doc; until then this module only warns.
+#     host runs only `op-broker-bridge.service`, a byte relay. The guest gets the
+#     broker through sandbox.vm.guestServices and its uplink through
+#     sandbox.vm.relays.
 #
 # Each browser in `browsers` gets its own socket, /run/op-broker/clients/<app>/sock.
 # The socket a request arrives on IS the requester the dialog names. Container
 # browsers get that directory bound at /run/sbx/op and the native-messaging
 # manifest bound where the browser looks (wired here, through the app's
-# sandbox.nixpakModules). VM browsers need the vsock relay hook (doc).
+# sandbox.nixpakModules). VM browsers get the socket over their vsock relay and
+# the manifest bound in the guest (sandbox.vm.relays / guestBinds).
 #
 # Installing the extension itself (policies / force-install) is left to the
 # browser configuration; the ids and paths are exposed read-only under
@@ -175,6 +177,19 @@ let
             ]
           ];
     };
+
+  browserGuestBinds =
+    b:
+    if builtins.elem b firefoxFamily then
+      {
+        "~/.mozilla/native-messaging-hosts/${nmName}.json" =
+          "${opb.nativeHost}/lib/mozilla/native-messaging-hosts/${nmName}.json";
+      }
+    else
+      {
+        "/etc/chromium/native-messaging-hosts" = "${opb.nativeHost}/etc/chromium/native-messaging-hosts";
+        "/etc/opt/chrome/native-messaging-hosts" = "${opb.nativeHost}/etc/opt/chrome/native-messaging-hosts";
+      };
 
   # 1Password's own sandbox, desktop auth only: its runtime dir must be the real
   # host directory (where the broker, same uid, finds the CLI socket the app
@@ -417,7 +432,7 @@ in
       );
       defaultText = lib.literalMD "per VM app: vsock relay service name -> host socket";
       description = ''
-        Sandbox-core hook (not consumed yet): per VM app, the vsock relay services
+        Per VM app, the vsock relay services (wired through sandbox.vm.relays)
         it should get. Browser VMs: "op" -> their client socket, guest end at
         /run/sbx/op/sock. The 1Password VM: "op-uplink" -> the bridge, guest end
         at /run/sbx/op-uplink/sock.
@@ -440,7 +455,7 @@ in
         ];
       };
       defaultText = lib.literalMD "the uplink-mode broker for the 1Password VM guest";
-      description = "Sandbox-core hook (not consumed yet): what to run inside the 1Password VM.";
+      description = "What runs inside the 1Password VM (wired through sandbox.vm.guestServices).";
     };
   };
 
@@ -452,11 +467,34 @@ in
       modules.apps =
         lib.genAttrs (lib.filter has supported) (b: {
           sandbox.nixpakModules = lib.mkIf (cfg.enable && browserOn b && !(inVm b)) [ (browserNixpak b) ];
+          # VM browsers: the client socket over the VM's vsock relay (guest end at
+          # /run/sbx/op/sock, as in containers) and the manifest in the guest.
+          sandbox.vm.relays = lib.mkIf (cfg.enable && browserOn b && inVm b) {
+            op = {
+              host = clientSock b;
+              guest = "${sandboxDir}/sock";
+            };
+          };
+          sandbox.vm.guestBinds = lib.mkIf (cfg.enable && browserOn b && inVm b) (browserGuestBinds b);
         })
         // lib.optionalAttrs (has "onepassword") {
           onepassword.sandbox.nixpakModules = lib.mkIf (cfg.enable && desktop && !opInVm) [
             onepasswordNixpak
           ];
+          # 1Password in its VM: the broker runs in that guest (uplink mode, with
+          # the group the app checks a CLI's gid against) and dials the host bridge.
+          onepassword.sandbox.vm.relays = lib.mkIf (cfg.enable && desktop && opInVm) {
+            op-uplink = {
+              host = "${uplinkDir}/sock";
+              guest = "/run/sbx/op-uplink/sock";
+            };
+          };
+          onepassword.sandbox.vm.guestServices = lib.mkIf (cfg.enable && desktop && opInVm) {
+            op-broker = {
+              argv = cfg.guestBroker.command;
+              group = "onepassword-cli";
+            };
+          };
         };
     }
 
@@ -473,17 +511,9 @@ in
       ];
 
       warnings =
-        lib.optional (desktop && opInVm) ''
-          op-broker: 1Password runs in its VM; the broker must run inside that guest
-          and the VM needs the "op-uplink" relay service (modules.apps.op-broker.guestBroker
-          / relayServices). The sandbox core doesn't wire these yet: see docs/op-broker.md.''
-        ++ lib.optional (cfg.prompt.waylandSocket == null) ''
+        lib.optional (cfg.prompt.waylandSocket == null && !(desktop && opInVm)) ''
           op-broker: modules.apps.op-broker.prompt.waylandSocket is null, so the broker
-          can't show its dialogs and denies every request.''
-        ++ lib.optional (lib.any inVm browsers) ''
-          op-broker: ${lib.concatStringsSep ", " (lib.filter inVm browsers)} run(s) in a VM and
-          need(s) the "op" vsock relay service and the native-messaging manifest in the guest,
-          which the sandbox core doesn't wire yet: see docs/op-broker.md.'';
+          can't show its dialogs and denies every request.'';
 
       users.groups.onepassword-cli = { };
       users.users.op-broker = lib.mkIf (!desktop) {

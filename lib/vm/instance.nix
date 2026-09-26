@@ -145,18 +145,30 @@ let
   grantCwd' = grantCwd && grants;
   grantsPkg = import ./grants.nix pkgs;
   crosvmFs = import ./crosvm-fs.nix pkgs;
+  # Other modules' services (sandbox.vm.relays), merged across members.
+  extraRelays = lib.foldl' (a: m: a // m.relays) { } members;
+  builtinRelays = [
+    "pulse"
+    "dbus"
+    "broker"
+    "grants"
+  ];
   relayServices =
     lib.optional audio "pulse"
     ++ lib.optional bus "dbus"
     ++ lib.optional broker "broker"
-    ++ lib.optional grants "grants";
+    ++ lib.optional grants "grants"
+    ++ lib.attrNames extraRelays;
   relay = relayServices != [ ];
   vsockRelay = import ./vsock-relay.nix pkgs;
   guestSockets = {
     pulse = "/run/sbx/pulse/native";
     dbus = "/run/sbx/bus/bus";
     broker = "/run/sbx/broker.sock";
-  };
+  }
+  // lib.mapAttrs (_: r: r.guest) extraRelays;
+  guestBinds = lib.foldl' (a: m: a // m.guestBinds) { } members;
+  guestServices = lib.foldl' (a: m: a // m.guestServices) { } members;
   pulseClientConf = pkgs.writeText "sandbox-vm-pulse-client.conf" ''
     enable-shm = no
     enable-memfd = no
@@ -211,6 +223,7 @@ let
   entrySource = e: if e.location == "stash" then e.stashPath else "${home}/${e.path}";
 
   expandHome = p: if lib.hasPrefix "~/" p then lib.removePrefix "~/" p else p;
+  expandHome' = p: if lib.hasPrefix "~/" p then "${home}/${lib.removePrefix "~/" p}" else p;
   bindReqs =
     lib.concatMap (m: m.bindReqs) members
     ++ map (b: b // { path = expandHome b.path; }) extraBinds
@@ -276,6 +289,18 @@ let
       }) binds;
       cwd = perCwd;
       inherit grants fido docs;
+      guestBinds = lib.mapAttrsToList (target: source: {
+        target = expandHome' target;
+        inherit source;
+      }) guestBinds;
+      services = lib.mapAttrsToList (n: sv: {
+        name = n;
+        inherit (sv) argv group;
+        env =
+          [ "XDG_RUNTIME_DIR=${guestRuntimeDir}" ]
+          ++ lib.optionals gui [ "WAYLAND_DISPLAY=${guestWaylandDisplay}" ]
+          ++ lib.optionals bus [ "DBUS_SESSION_BUS_ADDRESS=unix:path=${guestSockets.dbus}" ];
+      }) guestServices;
       # Guest sockets for the relay (the grant agent dials the host directly).
       relay = map (n: {
         name = n;
@@ -627,6 +652,7 @@ let
         ++ lib.optional bus ''dbus="$rt/bus/bus.sock"''
         ++ lib.optional broker "broker=${hostRuntimeDir}/sbx-broker/${brokerName}.sock"
         ++ lib.optional grants ''grants="$rt/grants/guest.sock"''
+        ++ lib.mapAttrsToList (n: r: lib.escapeShellArg "${n}=${r.host}") extraRelays
       )
     }
   '';
@@ -1334,6 +1360,14 @@ in
   polkitTemplates = lib.optional perCwd "${unit}@";
 
   assertions = [
+    {
+      assertion = !lib.any (n: lib.elem n builtinRelays) (lib.attrNames extraRelays);
+      message = "sandbox VM '${name}': sandbox.vm.relays can't reuse the built-in service names (${lib.concatStringsSep ", " builtinRelays}).";
+    }
+    {
+      assertion = lib.all (t: lib.hasPrefix "/" (expandHome' t)) (lib.attrNames guestBinds);
+      message = "sandbox VM '${name}': sandbox.vm.guestBinds targets must be absolute or ~/-relative.";
+    }
     {
       assertion = lib.all (m: m.principal == principal) members;
       message = "sandbox VM '${name}': its apps' data belongs to different users (${
