@@ -13,6 +13,9 @@
 #   camera                 attach the host's camera(s) to a running VM
 #   fido                   (VMs' virtual security key, not sbx-request) relay
 #                          CTAPHID to the key plugged in now
+#   authenticate ACTION    (VM guests' polkit agent, not sbx-request) have the
+#                          user authenticate on the host, through their own
+#                          polkit agent, for a mapped host action (authActions)
 # Sandboxes with audio also get <name>.pulse, a PulseAudio socket in front of the
 # user's (in place of pulse/native in containers; the VM relay's pulse service):
 # playback passes, recording asks (op "microphone" for rules) and only for
@@ -74,6 +77,30 @@ let
   };
 
   prompt = import ../../../lib/broker/prompt.nix pkgs;
+
+  # The host actions the authenticate op checks (share/polkit-1/actions, linked
+  # into the system profile where polkitd reads actions).
+  authPolicy = pkgs.writeTextDir "share/polkit-1/actions/org.otisroot.sandbox.policy" ''
+    <?xml version="1.0" encoding="UTF-8"?>
+    <!DOCTYPE policyconfig PUBLIC
+     "-//freedesktop//DTD PolicyKit Policy Configuration 1.0//EN"
+     "http://www.freedesktop.org/standards/PolicyKit/1.0/policyconfig.dtd">
+    <policyconfig>
+    ${lib.concatStrings (
+      lib.mapAttrsToList (id: a: ''
+        <action id="${lib.escapeXML id}">
+          <description>${lib.escapeXML a.description}</description>
+          <message>${lib.escapeXML a.message}</message>
+          <defaults>
+            <allow_any>no</allow_any>
+            <allow_inactive>no</allow_inactive>
+            <allow_active>auth_self</allow_active>
+          </defaults>
+        </action>
+      '') cfg.authActions
+    )}
+    </policyconfig>
+  '';
   python = "${pkgs.python3}/bin/python3 -IS";
   brokerPkg = pkgs.writeScriptBin "sbx-broker" (
     "#!${python}\n" + builtins.readFile ../../../lib/broker/broker.py
@@ -88,6 +115,7 @@ let
       run0 = "${pkgs.systemd}/bin/run0";
       systemctl = "${pkgs.systemd}/bin/systemctl";
       setfacl = "${pkgs.acl}/bin/setfacl";
+      pkcheck = "${config.security.polkit.package.bin}/bin/pkcheck";
       sandboxes = lib.mapAttrs (
         name: sb:
         sb
@@ -172,10 +200,44 @@ in
               default = false;
               description = "The sandbox may ask to use the plugged-in security key (fido).";
             };
+            authenticate = lib.mkOption {
+              type = lib.types.attrsOf lib.types.str;
+              default = { };
+              example = {
+                "com.1password.1Password.unlock" = "org.otisroot.sandbox.onepassword.unlock";
+              };
+              description = ''
+                The sandbox's polkit actions it may ask the host user to
+                authenticate for (the `authenticate` op, used by the guest polkit
+                agent of a VM), each mapped to the host action (from authActions)
+                whose message the user's own polkit agent shows.
+              '';
+            };
           };
         }
       );
       description = "Every sandbox the broker serves (registered by the backends).";
+    };
+
+    authActions = lib.mkOption {
+      type = lib.types.attrsOf (
+        lib.types.submodule {
+          options = {
+            description = lib.mkOption { type = lib.types.str; };
+            message = lib.mkOption {
+              type = lib.types.str;
+              description = "What the user's polkit agent shows (static: nothing from the sandbox).";
+            };
+          };
+        }
+      );
+      default = { };
+      description = ''
+        Host polkit actions (id -> text) that stand for a sandbox's own polkit
+        actions in `sandboxes.<name>.authenticate`. Each is auth_self for the
+        active session and nothing else, never "keep": one authentication per
+        request.
+      '';
     };
   };
 
@@ -183,7 +245,11 @@ in
     environment.systemPackages = [
       requestPkg
       prompt
-    ];
+    ]
+    ++ lib.optional (cfg.authActions != { }) authPolicy;
+
+    # The authenticate op checks the host actions with pkcheck.
+    security.polkit.enable = lib.mkIf (cfg.authActions != { }) true;
 
     systemd.user.services.sbx-broker = {
       description = "Sandbox broker (escapes and grants, approved per request)";

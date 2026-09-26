@@ -22,6 +22,13 @@ of JSON lines, the last one final:
         has a virtual FIDO device, lib/vm/fido-guest.py). Only the CTAPHID
         channels the sandbox opened itself are relayed, so it never sees the
         host's own traffic with the key.
+  {"op": "authenticate", "action": "<the sandbox's polkit action id>"}
+      → {"type": "granted"} once the USER has authenticated on the host (their
+        own polkit agent: password, fingerprint, whatever PAM's polkit-1 asks)
+        for the host action the config maps that sandbox action to. The
+        sandbox's polkit agent (lib/vm/polkit-agent.py) then completes its own
+        authorization: "system authentication" for apps in a VM, whose guest
+        user has no password. No dialog of ours: the host agent's is the prompt.
   any refusal → {"type": "denied", "reason": "..."}; bad input → {"type": "error", ...}
 
 Audio: a sandbox with audio also gets $XDG_RUNTIME_DIR/sbx-broker/<sandbox>.pulse,
@@ -52,6 +59,12 @@ import time
 MAX_REQUEST = 64 * 1024
 MAX_ARGS = 256
 SESSION_TTL = 12 * 3600
+# authenticate: one at a time per sandbox; after AUTH_FAILS failed or dismissed
+# authentications in a row, refuse for AUTH_PAUSE seconds (a compromised
+# sandbox can't keep the user's password dialog on screen).
+AUTH_FAILS = 3
+AUTH_PAUSE = 300
+AUTH_TIMEOUT = 300
 
 
 def log(msg):
@@ -65,8 +78,11 @@ class Broker:
         self.run0 = config["run0"]
         self.systemctl = config["systemctl"]
         self.sandboxes = config["sandboxes"]
+        self.pkcheck = config.get("pkcheck")
         self.approved = {}  # (sandbox, key) -> expiry
         self.lock = threading.Lock()
+        self.auth_busy = set()  # sandboxes with an authentication on screen
+        self.auth_fails = {}  # sandbox -> (failures in a row, paused until)
 
     # ── Decisions ────────────────────────────────────────────────────────────
     def rule_for(self, sandbox, op, as_, argv):
@@ -277,6 +293,78 @@ class Broker:
         finally:
             os.close(fd)
 
+    def op_authenticate(self, sandbox, req, send, conn):
+        action = req.get("action")
+        mapping = self.sandboxes[sandbox].get("authenticate") or {}
+        host_action = mapping.get(action) if isinstance(action, str) else None
+        if not host_action or not self.pkcheck:
+            log(f"{sandbox}: authenticate {str(action)[:100]!r}: not allowed for this sandbox")
+            return send({"type": "denied", "reason": "this sandbox can't ask for system authentication for that"})
+        now = time.time()
+        with self.lock:
+            fails, until = self.auth_fails.get(sandbox, (0, 0.0))
+            if now < until:
+                return send({"type": "denied", "reason": "paused after repeated failed authentications"})
+            if sandbox in self.auth_busy:
+                return send({"type": "denied", "reason": "an authentication for this sandbox is already on screen"})
+            self.auth_busy.add(sandbox)
+        try:
+            ok, why = self.run_pkcheck(host_action, conn)
+        finally:
+            with self.lock:
+                self.auth_busy.discard(sandbox)
+        with self.lock:
+            if ok:
+                self.auth_fails.pop(sandbox, None)
+            elif fails + 1 >= AUTH_FAILS:
+                self.auth_fails[sandbox] = (0, time.time() + AUTH_PAUSE)
+            else:
+                self.auth_fails[sandbox] = (fails + 1, 0.0)
+        log(f"{sandbox}: authenticate {action} (as {host_action}): {why}")
+        send({"type": "granted"} if ok else {"type": "denied", "reason": why})
+
+    def run_pkcheck(self, action, conn):
+        """Authenticate the user for `action` through their own polkit agent.
+        The subject is this broker (a process of the user's, whose session
+        polkit finds through the user's graphical session), so the agent the
+        user already trusts shows the dialog. Gives up when the requester
+        disconnects (its own authentication was cancelled) or after
+        AUTH_TIMEOUT."""
+        try:
+            with open("/proc/self/stat", encoding="ascii") as f:
+                start = f.read().rsplit(")", 1)[1].split()[19]
+        except (OSError, IndexError):
+            return False, "could not identify the broker process"
+        subject = f"{os.getpid()},{start},{os.getuid()}"
+        try:
+            p = subprocess.Popen(
+                [self.pkcheck, "--action-id", action, "--process", subject, "--allow-user-interaction"],
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.PIPE,
+            )
+        except OSError as e:
+            return False, f"could not run pkcheck: {e.strerror}"
+        deadline = time.monotonic() + AUTH_TIMEOUT
+        while True:
+            try:
+                rc = p.wait(timeout=0.5)
+                break
+            except subprocess.TimeoutExpired:
+                pass
+            if time.monotonic() > deadline or peer_gone(conn):
+                p.kill()
+                p.wait()
+                return False, "cancelled" if time.monotonic() <= deadline else "timed out"
+        err = p.stderr.read().decode("utf-8", "replace").strip()[:300]
+        p.stderr.close()
+        if rc == 0:
+            return True, "authenticated"
+        # pkcheck: 1 not authorized, 2 still a challenge (no agent), 3 dismissed.
+        return False, {1: "not authorized", 2: "no authentication agent", 3: "dismissed"}.get(
+            rc, f"pkcheck exited {rc}: {err}"
+        )
+
     def running_units(self, units):
         out = []
         for pattern in units:
@@ -324,6 +412,7 @@ class Broker:
                 "grant-path": self.op_grant_path,
                 "camera": self.op_camera,
                 "fido": lambda sb, r, snd: self.op_fido(sb, r, snd, conn),
+                "authenticate": lambda sb, r, snd: self.op_authenticate(sb, r, snd, conn),
             }.get(op)
             if fn is None:
                 return send({"type": "error", "message": f"unknown op {op!r}"})
@@ -582,6 +671,19 @@ class PulseFilter:
                 self.send_client(pa_error(tag))
         except OSError:
             pass
+
+
+def peer_gone(conn):
+    """Whether the other end of `conn` has closed (without consuming data)."""
+    try:
+        r, _, _ = select.select([conn], [], [], 0)
+        if not r:
+            return False
+        return conn.recv(1, socket.MSG_PEEK | socket.MSG_DONTWAIT) == b""
+    except BlockingIOError:
+        return False
+    except OSError:
+        return True
 
 
 # ── FIDO ─────────────────────────────────────────────────────────────────────
