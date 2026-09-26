@@ -188,7 +188,9 @@ browser policies/extension installs, audio filter in real apps.
 
 ## 5. Everything that was added, and how to check it
 
-The user will verify all of this on hardware. Go in this order: the first block
+This covers every commit on the branch (`git log --oneline master..vm-sandbox`);
+§5.6 maps the commits to these rows. The user will verify all of this on
+hardware. Go in this order: the first block
 changes the running desktop on the next rebuild even if no VM is ever used.
 Logs: `journalctl -b -u 'sandbox-*' -u 'sbx-*'`, `journalctl --user -u sbx-broker
 -u 'sbx-group-*'`, and inside a VM `sandbox-vm status NAME`.
@@ -202,6 +204,8 @@ Logs: `journalctl -b -u 'sandbox-*' -u 'sbx-*'`, `journalctl --user -u sbx-broke
 | **No mic for the rest** (steam, prismlauncher, lunar-client, tetrio, blender, amazing-marvin, wine, captive browser) | try to record in one | refused without a prompt |
 | **Firefox is Developer Edition** (command `firefox-devedition`, entry "Firefox Developer Edition") | launch it | starts (dark theme, beta branding); links opened from other apps reach the running window — if not, `busctl --user list \| grep -i mozilla` and fix `dbusName` in `nixos/modules/apps/firefox.nix` |
 | **Browser policies** (`lib/browser-settings.nix`) | `about:policies` / `chrome://policy` | policies active; built-in password manager and card autofill off; DoH off; telemetry off |
+| **Default search engine** DuckDuckGo (set once, changeable; Brave keeps Brave Search, captive browser none) | new window's search | DuckDuckGo |
+| **Chromium-family wrapper flags**: one `--enable-features=WebRtcPipeWireCapturer,AcceleratedVideoDecodeLinuxGL,AcceleratedVideoEncoder` + `--no-first-run` (previously a second `--enable-features` silently dropped Brave's own VA-API flags) | `chrome://gpu` in Brave/Chromium, a screen share in a call | video decode hardware-accelerated; screen sharing uses the portal picker |
 | **Extensions**: uBlock Origin (Firefox/Zen), uBlock Origin Lite (Chromium), Vimium (Firefox, Zen, Chromium, Brave) | `about:addons` / `chrome://extensions` | installed and locked; none in ungoogled-chromium or the captive browser (by design) |
 | **1Password runs in its VM** (`onepassword.nix` default) and **op-broker is on** | start 1Password | its window appears (through virtio-nvgpu); vault works; see 5.4 |
 | **op-broker's extension** in the browsers it serves, official 1Password extension blocked | extensions page | "op-broker" present; the official one refused |
@@ -215,6 +219,9 @@ Logs: `journalctl -b -u 'sandbox-*' -u 'sbx-*'`, `journalctl --user -u sbx-broke
 | Feature | Check | Working looks like |
 |---|---|---|
 | Boot + launch | a CLI app's `(vm)` variant, e.g. `nixvim` | runs in the terminal within a few seconds; `sandbox-vm list` shows it; exits → VM stops (unless persistent) |
+| Per-project VMs (apps with the `cwd` capability outside a group: nixvim, sandbox-shell) | run it in two different directories | one VM per directory (`sandbox-vm-<app>@<path>`), each seeing only its own directory at the same path |
+| VM size | `sandbox.vm.memory` / `vcpus` (defaults 4096 MiB / 4; groups 8192 / 8) | the guest has that much (`free`, `nproc` in a VM shell) |
+| DNS inside VMs | resolve a tailnet/MagicDNS or LAN-only name from a VM | fails by design: VM guests use public resolvers (`modules.sandbox.vm.dns`, Quad9) through passt, not the host's resolved — except apps with `allowNames`, whose DNS is forwarded to the host's resolved |
 | Storage | the app's data after switching container ↔ vm | same files both ways (stash shared, uid-mapped) |
 | Display, no GPU (cross-domain) | `ark (vm)` | window on Hyprland, software rendering |
 | Display + GPU (virtio-nvgpu, only apps with the `gpu` capability) | `firefox (vm)`, `zen (vm)` | window; `about:support` lists the NVIDIA GPU with hardware compositing/WebGL; video plays smoothly; the backend runs as `sbx-gpu-<vm>` (`journalctl -u sandbox-vm-firefox-gpu`) |
@@ -239,7 +246,9 @@ Logs: `journalctl -b -u 'sandbox-*' -u 'sbx-*'`, `journalctl --user -u sbx-broke
 |---|---|---|
 | Shared agents container | set agents `projects`, run two agents in a project | both inside one `sbx-group-agents` user service; Ctrl-C, resize, exit codes behave like a normal terminal app |
 | Escapes/grants from containers | `sbx-request exec …` in e.g. claude-code | prompt; runs on the host |
-| Network policy (systemd-backend apps) | `sandbox.network.mode = "internet"` on one | LAN blocked, internet fine |
+| Network policy (systemd-backend apps; nixpak apps only warn — they run in your session, unenforceable there) | `sandbox.network.mode = "internet"` on one | LAN blocked, internet fine |
+| DNS-name allowlists for containers | `sandbox.network = { mode = "allowlist"; allowNames = [ "example.com" ]; }` on a systemd-backend app | only example.com's addresses connect; `journalctl -u sbx-dnsallow` logs each addition |
+| Group projects in container mode without a shared container | a group member outside a project | still gets the group's `projects` and `shareHome` binds in its own sandbox |
 
 ### 5.4 1Password + op-broker (full checklist: `docs/op-broker.md`)
 
@@ -259,7 +268,45 @@ Logs: `journalctl -b -u 'sandbox-*' -u 'sbx-*'`, `journalctl --user -u sbx-broke
    why — most likely 1Password rejecting the copied `op` (see the doc's
    assumptions).
 
-### 5.5 Not user-visible yet
+### 5.5 Configuration knobs added (for the user's reference)
+
+- `modules.sandbox.mode` (`container`/`vm`), `modules.sandbox.variants.enable`;
+  per app `sandbox.mode`, `sandbox.vm.{persistent,memory,vcpus,nested,
+  cameraOnLaunch,relays,guestBinds,guestServices}`, `sandbox.network.{mode,allow,
+  deny,allowDns,allowNames}`.
+- `modules.sandbox.vm.{graphics,dns,user,guestModules}`.
+- `modules.sandbox.groups.<g>.{apps,persistent,sharedContainer,projects,shareHome,
+  network,vm}`, `modules.sandbox.agents.{enable,apps,projects,shareHome,network}`.
+- `modules.sandbox.broker.{enable,rules,defaultRules,authActions}` — rules per
+  sandbox name (`<app>` container, `vm-<app>`, `vm-group-<g>`, `group-<g>`), ops
+  exec / grant-net / grant-path / camera / microphone / fido / authenticate.
+- Capabilities: `microphone`, `camera` (new), `networkPolicy`; features
+  `microphone.nix`.
+- `modules.apps.<browser>.browser.{managePolicies,extensions,blockedExtensions,
+  allowUnsignedExtensions,unpackedExtensions,searchEngine,homepage,
+  disableDnsOverHttps,builtinPasswordManager,hardwareVideoDecoding,policies,
+  recommendedPolicies}`.
+- `modules.apps.op-broker.{enable,browsers,auth,prompt,match,limits,probe,…}`.
+- `modules.system.virt.nestedVirtualization` (default off).
+
+### 5.6 Commit map
+
+| Commit(s) | Covered in |
+|---|---|
+| 429a163 — the user's own pending refactor, committed at the start: legacy backend dropped, **Wayland security-context sockets for all sandboxes**, race-free root binds (mount-helper) | not ours to verify beyond "containers still start and show windows" |
+| 4f4366b, 847e93a, cd86b14, eeceba5, f81a41c | 5.2 (VM tier, variants, network policy, display, audio, D-Bus) |
+| 796dc37, aaf8fb1, ee244c5 | broker: 5.1, 5.2, 5.4 |
+| f718da8, b76e315 | groups/agents: 5.2, 5.3 |
+| 31e66f2, a3c1884, b35517f, 07b07b5, 20d1a90, d8b70a7 | 5.2 (grants, FIDO, nested, file chooser; hooks are internal) |
+| ed007ab, fee0953, e904cc0, a2c361e, e6959b3 | browsers: 5.1 |
+| b610fd0, 3f09ac8, 407e8e9, 27a2064, 48a9ac4, a25518d, 8ca3789, 200379c, 0b830b7, 0d6ea7c | 1Password/op-broker: 5.1, 5.4 |
+| 95807a9 | DNS allowlists: 5.2, 5.3 |
+| 5f9e6f2, 97a39c0, 3597f21 | virtio-nvgpu versions, per-VM backend users, graphics auto, camera, capture plumbing: 5.1, 5.2, 5.7 |
+| a787460, 44935c0 | audio: 5.1 |
+| ce3b150, 16a28b2 and later docs | docs only |
+| f81a41c also: nested virtualization off by default (`virt.nix`) | 5.1 |
+
+### 5.7 Not user-visible yet
 
 Capture injection plumbing (§6): the backend's inject socket and the guest's
 `/dev/nvgpu-capture` exist for screen-sharing GPU VMs; nothing uses them until
