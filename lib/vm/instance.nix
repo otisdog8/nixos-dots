@@ -124,6 +124,24 @@ let
     else
       "sbx-gpu-${builtins.substring 0 16 (builtins.hashString "sha256" name)}";
   gpuUser = if nvgpu then gpuUserName else principal;
+  # Zero-copy screen capture (virtio-nvgpu's "capture injection", DEPLOY.md):
+  # the backend takes host dma-bufs on an inject socket from ONE helper user of
+  # this VM's own (never the backend's, the VMM's or the desktop user's) and
+  # makes them guest dma-bufs, opened in the guest through /dev/nvgpu-capture
+  # with an id and a secret token. The helper (host: the portal request under
+  # the app's identity, the PipeWire stream, IMPORT) and the guest daemon
+  # (OPEN, a PipeWire source node) are not written yet — see
+  # docs/HANDOFF-vm-sandbox.md; this wires the user, the socket and the node.
+  capture = nvgpu && lib.any (m: m.screenCast or false) members;
+  captureUserName =
+    let
+      n = "sbx-cap-${name}";
+    in
+    # 31: the longest group name NixOS accepts.
+    if lib.stringLength n <= 31 then
+      n
+    else
+      "sbx-cap-${builtins.substring 0 16 (builtins.hashString "sha256" name)}";
   gpuGroup = if nvgpu then gpuUserName else principalGroup;
   # The guest's Wayland socket (mirrors guest-graphics.nix) and the host
   # compositor's, pinned like the systemd backend's.
@@ -322,6 +340,8 @@ let
       inherit grants fido docs;
       # Which GPU/display stack the guest brings up (guest-graphics.nix).
       gpu = nvgpu;
+      # The backend offers capture injection (/dev/nvgpu-capture in the guest).
+      inherit capture;
       display =
         if nvgpu && gui then
           "nvgpu"
@@ -558,7 +578,7 @@ let
     + (
       if nvgpu then
         ''
-          exec ${vmHost.nvgpu.backend}/bin/vhost-user-nvgpu --socket "$rt/gpu/gpu.sock" ${lib.optionalString gui ''--wayland-socket "$rt/wl/wayland.sock"''} ${lib.optionalString gpuCap "--allow-compute"}
+          exec ${vmHost.nvgpu.backend}/bin/vhost-user-nvgpu --socket "$rt/gpu/gpu.sock" ${lib.optionalString gui ''--wayland-socket "$rt/wl/wayland.sock"''} ${lib.optionalString gpuCap "--allow-compute"} ${lib.optionalString capture ''--inject-socket "$rt/gpu/inject.sock" --inject-uid "$(${co}/id -u ${captureUserName})"''}
         ''
       else
         ''
@@ -764,6 +784,18 @@ let
     [ ! -L "$sock" ] && [ -S "$sock" ] || { echo "${unit}: $sock is not a socket" >&2; exit 1; }
     [ "$(${co}/stat -c %u -- "$sock")" = "$owner" ] || { echo "${unit}: $sock is not the backend's" >&2; exit 1; }
     ${pkgs.acl}/bin/setfacl -m "u:${principal}:rw" -- "$sock"
+    ${lib.optionalString capture ''
+      # The inject socket: to this VM's capture helper alone.
+      inj="$d/inject.sock"
+      i=0
+      while [ ! -S "$inj" ]; do
+        i=$((i + 1))
+        [ "$i" -le 100 ] || { echo "${unit}: no inject socket after 10 s" >&2; exit 1; }
+        ${co}/sleep 0.1
+      done
+      [ ! -L "$inj" ] && [ "$(${co}/stat -c %u -- "$inj")" = "$owner" ] || { echo "${unit}: $inj is not the backend's" >&2; exit 1; }
+      ${pkgs.acl}/bin/setfacl -m "u:${captureUserName}:rw" -- "$inj"
+    ''}
   '';
 
   # Host-GPU device nodes for the virtio-nvgpu backend: the host's
@@ -1568,12 +1600,24 @@ in
 
   # The backend's own user and group (nvgpu only), for users.users/groups.
   gpuUsers = lib.optionalAttrs nvgpu {
-    users.${gpuUserName} = {
-      isSystemUser = true;
-      group = gpuUserName;
-      description = "virtio-nvgpu backend of sandbox VM ${name}";
+    users = {
+      ${gpuUserName} = {
+        isSystemUser = true;
+        group = gpuUserName;
+        description = "virtio-nvgpu backend of sandbox VM ${name}";
+      };
+    }
+    // lib.optionalAttrs capture {
+      ${captureUserName} = {
+        isSystemUser = true;
+        group = captureUserName;
+        description = "Screen-capture helper of sandbox VM ${name} (inject only)";
+      };
     };
-    groups.${gpuUserName} = { };
+    groups = {
+      ${gpuUserName} = { };
+    }
+    // lib.optionalAttrs capture { ${captureUserName} = { }; };
   };
 
   # For sbx-dnsallow (modules.sandbox.dnsAllow).

@@ -106,8 +106,14 @@ lib.mkMerge [
       isSystemUser = true;
       group = "nvgpu-wl";
     };
+    # /dev/nvgpu-capture (screen-capture injection): to the capture daemon's
+    # group alone, never an application's (virtio-nvgpu's
+    # contrib/udev/70-nvgpu-capture.rules; no uaccess). The daemon itself isn't
+    # written yet (docs/HANDOFF-vm-sandbox.md).
+    users.groups.nvgpu-capture = { };
     services.udev.extraRules = ''
       SUBSYSTEM=="misc", KERNEL=="nvgpu-wl*", GROUP="nvgpu-wl", MODE="0660"
+      SUBSYSTEM=="misc", KERNEL=="nvgpu-capture*", GROUP="nvgpu-capture", MODE="0660"
     '';
     systemd.tmpfiles.rules = [ "d /run/sbx/wl 0755 nvgpu-wl nvgpu-wl -" ];
 

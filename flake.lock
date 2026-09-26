@@ -1819,11 +1819,11 @@
     "virtio-nvgpu": {
       "flake": false,
       "locked": {
-        "lastModified": 1790414785,
-        "narHash": "sha256-A0whCA+ssa2CqZC3ea+zDqFnHR0CdKKqOFQFxtZryAw=",
+        "lastModified": 1790445265,
+        "narHash": "sha256-LtTs4F6Gd2sYkW3nQmKqN7aiUhEo4qI7mFWf9SGipiQ=",
         "ref": "display-passthrough",
-        "rev": "0869ef90cd91fe29f2f687400237de85a48ce3e1",
-        "revCount": 364,
+        "rev": "2eec306fae9b0baba495d506c515fb883a649477",
+        "revCount": 378,
         "type": "git",
         "url": "file:///home/jrt/Documents/nixos-dots/virtio-nvgpu"
       },
