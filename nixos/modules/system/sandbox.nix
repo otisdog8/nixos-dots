@@ -8,6 +8,8 @@
   config,
   lib,
   pkgs,
+  isDesktop ? false,
+  isLaptop ? false,
   ...
 }:
 let
@@ -21,6 +23,11 @@ let
   # StartTransientUnit → `systemd-run --unit=sandbox-evil --uid=0`); the exact list
   # closes that (a transient unit can't reuse a static unit's fragment name).
   allowedUnitsJson = builtins.toJSON cfg.units;
+  # Template prefixes ("sandbox-vm-<app>@") for per-project VM units. Instances of
+  # a template can't be hijacked the way a prefix can: systemd refuses to create a
+  # transient unit under a name that already resolves to a fragment, and every
+  # "<prefix><instance>.service" resolves to the template's.
+  allowedTemplatesJson = builtins.toJSON cfg.unitTemplates;
 
   tierMount = {
     persist = "/persist";
@@ -184,6 +191,32 @@ let
 in
 {
   options.modules.sandbox = {
+    mode = lib.mkOption {
+      type = lib.types.enum [
+        "container"
+        "vm"
+      ];
+      default = "container";
+      description = ''
+        Which implementation every app's command runs: "container" (the app's
+        bwrap backend, app.defaultBackend) or "vm" (its microVM,
+        lib/backends/vm.nix). Both use the same data. Per-app override:
+        modules.apps.<name>.sandbox.mode.
+      '';
+    };
+
+    variants.enable = lib.mkOption {
+      type = lib.types.bool;
+      default = isDesktop || isLaptop;
+      description = ''
+        Also install both implementations of every app side by side, as
+        `<bin>-container` and `<bin>-vm` (`<bin>-host` for unsandboxed apps), with
+        launcher entries "<App> (container)" / "<App> (vm)". The app's regular
+        .desktop entry is then hidden from launchers (it still backs MIME
+        associations and the default browser). For testing the VM tier.
+      '';
+    };
+
     gpuDevices = lib.mkOption {
       type = lib.types.nullOr (lib.types.listOf lib.types.str);
       default = null;
@@ -232,6 +265,17 @@ in
         allowlist below. An explicit list, NOT a scan of every service whose name
         starts with "sandbox-" (which would implicitly reserve that prefix and let
         an unrelated future sandbox-* unit inherit the jrt start/stop grant).
+      '';
+    };
+
+    unitTemplates = lib.mkOption {
+      internal = true;
+      default = [ ];
+      type = lib.types.listOf lib.types.str;
+      description = ''
+        Template prefixes ("sandbox-vm-<app>@") whose instances the user may
+        start/stop: per-project VM units (lib/backends/vm.nix). Each entry is one
+        exact template, never a free-form prefix.
       '';
     };
 
@@ -286,6 +330,9 @@ in
     #   - Exact allowlist, NOT a prefix match: manage-units also gates
     #     StartTransientUnit, so `sandbox-*` would let jrt systemd-run an arbitrary
     #     root unit named "sandbox-…". The exact allowlist closes that hole.
+    #     Per-project VM units are templates: their instances are matched per exact
+    #     "sandbox-vm-<app>@" template (see allowedTemplatesJson for why that's
+    #     not the prefix hole above).
     #   - Verb pinned to start/stop/ref: `systemctl start --wait` issues StartUnit
     #     (start) AND RefUnit (ref, to hold the result until the unit exits); stop is
     #     teardown. Everything else manage-units gates — set-property, kill, freeze,
@@ -296,10 +343,16 @@ in
         if (action.id == "org.freedesktop.systemd1.manage-units" &&
             subject.user == "jrt") {
           var allowed = ${allowedUnitsJson};
+          var templates = ${allowedTemplatesJson};
           var unit = action.lookup("unit");
           var verb = action.lookup("verb");
-          if (unit && allowed.indexOf(unit) >= 0 &&
-              (verb == "start" || verb == "stop" || verb == "ref")) {
+          var ok = unit && allowed.indexOf(unit) >= 0;
+          for (var i = 0; unit && !ok && i < templates.length; i++) {
+            var p = templates[i];
+            ok = unit.length > p.length + 8 && unit.indexOf(p) == 0 &&
+              unit.lastIndexOf(".service") == unit.length - 8;
+          }
+          if (ok && (verb == "start" || verb == "stop" || verb == "ref")) {
             return polkit.Result.YES;
           }
         }

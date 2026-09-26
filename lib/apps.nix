@@ -63,6 +63,33 @@
         # comment). A per-host override would therefore be inert and misleading, so
         # it isn't offered — set app.defaultBackend in the app module.
         sandbox = {
+          # Selecting container vs vm is a VALUE choice (which package the command
+          # is), never a structural one: both implementations are always evaluated,
+          # so reading this option can't recurse into the config merge the way a
+          # backend override would (see above).
+          mode = lib.mkOption {
+            type = lib.types.enum [
+              "container"
+              "vm"
+            ];
+            default = config.modules.sandbox.mode;
+            defaultText = lib.literalExpression "config.modules.sandbox.mode";
+            description = "Run ${appName} in its container backend (app.defaultBackend) or its microVM.";
+          };
+
+          vm = {
+            memory = lib.mkOption {
+              type = lib.types.ints.positive;
+              default = 4096;
+              description = "Guest memory for ${appName}'s VM, in MiB.";
+            };
+            vcpus = lib.mkOption {
+              type = lib.types.ints.positive;
+              default = 4;
+              description = "vCPUs for ${appName}'s VM.";
+            };
+          };
+
           dedicatedUser = lib.mkOption {
             type = lib.types.bool;
             default = false;
@@ -124,10 +151,10 @@
           type = lib.types.package;
           readOnly = true;
           description = ''
-            The final package emitted by the app's backend: the base package
-            (backend "none") or a sandbox wrapper (nixpak/systemd). This is what
-            gets installed in environment.systemPackages and should be used in
-            customConfig.
+            The app's primary package, for sandbox.mode: the container backend's
+            (the base package for "none", a nixpak/systemd wrapper otherwise) or the
+            VM launcher. This is what gets installed in environment.systemPackages
+            and should be used in customConfig.
           '';
         };
 
@@ -167,6 +194,9 @@
             forceHome =
               effectiveBackend == "none" || ((config.modules.sandbox.forceHomeLocation or false) && !dedicated);
           };
+          # The container implementation (app.defaultBackend). It owns the app's
+          # storage lowering (tmpfiles, persistence, stash migration, and the
+          # dedicated uid), which the VM implementation then reuses as-is.
           backendResult = (import ./backends/default.nix).${effectiveBackend} {
             inherit
               appName
@@ -179,7 +209,50 @@
               storage
               ;
           };
-          finalPkg = backendResult.package;
+
+          # The VM implementation, always evaluated next to it (lazily: nothing of
+          # it is built unless the app runs in a VM or variants are on). Its VMM
+          # runs as whoever owns the stash, so both implementations share one copy
+          # of the app's data.
+          username = builtins.head appCfg.defaultUsernames;
+          vmResult = import ./backends/vm.nix {
+            inherit
+              appName
+              appCfg
+              cfg
+              config
+              lib
+              pkgs
+              storage
+              ;
+            principal = if dedicated then "app-${appName}" else username;
+            principalGroup = if dedicated then "app-${appName}" else config.users.users.${username}.group;
+            desktopSource = backendResult.package;
+          };
+
+          variants = import ./variants.nix { inherit lib pkgs; };
+          variantsOn = config.modules.sandbox.variants.enable;
+          vmWanted = cfg.sandbox.mode == "vm" || variantsOn;
+          selectedPkg = if cfg.sandbox.mode == "vm" then vmResult.package else backendResult.package;
+          # With variants on, the launcher lists "<App> (container)" / "<App> (vm)"
+          # instead of the plain entry, which stays for MIME/default-browser use.
+          finalPkg = if variantsOn then variants.hideDesktop selectedPkg else selectedPkg;
+          implVariants = [
+            (variants.mkVariant {
+              inherit appName;
+              pkg = backendResult.package;
+              bin = appCfg.packageName;
+              suffix = if effectiveBackend == "none" then "host" else "container";
+              label = if effectiveBackend == "none" then "host" else "container";
+            })
+            (variants.mkVariant {
+              inherit appName;
+              pkg = vmResult.package;
+              bin = appCfg.packageName;
+              suffix = "vm";
+              label = "vm";
+            })
+          ];
 
           # app.variantCommands: extra, more-privileged entry points (e.g.
           # `claude-gpu`). Each reuses the same package and storage with the
@@ -221,11 +294,16 @@
 
           # Base config - always applied when enabled
           (lib.mkIf cfg.enable {
-            environment.systemPackages = [ finalPkg ] ++ variantPkgs;
+            environment.systemPackages = [
+              finalPkg
+            ]
+            ++ variantPkgs
+            ++ lib.optionals variantsOn implVariants;
           })
 
           # Backend-emitted system config (tmpfiles, persistence, units).
           (lib.mkIf cfg.enable backendResult.systemConfig)
+          (lib.mkIf (cfg.enable && vmWanted) vmResult.systemConfig)
 
           # System-level persistence
           (lib.mkIf (cfg.enable && appCfg.persistence.system.persist != [ ]) {

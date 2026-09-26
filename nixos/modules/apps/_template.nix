@@ -238,8 +238,12 @@
 #     # dataDir = "/custom/path";
 #     # logLevel = "debug";
 #
-#     # Sandboxing: the backend is config.app.defaultBackend in the app module
-#     # ("nixpak" by default, "systemd", or "none" for unsandboxed).
+#     # Sandboxing: the container backend is config.app.defaultBackend in the app
+#     # module ("nixpak" by default, "systemd", or "none" for unsandboxed). The app
+#     # also has a microVM implementation (lib/backends/vm.nix) on the same data;
+#     # mode picks which one the command runs (default: modules.sandbox.mode).
+#     sandbox.mode = "vm";
+#     sandbox.vm = { memory = 4096; vcpus = 4; };
 #     sandbox.extraBinds = [   # Extra binds: home-relative, ./ or ../ ($PWD), or absolute
 #       "Documents/vault"      # Relative: expands to $HOME/Documents/vault
 #       "/mnt/data"            # Absolute: used as-is

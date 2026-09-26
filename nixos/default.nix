@@ -31,6 +31,7 @@
     # System modules (unconditionally enabled)
     modules/system/impermanence.nix
     modules/system/sandbox.nix
+    modules/system/sandbox-vm.nix
     modules/system/kernel.nix
     modules/system/locale.nix
     modules/system/networking.nix
