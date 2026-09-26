@@ -245,7 +245,11 @@ let
       args+=(--shared-dir "${cwdMount}:sbx-cwd:$rw")
     ''}
     ${lib.optionalString network ''
-      for _ in $(${co}/seq 1 100); do [ -S "$rt/net/passt.sock" ] && break; ${co}/sleep 0.05; done
+      for _ in $(${co}/seq 1 200); do [ -S "$rt/net/passt.sock" ] && break; ${co}/sleep 0.05; done
+      if [ ! -S "$rt/net/passt.sock" ]; then
+        echo "${unit}: passt never created its socket; see the journal of the matching ${unit}-net unit" >&2
+        exit 1
+      fi
       args+=(--vhost-user "type=net,socket=$rt/net/passt.sock")
     ''}
     for p in ${lib.escapeShellArgs guestKernelParams}; do args+=(-p "$p"); done
@@ -269,7 +273,7 @@ let
     ${idPrelude}
     exec ${pkgs.passt}/bin/passt --foreground --quiet --vhost-user \
       --socket "$rt/net/passt.sock" \
-      -t none -u none -T none -U none --no-map-gw \
+      -t none -u none --no-map-gw \
       ${lib.concatMapStringsSep " " (d: "--dns ${lib.escapeShellArg d}") config.modules.sandbox.vm.dns}
   '';
 
