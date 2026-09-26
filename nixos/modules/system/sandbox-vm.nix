@@ -191,6 +191,7 @@ in
     # The groups' VMs (their members' own VM units aren't generated).
     systemd.services = lib.mkMerge (map (i: i.services) (lib.attrValues cfg.groupInstances));
     modules.sandbox.units = lib.concatMap (i: i.polkitUnits) (lib.attrValues cfg.groupInstances);
+    modules.sandbox.dnsAllow = lib.concatMap (i: i.dnsAllow) (lib.attrValues cfg.groupInstances);
     modules.sandbox.broker.sandboxes = lib.mapAttrs' (
       _: i: lib.nameValuePair i.brokerName i.brokerEntry
     ) cfg.groupInstances;

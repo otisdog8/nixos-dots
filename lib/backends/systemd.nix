@@ -662,6 +662,10 @@ in
       uid = if dedicated then appUser else null;
       netUnits = [ "${unitName}.service" ];
     };
+    modules.sandbox.dnsAllow = lib.optional (netPolicy.names != [ ]) {
+      units = [ "${unitName}.service" ];
+      inherit (netPolicy) names;
+    };
     modules.sandbox.stashMigrations = lib.optional (storage.stashEntries != [ ]) {
       app = appName;
       bin = binName;

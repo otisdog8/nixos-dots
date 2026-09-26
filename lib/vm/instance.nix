@@ -114,11 +114,16 @@ let
   hostWaylandSocket = "wayland-1";
   wlSecure = import ../backends/wayland-security-context.nix pkgs;
 
+  # With allowNames the guest resolves through the host's resolved (passt
+  # forwards its DNS there), which is where sbx-dnsallow sees the answers.
+  dnsNames = (network.allowNames or [ ]) != [ ] && config.services.resolved.enable;
+  dnsForward = "192.0.2.53"; # TEST-NET-1: never a real host
   netPolicy = netpolicy.lower {
     policy = network;
     backendDefault = "internet";
-    dns = vmHost.dns;
+    dns = if dnsNames then [ "127.0.0.53" ] else vmHost.dns;
   };
+  netUnitPattern = if perCwd then "${unit}-net@*.service" else "${unit}-net.service";
 
   # ── Host services over vsock (lib/vm/vsock-relay.py) ─────────────────────────
   # Audio: the user's PulseAudio socket (pipewire-pulse), no shm/memfd since file
@@ -296,10 +301,11 @@ let
       services = lib.mapAttrsToList (n: sv: {
         name = n;
         inherit (sv) argv group;
-        env =
-          [ "XDG_RUNTIME_DIR=${guestRuntimeDir}" ]
-          ++ lib.optionals gui [ "WAYLAND_DISPLAY=${guestWaylandDisplay}" ]
-          ++ lib.optionals bus [ "DBUS_SESSION_BUS_ADDRESS=unix:path=${guestSockets.dbus}" ];
+        env = [
+          "XDG_RUNTIME_DIR=${guestRuntimeDir}"
+        ]
+        ++ lib.optionals gui [ "WAYLAND_DISPLAY=${guestWaylandDisplay}" ]
+        ++ lib.optionals bus [ "DBUS_SESSION_BUS_ADDRESS=unix:path=${guestSockets.dbus}" ];
       }) guestServices;
       # Guest sockets for the relay (the grant agent dials the host directly).
       relay = map (n: {
@@ -463,7 +469,12 @@ let
     exec ${pkgs.passt}/bin/passt --foreground --quiet --vhost-user \
       --socket "$rt/net/passt.sock" \
       -t none -u none --no-map-gw \
-      ${lib.concatMapStringsSep " " (d: "--dns ${lib.escapeShellArg d}") vmHost.dns}
+      ${
+        if dnsNames then
+          "--dns ${dnsForward} --dns-forward ${dnsForward} --dns-host 127.0.0.53"
+        else
+          lib.concatMapStringsSep " " (d: "--dns ${lib.escapeShellArg d}") vmHost.dns
+      }
   '';
 
   # The user: a wp_security_context_v1 socket on the user's compositor for this
@@ -1347,11 +1358,15 @@ in
   inherit brokerName;
   brokerEntry = {
     label = "${label} (VM)";
-    netUnits = lib.optional network' (
-      if perCwd then "${unit}-net@*.service" else "${unit}-net.service"
-    );
+    netUnits = lib.optional network' netUnitPattern;
     grantPaths = if grants then "${grantPathsScript}" else null;
     inherit fido;
+  };
+
+  # For sbx-dnsallow (modules.sandbox.dnsAllow).
+  dnsAllow = lib.optional (network' && netPolicy.names != [ ]) {
+    units = [ netUnitPattern ];
+    inherit (netPolicy) names;
   };
 
   # For the polkit allowlist (modules/system/sandbox.nix): the user starts/stops
@@ -1360,6 +1375,10 @@ in
   polkitTemplates = lib.optional perCwd "${unit}@";
 
   assertions = [
+    {
+      assertion = (network.allowNames or [ ]) == [ ] || config.services.resolved.enable;
+      message = "sandbox VM '${name}': network.allowNames needs systemd-resolved on the host.";
+    }
     {
       assertion = !lib.any (n: lib.elem n builtinRelays) (lib.attrNames extraRelays);
       message = "sandbox VM '${name}': sandbox.vm.relays can't reuse the built-in service names (${lib.concatStringsSep ", " builtinRelays}).";

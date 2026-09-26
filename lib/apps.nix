@@ -104,6 +104,11 @@
               default = appCfg.capabilities.networkPolicy.allowDns;
               description = "Keep ${appName}'s resolver reachable in the restricted modes.";
             };
+            allowNames = lib.mkOption {
+              type = lib.types.listOf lib.types.str;
+              default = appCfg.capabilities.networkPolicy.allowNames;
+              description = "Names whose addresses ${appName} may reach (see app.capabilities.networkPolicy.allowNames).";
+            };
           };
 
           vm = {

@@ -23,7 +23,9 @@ rec {
   # policy: { mode, allow, deny, allowDns }; backendDefault: the mode "default"
   # resolves to; dns: the resolvers the app uses (for a container, the host's,
   # usually on loopback), kept reachable in the restricted modes when allowDns.
-  # Returns { mode; ipAddressAllow; ipAddressDeny; }.
+  # Returns { mode; ipAddressAllow; ipAddressDeny; names; }: `names` (allowNames,
+  # in the restricted modes) are opened at run time as they resolve, by
+  # sbx-dnsallow (modules/system/sandbox-dnsallow.nix).
   lower =
     {
       policy,
@@ -43,6 +45,7 @@ rec {
     in
     {
       inherit mode;
+      names = lib.optionals (mode != "open") (policy.allowNames or [ ]);
       ipAddressAllow = lib.unique allow;
       ipAddressDeny = lib.unique (deny ++ policy.deny);
     };

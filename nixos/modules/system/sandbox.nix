@@ -306,6 +306,11 @@ in
                 type = lib.types.bool;
                 default = true;
               };
+              allowNames = lib.mkOption {
+                type = lib.types.listOf lib.types.str;
+                default = [ ];
+                description = "Names whose addresses the group may reach (see app.capabilities.networkPolicy.allowNames).";
+              };
             };
             vm = {
               memory = lib.mkOption {

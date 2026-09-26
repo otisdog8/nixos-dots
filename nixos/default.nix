@@ -34,6 +34,7 @@
     modules/system/sandbox-vm.nix
     modules/system/sandbox-agents.nix
     modules/system/sandbox-broker.nix
+    modules/system/sandbox-dnsallow.nix
     modules/system/kernel.nix
     modules/system/locale.nix
     modules/system/networking.nix

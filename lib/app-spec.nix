@@ -223,6 +223,15 @@
           default = true;
           description = "In allowlist mode, still allow the resolver the app uses.";
         };
+        allowNames = lib.mkOption {
+          type = lib.types.listOf lib.types.str;
+          default = [ ];
+          example = [
+            "api.anthropic.com"
+            "*.github.com"
+          ];
+          description = ''Names whose resolved addresses become reachable (in the restricted modes): "example.com" exactly, "*.example.com" any name under it. Needs systemd-resolved; enforced by sbx-dnsallow (modules/system/sandbox-dnsallow.nix).'';
+        };
       };
       wayland = lib.mkOption {
         type = lib.types.bool;
