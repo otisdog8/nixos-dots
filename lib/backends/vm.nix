@@ -33,10 +33,12 @@
 # Security shape: the app's code runs behind KVM; the host-side attack surface is
 # crosvm (per-device minijail processes with seccomp, the main process confined by
 # the systemd unit below) and passt. The VMM uid can reach only this app's stash
-# and the explicitly shared paths. UNVERIFIED on hardware so far: the unit's
-# syscall filter and MemoryDenyWriteExecute with crosvm's sandbox, BindPaths
-# sources under the InaccessiblePaths=/ProtectHome= roots, and passt's vhost-user
-# mode with crosvm's vhost-user net frontend.
+# and the explicitly shared paths. (BindPaths= sources are resolved against the
+# host root, not the namespace being built — systemd's namespace.c — so hiding
+# /home and /persist from the unit doesn't hide them from its binds.) UNVERIFIED
+# on hardware so far: the unit's syscall filter and MemoryDenyWriteExecute with
+# crosvm's sandbox, and passt's vhost-user mode with crosvm's vhost-user net
+# frontend.
 {
   appName,
   appCfg,
@@ -138,16 +140,19 @@ let
     }
   ) (lib.filter (b: !(paths.isPwdRelative b.path)) bindReqs);
 
-  # BindPaths= words: quoted (paths may contain spaces), "-" = skip if missing.
-  # Stash entries are hard: tmpfiles guarantees them, and a missing one must fail
-  # the VM rather than silently run it without its data.
-  q = s: ''"${s}"'';
+  # One BindPaths= entry: "SRC":"DST". systemd splits source and destination on
+  # the ':' BETWEEN words, so each side is quoted separately (paths may contain
+  # spaces) — quoting the whole pair would make it one path. A leading "-" on the
+  # source = skip if missing. Stash entries are hard: tmpfiles guarantees them,
+  # and a missing one must fail the VM rather than silently run it without its data.
+  bindPair = src: dst: ''"${src}":"${dst}"'';
   storageBinds = map (
-    e: q "${lib.optionalString (e.location == "home") "-"}${entrySource e}:${tree}/${e.tier}/${e.path}"
+    e:
+    bindPair "${lib.optionalString (e.location == "home") "-"}${entrySource e}" "${tree}/${e.tier}/${e.path}"
   ) entries;
   bindTarget = b: "${tree}/binds/${toString b.index}";
-  rwBinds = map (b: q "-${b.source}:${bindTarget b}") (lib.filter (b: !b.ro) binds);
-  roBinds = map (b: q "-${b.source}:${bindTarget b}") (lib.filter (b: b.ro) binds);
+  rwBinds = map (b: bindPair "-${b.source}" (bindTarget b)) (lib.filter (b: !b.ro) binds);
+  roBinds = map (b: bindPair "-${b.source}" (bindTarget b)) (lib.filter (b: b.ro) binds);
 
   spec = pkgs.writeText "${unit}-spec.json" (
     builtins.toJSON {
@@ -439,7 +444,7 @@ let
         "-/large"
         "-/cache"
       ];
-      BindPaths = storageBinds ++ rwBinds ++ lib.optional perCwd (q "%f:${cwdMount}");
+      BindPaths = storageBinds ++ rwBinds ++ lib.optional perCwd (bindPair "%f" cwdMount);
       BindReadOnlyPaths = roBinds;
       ReadWritePaths = [ base ];
       PrivateTmp = true;
