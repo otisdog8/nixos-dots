@@ -50,6 +50,8 @@
       # Baseline policies only (no telemetry, DoH off so name resolution stays with
       # the portal's SOCKS proxy, no password saving): no extensions, search engine
       # or package changes — the command line above stays as it is.
+      # A portal login page has no business recording: sound out only.
+      capabilities.microphone = lib.mkForce false;
       capabilities.binds.ro = browserSettings.chromiumBinds {
         appName = "captive-browser-chromium";
         inherit policyRoot;
