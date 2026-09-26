@@ -186,17 +186,84 @@ display/GPU (both stacks), relay services, D-Bus proxy, groups, grants, docs
 share, FIDO, camera passthrough, nested nixpak, 1Password VM + polkit flow,
 browser policies/extension installs, audio filter in real apps.
 
-## 5. What the user should test first (suggest this order)
+## 5. Everything that was added, and how to check it
 
-1. A GUI app in a VM on excelsior: `ark (vm)` (cross-domain) and `firefox (vm)`
-   (virtio-nvgpu); `journalctl -u 'sandbox-vm-<app>*'`.
-2. Audio: playback in a container app and a VM app; a mic prompt in a browser
-   call; no audio in apps started before `sbx-broker` (expected).
-3. 1Password in its VM: `docs/op-broker.md` hardware checklist (12 steps).
-4. Firefox Developer Edition: extensions installed (about:addons), link
-   forwarding (D-Bus name `org.mozilla.firefox_devedition` is inferred —
-   `busctl --user list | grep -i mozilla`).
-5. Camera in zoom (VM), FIDO key in a VM browser, `sbx-request grant-path`.
+The user will verify all of this on hardware. Go in this order: the first block
+changes the running desktop on the next rebuild even if no VM is ever used.
+Logs: `journalctl -b -u 'sandbox-*' -u 'sbx-*'`, `journalctl --user -u sbx-broker
+-u 'sbx-group-*'`, and inside a VM `sandbox-vm status NAME`.
+
+### 5.1 Changes you'll notice right after a rebuild
+
+| What | Check | Working looks like |
+|---|---|---|
+| **Filtered audio** (`sbx-broker`'s `<name>.pulse`; no PipeWire socket in any sandbox) | play sound in a container app (e.g. steam, zen) | sound plays; `pactl list clients` shows it; an app started before `sbx-broker` is running has no sound (expected); restarting the broker needs an app relaunch |
+| **Microphone prompt** (capability `microphone`: browsers, zoom, vesktop, obs-studio) | start a mic test in a browser call | a desktop dialog "use your microphone" (Allow once / session / Deny); denied → the app sees "access denied"; playback continues meanwhile |
+| **No mic for the rest** (steam, prismlauncher, lunar-client, tetrio, blender, amazing-marvin, wine, captive browser) | try to record in one | refused without a prompt |
+| **Firefox is Developer Edition** (command `firefox-devedition`, entry "Firefox Developer Edition") | launch it | starts (dark theme, beta branding); links opened from other apps reach the running window — if not, `busctl --user list \| grep -i mozilla` and fix `dbusName` in `nixos/modules/apps/firefox.nix` |
+| **Browser policies** (`lib/browser-settings.nix`) | `about:policies` / `chrome://policy` | policies active; built-in password manager and card autofill off; DoH off; telemetry off |
+| **Extensions**: uBlock Origin (Firefox/Zen), uBlock Origin Lite (Chromium), Vimium (Firefox, Zen, Chromium, Brave) | `about:addons` / `chrome://extensions` | installed and locked; none in ungoogled-chromium or the captive browser (by design) |
+| **1Password runs in its VM** (`onepassword.nix` default) and **op-broker is on** | start 1Password | its window appears (through virtio-nvgpu); vault works; see 5.4 |
+| **op-broker's extension** in the browsers it serves, official 1Password extension blocked | extensions page | "op-broker" present; the official one refused |
+| **sbx-broker** user service | `systemctl --user status sbx-broker` | active; sockets under `$XDG_RUNTIME_DIR/sbx-broker/` (`*.sock`, `*.pulse`) |
+| **"(container)" / "(vm)" launcher entries** (variants on desktops/laptops) | app launcher | each sandboxed app listed twice; the plain entry hidden |
+| **Nested virtualization off** (`virt.nix`) | `cat /sys/module/kvm_amd/parameters/nested` | `0` |
+| **New system users** | `getent passwd \| grep -E 'sbx-(gpu\|cap)-'` | `sbx-gpu-<vm>` (virtio-nvgpu backends) and `sbx-cap-<vm>` (capture helpers, unused until §6) |
+
+### 5.2 The VM tier (`<app> (vm)` entries, or `sandbox.mode = "vm"`)
+
+| Feature | Check | Working looks like |
+|---|---|---|
+| Boot + launch | a CLI app's `(vm)` variant, e.g. `nixvim` | runs in the terminal within a few seconds; `sandbox-vm list` shows it; exits → VM stops (unless persistent) |
+| Storage | the app's data after switching container ↔ vm | same files both ways (stash shared, uid-mapped) |
+| Display, no GPU (cross-domain) | `ark (vm)` | window on Hyprland, software rendering |
+| Display + GPU (virtio-nvgpu, only apps with the `gpu` capability) | `firefox (vm)`, `zen (vm)` | window; `nvidia-smi` in the VM works (`sandbox-vm`… or the app's terminal); smooth video |
+| X11 apps | an x11 app in a VM | window via xwayland-satellite |
+| Network policy (VM default "internet") | from a VM app, reach a LAN/tailnet address | refused; internet works |
+| DNS-name allowlists (`network.allowNames`, mode allowlist) | set one on an app, resolve + connect | only the allowed names' addresses connect (`journalctl -u sbx-dnsallow`) |
+| Audio in VMs | play sound / use mic in a VM browser | as in 5.1 (same filter, over the vsock relay) |
+| D-Bus / portals | notification, open a link from a VM app | notification shows; link opens on the host |
+| File chooser | upload a file from a VM browser | the host picker; the chosen file is readable in the VM |
+| Folder grants | inside the VM: `sbx-request grant-path ~/Documents/x` (add `--write` for rw) | prompt; then the folder appears at the same path in the VM |
+| Groups / agents sandbox (VM mode) | set `modules.sandbox.agents.projects = [ "~/…" ]`; run `claude` inside a project, then outside | one shared VM `group-agents`; outside a declared project the launcher grants `$PWD` (prompt-free: running it there is the consent) |
+| Escapes | in a sandbox: `sbx-request exec -- ls /`, `sbx-request exec --root -- id` | prompt each; root never remembered for the session |
+| Network grants | `sbx-request grant-net 1.2.3.4` | prompt; then reachable until the sandbox stops |
+| FIDO key | WebAuthn login in a VM browser (key plugged in any time) | a prompt once ("use your security key"), then the key blinks; works after replugging |
+| Camera | start zoom `(vm)` | background prompt "use your camera"; the webcam appears in zoom; host apps can't use it until the VM stops; also `sandbox-vm camera zoom attach\|detach` |
+| Nested nixpak | `modules.apps.<app>.sandbox.vm.nested = true` | the app still works (defence in depth; off by default) |
+| Persistence | `sandbox.vm.persistent = true` | VM stays up after the app exits; `sandbox-vm stop NAME` |
+
+### 5.3 Containers (the default mode)
+
+| Feature | Check | Working looks like |
+|---|---|---|
+| Shared agents container | set agents `projects`, run two agents in a project | both inside one `sbx-group-agents` user service; Ctrl-C, resize, exit codes behave like a normal terminal app |
+| Escapes/grants from containers | `sbx-request exec …` in e.g. claude-code | prompt; runs on the host |
+| Network policy (systemd-backend apps) | `sandbox.network.mode = "internet"` on one | LAN blocked, internet fine |
+
+### 5.4 1Password + op-broker (full checklist: `docs/op-broker.md`)
+
+1. Log in to 1Password (in its VM). Settings → Security → "Unlock using system
+   authentication": turns on; lock + unlock → the host's polkit agent
+   (hyprpolkitagent) asks for your password; Cancel keeps it locked.
+2. Settings → Developer → "Integrate with 1Password CLI": turns on.
+3. In a browser, on a login page, press the op-broker toolbar button / Ctrl+Shift+L:
+   the first time, the host polkit agent asks to authorize the CLI; then
+   op-broker's dialog (browser, item, username, vault, site) → Allow → fields
+   filled, nothing submitted.
+4. A login saved for `github.com` used on `gist.github.com`: the dialog says
+   "SUBDOMAIN MATCH".
+5. Visit 4+ sites with no saved login and trigger fills: one probing notice
+   naming them, with "Block it for an hour".
+6. If fills answer `unavailable`: the guest's journal (`op-broker` service) says
+   why — most likely 1Password rejecting the copied `op` (see the doc's
+   assumptions).
+
+### 5.5 Not user-visible yet
+
+Capture injection plumbing (§6): the backend's inject socket and the guest's
+`/dev/nvgpu-capture` exist for screen-sharing GPU VMs; nothing uses them until
+the helper and daemon are written. Screen sharing from a VM does not work yet.
 
 Expect bugs; fix them from the journal output the user pastes. Past fixes show
 the typical kind: systemd specifier/quoting details (`%f` not `%I`; BindPaths
