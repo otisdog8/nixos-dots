@@ -59,7 +59,7 @@ let
     case "''${1:-list}" in
       list)
         ${pkgs.systemd}/bin/systemctl list-units --no-legend --plain --state=active 'sandbox-vm-*.service' \
-          | ${pkgs.gnugrep}/bin/grep -Ev -- '-(prep|net|wl|gpu|relay|bus|grantsfs|grants)(@.*)?\.service' \
+          | ${pkgs.gnugrep}/bin/grep -Ev -- '-(prep|net|wl|gpu|relay|bus|grantsfs|grants|docs)(@.*)?\.service' \
           | ${pkgs.gawk}/bin/awk '{print $1}' | ${pkgs.gnused}/bin/sed -E 's/^sandbox-vm-//; s/\.service$//' || true ;;
       stop) ${pkgs.systemd}/bin/systemctl stop "$(unit_for "$2" "''${3:-}")" ;;
       status) ${pkgs.systemd}/bin/systemctl status --no-pager "$(unit_for "$2" "''${3:-}")" ;;

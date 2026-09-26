@@ -39,6 +39,9 @@
 #     an undeclared folder of ~ (grantCwd), add a folder to the allowlist, and a
 #     root agent in the guest binds it at its real path. Grants last until the
 #     VM stops; "read-only" is the guest's bind only (the share allows writes).
+#   - documents → the document portal's by-app view for the VM's flatpak
+#     identity, shared at $XDG_RUNTIME_DIR/doc as flatpak binds it, so portal
+#     file-chooser results (and drag and drop) resolve inside the guest.
 #   - fido → a virtual CTAPHID security key in the guest (uhid), relayed through
 #     the broker (prompted once) to whichever key is plugged in when it's used,
 #     so keys can be hotplugged. The broker only relays the channels the guest
@@ -132,6 +135,10 @@ let
   # Temporary folder grants (lib/vm/grants.py): a virtio-fs share of the user's
   # home behind an allowlist that starts empty. Only when the VM runs as the user.
   grants = principal == username;
+  # Files the portals hand this app (FileChooser results, drag and drop): the
+  # document portal's view for the VM's flatpak identity, shared like flatpak
+  # binds it (by-app/<id> at $XDG_RUNTIME_DIR/doc), so only this app's documents.
+  docs = bus;
   # Security keys: a virtual FIDO device in the guest, relayed through the
   # broker to whichever key is plugged in (lib/vm/fido-guest.py).
   fido = anyCap "fido" && broker;
@@ -268,7 +275,7 @@ let
         target = b.source;
       }) binds;
       cwd = perCwd;
-      inherit grants fido;
+      inherit grants fido docs;
       # Guest sockets for the relay (the grant agent dials the host directly).
       relay = map (n: {
         name = n;
@@ -314,6 +321,9 @@ let
     ''}
     ${lib.optionalString grants ''
       ${co}/install -d -m 0700 -o ${username} -g ${hostUser.group} "$rt/grants"
+    ''}
+    ${lib.optionalString docs ''
+      ${co}/install -d -m 0711 -o ${username} -g ${hostUser.group} "$rt/docs"
     ''}
     ${pkgs.openssh}/bin/ssh-keygen -q -t ed25519 -N "" -C "${unit}" -f "$rt/meta/ssh_host_ed25519_key"
     ${pkgs.openssh}/bin/ssh-keygen -q -t ed25519 -N "" -C "${username}@${unit}" -f "$rt/client/id_ed25519"
@@ -391,6 +401,14 @@ let
         exit 1
       fi
       args+=(--vhost-user "type=fs,socket=$rt/grants/fs.sock")
+    ''}
+    ${lib.optionalString docs ''
+      for _ in $(${co}/seq 1 200); do [ -S "$rt/docs/fs.sock" ] && break; ${co}/sleep 0.05; done
+      if [ -S "$rt/docs/fs.sock" ]; then
+        args+=(--vhost-user "type=fs,socket=$rt/docs/fs.sock")
+      else
+        echo "${unit}: no document portal share (file choosers won't work); see the matching ${unit}-docs unit" >&2
+      fi
     ''}
     ${lib.optionalString nvgpu ''
       args+=(--vhost-user "type=nvgpu,socket=$rt/gpu/gpu.sock,max-queue-size=256" --no-pci-hotplug-port)
@@ -516,6 +534,36 @@ let
     ${idPrelude}
     for _ in $(${co}/seq 1 200); do [ -S "$rt/grants/allow.sock" ] && break; ${co}/sleep 0.05; done
     exec ${grantsPkg}/bin/sbx-grants hub --home ${home} --dir "$rt/grants"
+  '';
+
+  # The user: the document portal's by-app view for this VM's flatpak identity,
+  # over virtio-fs (crosvm's jailed fs device; the portal's FUSE enforces the
+  # per-app view). The portal is D-Bus activated, so it's started first.
+  docsScript = pkgs.writeShellScript "${unit}-docs" ''
+    set -euo pipefail
+    dir="''${1:-}"
+    ${idPrelude}
+    eu="$(${co}/id -u)"
+    eg="$(${co}/id -g)"
+    appid="$(${pkgs.gnused}/bin/sed -n 's/^name=//p' ${busFlatpakInfo} | ${co}/head -n1)"
+    ${pkgs.systemd}/bin/busctl --user call org.freedesktop.portal.Documents \
+      /org/freedesktop/portal/documents org.freedesktop.portal.Documents GetMountPoint >/dev/null
+    src="${hostRuntimeDir}/doc/by-app/$appid"
+    for _ in $(${co}/seq 1 100); do [ -d "$src" ] && break; ${co}/sleep 0.05; done
+    ${co}/rm -f "$rt/docs/fs.sock"
+    ${pkgs.crosvm}/bin/crosvm device fs \
+      --socket-path "$rt/docs/fs.sock" \
+      --tag sbx-docs \
+      --shared-dir "$src" \
+      --cfg cache=never,posix_acl=false,security_ctx=false \
+      --uid "$eu" --gid "$eg" \
+      --uid-map "$eu $eu 1" --gid-map "$eg $eg 1" &
+    pid=$!
+    ${lib.optionalString (principal != username) ''
+      for _ in $(${co}/seq 1 200); do [ -S "$rt/docs/fs.sock" ] && break; ${co}/sleep 0.05; done
+      ${pkgs.acl}/bin/setfacl -m "u:${principal}:rw" "$rt/docs/fs.sock"
+    ''}
+    wait "$pid"
   '';
 
   # For the broker (grant-path PATH rw|ro). Per-project VMs share one broker
@@ -822,7 +870,9 @@ let
   vmmService = {
     description = "Sandbox VM: ${label}";
     requires = vmmDeps;
-    after = vmmDeps;
+    # Wanted, not required: without a document portal the VM still starts.
+    wants = lib.optional docs (ref "${unit}-docs");
+    after = vmmDeps ++ lib.optional docs (ref "${unit}-docs");
     # Like the systemd backend: a rebuild must not kill a running app. A changed
     # definition takes effect on the next launch.
     restartIfChanged = false;
@@ -1159,6 +1209,51 @@ let
     }
   );
 
+  docsService = helper (
+    afterPrep [ ]
+    // {
+      description = "Sandbox VM documents (portal files, virtio-fs): ${label}";
+      environment = {
+        XDG_RUNTIME_DIR = hostRuntimeDir;
+        DBUS_SESSION_BUS_ADDRESS = "unix:path=${hostRuntimeDir}/bus";
+      };
+      serviceConfig = {
+        ExecStart = "${docsScript}${instArg}";
+        User = username;
+        Group = hostUser.group;
+        NoNewPrivileges = true;
+        CapabilityBoundingSet = "";
+        AmbientCapabilities = "";
+        ProtectSystem = "strict";
+        ProtectHome = "tmpfs";
+        ReadWritePaths = [ base ];
+        RestrictNamespaces = "user pid mnt net";
+        SystemCallFilter = [
+          "@system-service"
+          "@mount"
+          "@sandbox"
+          "~@obsolete @raw-io @reboot @swap @module @cpu-emulation @debug @clock"
+        ];
+        SystemCallErrorNumber = "EPERM";
+        PrivateTmp = true;
+        PrivateIPC = true;
+        PrivateDevices = true;
+        ProtectKernelTunables = true;
+        ProtectKernelModules = true;
+        ProtectKernelLogs = true;
+        ProtectControlGroups = true;
+        ProtectClock = true;
+        ProtectHostname = true;
+        LockPersonality = true;
+        RestrictRealtime = true;
+        RestrictSUIDSGID = true;
+        RestrictAddressFamilies = [ "AF_UNIX" ];
+        SystemCallArchitectures = "native";
+        LimitCORE = 0;
+      };
+    }
+  );
+
   grantsHubService = helper (
     afterPrep [ (ref "${unit}-grantsfs") ]
     // {
@@ -1216,6 +1311,7 @@ in
   // lib.optionalAttrs gpuDevice { "${unit}-gpu${tmpl}" = gpuService; }
   // lib.optionalAttrs relay { "${unit}-relay${tmpl}" = relayService; }
   // lib.optionalAttrs bus { "${unit}-bus${tmpl}" = busService; }
+  // lib.optionalAttrs docs { "${unit}-docs${tmpl}" = docsService; }
   // lib.optionalAttrs grants {
     "${unit}-grantsfs${tmpl}" = grantsFsService;
     "${unit}-grants${tmpl}" = grantsHubService;

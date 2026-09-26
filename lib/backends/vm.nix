@@ -16,9 +16,11 @@
 #
 # Not lowered yet (the app still starts, without them): device binds,
 # ./-relative binds, whatever raw nixpakModules add beyond gui/xdg/audio/D-Bus,
-# variantCommands, and file-descriptor passing over D-Bus (so the document
-# portal's file chooser results and screen capture don't work yet). Selecting
-# mode = "vm" for an app that uses any of these emits a warning listing them.
+# variantCommands, and file-descriptor passing over D-Bus (screen capture,
+# camera, and portal calls that hand over fds, such as OpenURI's OpenFile).
+# File-chooser results do work: they arrive as document-portal paths, which the
+# VM sees through its by-app share. Selecting mode = "vm" for an app that uses
+# any of the unsupported ones emits a warning listing them.
 {
   appName,
   appCfg,

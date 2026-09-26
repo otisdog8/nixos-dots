@@ -140,6 +140,16 @@ let
       systemctl start --no-block sbx-grantd.service || true
     fi
 
+    # Portal documents (file-chooser results): the app's by-app view of the host's
+    # document portal, where flatpak apps find it.
+    if [ "$(jq '.docs' "$spec")" = true ]; then
+      rtd=/run/user/$(id -u "$user")
+      install -d -m 0700 -o "$user" -g "$group" "$rtd"
+      install -d -m 0700 -o "$user" -g "$group" "$rtd/doc"
+      mount -t virtiofs -o nosuid,nodev sbx-docs "$rtd/doc" ||
+        echo "sbx-setup: no document share (file choosers won't work)" >&2
+    fi
+
     # Security keys: a virtual FIDO device relayed to the host's key (fido-guest.py).
     if [ "$(jq '.fido' "$spec")" = true ]; then
       systemctl start --no-block sbx-fido.service || true
