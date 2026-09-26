@@ -217,7 +217,7 @@ Logs: `journalctl -b -u 'sandbox-*' -u 'sbx-*'`, `journalctl --user -u sbx-broke
 | Boot + launch | a CLI app's `(vm)` variant, e.g. `nixvim` | runs in the terminal within a few seconds; `sandbox-vm list` shows it; exits → VM stops (unless persistent) |
 | Storage | the app's data after switching container ↔ vm | same files both ways (stash shared, uid-mapped) |
 | Display, no GPU (cross-domain) | `ark (vm)` | window on Hyprland, software rendering |
-| Display + GPU (virtio-nvgpu, only apps with the `gpu` capability) | `firefox (vm)`, `zen (vm)` | window; `nvidia-smi` in the VM works (`sandbox-vm`… or the app's terminal); smooth video |
+| Display + GPU (virtio-nvgpu, only apps with the `gpu` capability) | `firefox (vm)`, `zen (vm)` | window; `about:support` lists the NVIDIA GPU with hardware compositing/WebGL; video plays smoothly; the backend runs as `sbx-gpu-<vm>` (`journalctl -u sandbox-vm-firefox-gpu`) |
 | X11 apps | an x11 app in a VM | window via xwayland-satellite |
 | Network policy (VM default "internet") | from a VM app, reach a LAN/tailnet address | refused; internet works |
 | DNS-name allowlists (`network.allowNames`, mode allowlist) | set one on an app, resolve + connect | only the allowed names' addresses connect (`journalctl -u sbx-dnsallow`) |
@@ -264,6 +264,9 @@ Logs: `journalctl -b -u 'sandbox-*' -u 'sbx-*'`, `journalctl --user -u sbx-broke
 Capture injection plumbing (§6): the backend's inject socket and the guest's
 `/dev/nvgpu-capture` exist for screen-sharing GPU VMs; nothing uses them until
 the helper and daemon are written. Screen sharing from a VM does not work yet.
+
+A VM whose app has exited stops (`sandbox-vm list` empties) unless it is
+persistent: that is the expected lifecycle, not a crash.
 
 Expect bugs; fix them from the journal output the user pastes. Past fixes show
 the typical kind: systemd specifier/quoting details (`%f` not `%I`; BindPaths
