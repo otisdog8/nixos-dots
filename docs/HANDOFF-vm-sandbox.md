@@ -5,6 +5,81 @@ end of a long session. Read this whole file before changing anything; then read
 the design comments at the top of the files named below — they are the real
 documentation, kept current, and more precise than this summary.
 
+## Update 2026-09-29: Codex's capture bridge and gaming work, reviewed
+
+After this handoff, Codex implemented VM screen sharing and tuned gaming VMs,
+iterating on the real hardware (its traces are the `*.log` files in the repo
+root; `docs/INVESTIGATION-prism-gpu-stall.md`). Claude then had five parallel
+reviewers check it for correctness, architecture and security, fixed what they
+found, and committed it: nixos-dots `9bc4446` (+ `b33a879`), and the nested
+`vm-dbus-proxy` repo `c90621b`, `2610e82`, `34da25a` (flake input bumped).
+
+**What exists now**
+- `vm-dbus-proxy/` — a separate git repo nested here, pinned by flake input
+  `vm-dbus-proxy` (`git+file:…?ref=main`: builds see only its COMMITTED `main`;
+  commit there, then `nix flake update vm-dbus-proxy`, or iterate with
+  `--override-input vm-dbus-proxy path:./vm-dbus-proxy`). It holds:
+  - a guest D-Bus adapter (`sbx-dbus-proxy`, every VM with a bus): apps may
+    negotiate fd passing locally; fd-bearing calls get NotSupported instead of
+    crashing the app; the host relay mediates SASL and refuses fd negotiation;
+  - the screen-capture bridge (`capture_proxy.py`, `capture_broker.py`,
+    `capture/vm-capture.c`): host `-capture-bus` (desktop user) watches the
+    app's ScreenCast portal flow and, after the host picker approved it, fetches
+    the restricted PipeWire remote itself; host `-capture-broker` (uid
+    `sbx-cap-<vm>`) consumes the stream and injects frames through virtio-nvgpu;
+    guest `sbx-capture-broker` publishes them on a private per-share PipeWire.
+- GPU window / per-process share per VM (`sandbox.vm.gpuMemoryMiB`,
+  `gpuMemoryProcessPercent`; steam, prismlauncher, lunar-client at 16 GiB / 90%),
+  built by `lib/vm/nvgpu.nix` `backendFor` (patched, self-testing backend
+  variant; the stock backend at the defaults). Guest kmod patches (legacy
+  syncobj handle, 32-bit compat ioctls), guest 32-bit graphics, Prism without
+  GameMode, the VMM's UVM access for GPU-compute VMs, a passt assert fix.
+
+**What the review found and fixed** (none critical or high; consent holds end
+to end — no path found for a guest to get host screen content the user didn't
+pick for that app):
+- guest `/run/sbx` was owned by the app user (pre-existing, from the relay
+  socket dirs): an app could replace root-used paths → now root-owned;
+- a guest could make the desktop-user capture adapter hold unbounded memory →
+  compact call records, caps, and MemoryMax/TasksMax on `-capture-bus`;
+- the guest private PipeWire loaded plugin factories that load a
+  client-named library (code execution as `sbx-capture`) → removed;
+- restore tokens let a VM re-share without the picker → every share now
+  forces the host picker (`persist_mode=0`);
+- `-capture-broker` had every GPU node + video group → render node,
+  nvidiactl/nvidia0, render group, syscall filter; `-capture-bus` confined like
+  the relay;
+- the VMM's UVM access narrowed (no video group, write-only, path hidden);
+- functional: shares died after 5 s whenever the page stopped consuming
+  (backgrounded tab) or a consumer relinked → frames are reclaimed after 500 ms
+  instead; capture without a bus made the VM fail to start; the app's bus
+  waited on the guest capture broker; the D-Bus adapter died on fd exhaustion;
+  backend source patching was never built → rebuilt as `backendFor` and tested;
+- the captive-portal browser no longer asks for ScreenCast (no capture bridge).
+
+**Still open (known, accepted for now)** — details in §6:
+- capture tokens pass through app-uid processes in the guest and the desktop
+  user's adapter on the host (a gap vs virtio-nvgpu's "tokens stay secret";
+  near-zero impact with one app per VM; real fix = a dedicated relay service
+  between the two capture brokers);
+- the guest `sbx-capture` account both runs the private PipeWire and holds
+  `nvgpu-capture`; `--capture-fd` support exists but isn't wired (the node
+  appears after `modprobe`, later than the broker starts);
+- a window share ends on resize/format change; no explicit sync (tearing only
+  in the guest's copy); no SHM fallback (consumer must import the DMA-BUF);
+- the xdph patch (`nixos/modules/desktop/full/hyprland/patches/
+  xdph-dequeue-busy-buffers.patch`, reviewed: correct) and xdph `--verbose`
+  logging are wired only in `nixos/modules/desktop/full/hyprland/default.nix`,
+  which other sessions own and haven't committed; `--verbose` logs every window
+  title and should be dropped once capture is validated;
+- the Prism stall (Xid 69) likely comes from the fork's unmap-by-VA defect; the
+  bigger window only delays it. Upstreaming is requested in
+  `docs/virtio-nvgpu-gpu-window-and-compat-brief.md` (window/share flags, kmod
+  fixes, the leak, and two missing deployment facts);
+- Codex's `*.log` traces in the repo root are untracked; delete when done.
+
+**Validate next (in order)** — §5.8 has the concrete steps.
+
 ## 0. Ground rules the user set (keep them)
 
 - **Security bar:** "an improvement over the current state", not perfection. Say
@@ -181,10 +256,18 @@ Tested locally: broker ops (fake prompt), PulseAudio filter (real server), CTAPH
 channel filter, grants hub logic + real crosvm fs allowlist, sbx-exec agent,
 dnsallow parsing/matching, op-broker (45 tests), polkit agent (9 tests).
 
-Never run on hardware: everything in the VM tier beyond the first CLI boot —
-display/GPU (both stacks), relay services, D-Bus proxy, groups, grants, docs
+Also tested (2026-09-29 review): vm-dbus-proxy 56 tests (incl. a real
+dbus-daemon passing an fd), the capture C helper's protocol tests (checkPhase),
+the relay's SASL mediation (9 tests in its build), the patched GPU backend
+variant's tests, and the guest private PipeWire config run locally (a consumer
+linked, plugin factories refused).
+
+Hardware: Codex ran GPU VMs (Prism, Lunar, Chromium) and Firefox screen-share
+attempts on excelsior (logs in the repo root), but no outcome was confirmed as
+working. Treat everything VM-side as unverified until the user confirms it:
+display/GPU (both stacks), relay services, D-Bus adapter, groups, grants, docs
 share, FIDO, camera passthrough, nested nixpak, 1Password VM + polkit flow,
-browser policies/extension installs, audio filter in real apps.
+screen capture, browser policies/extension installs, audio filter in real apps.
 
 ## 5. Everything that was added, and how to check it
 
@@ -274,7 +357,8 @@ Logs: `journalctl -b -u 'sandbox-*' -u 'sbx-*'`, `journalctl --user -u sbx-broke
   per app `sandbox.mode`, `sandbox.vm.{persistent,memory,vcpus,nested,
   cameraOnLaunch,relays,guestBinds,guestServices}`, `sandbox.network.{mode,allow,
   deny,allowDns,allowNames}`.
-- `modules.sandbox.vm.{graphics,dns,user,guestModules}`.
+- `modules.sandbox.vm.{graphics,dns,user,guestModules}`; per app and per group
+  `sandbox.vm.{gpuMemoryMiB,gpuMemoryProcessPercent}` / `groups.<g>.vm.{…}`.
 - `modules.sandbox.groups.<g>.{apps,persistent,sharedContainer,projects,shareHome,
   network,vm}`, `modules.sandbox.agents.{enable,apps,projects,shareHome,network}`.
 - `modules.sandbox.broker.{enable,rules,defaultRules,authActions}` — rules per
@@ -304,13 +388,44 @@ Logs: `journalctl -b -u 'sandbox-*' -u 'sbx-*'`, `journalctl --user -u sbx-broke
 | 5f9e6f2, 97a39c0, 3597f21 | virtio-nvgpu versions, per-VM backend users, graphics auto, camera, capture plumbing: 5.1, 5.2, 5.7 |
 | a787460, 44935c0 | audio: 5.1 |
 | ce3b150, 16a28b2 and later docs | docs only |
+| 9bc4446 (+ vm-dbus-proxy c90621b, 2610e82, 34da25a) — Codex's capture bridge and gaming GPU work, reviewed | 5.7, 5.8 |
+| b33a879 — captive browser: no capture portals | 5.1 |
 | f81a41c also: nested virtualization off by default (`virt.nix`) | 5.1 |
 
-### 5.7 Not user-visible yet
+### 5.7 Screen sharing from GPU VMs (Codex's bridge, reviewed)
 
-Capture injection plumbing (§6): the backend's inject socket and the guest's
-`/dev/nvgpu-capture` exist for screen-sharing GPU VMs; nothing uses them until
-the helper and daemon are written. Screen sharing from a VM does not work yet.
+Apps with ScreenCast (browsers, zoom, vesktop, obs-studio; not the captive
+browser) in a virtio-nvgpu VM. Steps in §5.8.
+
+### 5.8 Validate next, in this order
+
+1. **Rebuild and restart VMs fully** (the guest changed: root-owned
+   `/run/sbx`, the D-Bus adapter, the capture broker). In a VM:
+   `ls -ld /run/sbx` → root:root; `/run/sbx/broker.sock` → symlink to
+   `relay/broker.sock`; `sbx-request exec -- true`, a FIDO login and (1Password
+   VM) op-uplink still reach the broker; `sandbox-vm list` shows no
+   `-capture-*` entries.
+2. **D-Bus adapter** (any VM app): notifications and file chooser work; an
+   fd-passing action gets an error, not a crash; several apps in one VM keep
+   their buses independently. Guest log: `journalctl -u sbx-dbus-proxy`.
+3. **Screen share** from Chromium/Firefox in a VM: the host picker appears
+   (every time — no restore), the share shows moving content for 60 s; host
+   `journalctl -u 'sandbox-vm-<app>-capture-*'` shows at most a few
+   "reclaimed" lines and never "EGL modifier query unavailable" (that would
+   mean the narrowed `-capture-broker` lacks a device or syscall); guest
+   `journalctl -u sbx-capture-broker` shows WirePlumber linking the consumer.
+   Then: background the page >10 s and return (must continue); share a window
+   and resize it (expected to end — report it); cancel the picker; stop and
+   re-share; close the browser, then the VM, mid-share — the host indicator
+   must disappear each time. Stopping the guest `sbx-capture-broker` must not
+   break the app's other D-Bus use.
+4. **Gaming VMs** (steam, prismlauncher, lunar-client at 16 GiB / 90%): Prism
+   no longer logs `(Owner)` refusals or hits Xid 69 quickly — note whether the
+   refusals merely come later (the fork's leak); Steam's 32-bit client starts;
+   a CUDA workload in a compute VM registers its UVM pools (if crosvm logs
+   EACCES/EPERM on RegisterUvmPool, re-add `rw` on `/dev/nvidia-uvm`, not the
+   video group); Prism starts in VM and container modes.
+5. Then the rest of §5.1–5.4 as before.
 
 A VM whose app has exited stops (`sandbox-vm list` empties) unless it is
 persistent: that is the expected lifecycle, not a crash.
@@ -321,7 +436,19 @@ quotes each side separately), passt flag differences, crosvm seccomp gaps.
 
 ## 6. Open items / backlog
 
-- **Screen capture in VMs (the next big piece; design below).** The
+- **Screen capture: implemented** (see the update at the top; the text below
+  is the original design, kept for history — the implemented protocol lives in
+  `vm-dbus-proxy/` and differs). Remaining: a dedicated relay service between
+  the host and guest capture brokers so tokens never pass through app-uid or
+  desktop-user processes; wire `--capture-fd` (open the node after `modprobe`,
+  then drop `nvgpu-capture` from the guest `sbx-capture` user); keep shares
+  alive across window resizes (pool/format changes); explicit sync; an SHM
+  fallback; commit the xdph patch wiring (hyprland/default.nix, other session)
+  and drop xdph `--verbose`.
+- **Upstream to the fork** (`docs/virtio-nvgpu-gpu-window-and-compat-brief.md`):
+  window/share flags (then delete `backendFor`'s patching), the two guest kmod
+  patches, the unmap-by-VA leak behind the Prism stall.
+- **Original capture design (historical):** The
   virtio-nvgpu side is done and hardware-tested by its agents: see
   `docs/virtio-nvgpu-zero-copy-capture.md` (our brief),
   `docs/virtio-nvgpu-zero-copy-capture-reply.md` (their answer), and the fork's
