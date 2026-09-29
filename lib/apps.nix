@@ -127,6 +127,16 @@
               default = 4;
               description = "vCPUs for ${appName}'s VM.";
             };
+            gpuMemoryMiB = lib.mkOption {
+              type = lib.types.addCheck (lib.types.ints.between 1024 16384) (n: lib.mod n 1024 == 0);
+              default = 1024;
+              description = "virtio-nvgpu's shared window for ${appName}'s VM, in MiB (whole GiB): how much GPU memory its processes may keep CPU-mapped at once. It is address space, not guest RAM or VRAM; touched pages count against the VM's memory limit. A non-default value builds a backend variant (lib/vm/nvgpu.nix backendFor). Group members use their group's setting.";
+            };
+            gpuMemoryProcessPercent = lib.mkOption {
+              type = lib.types.ints.between 1 95;
+              default = 50;
+              description = "How much of each zone of the shared window one guest process may hold, in percent (the fork's default is 50). Above 50, one process can leave the VM's other processes only the reserve, which is shrunk to what the share leaves. Suits a single-game VM, not a VM shared by several apps. A non-default value builds a backend variant. Group members use their group's setting.";
+            };
             nested = lib.mkOption {
               type = lib.types.bool;
               default = config.modules.sandbox.vm.nested;

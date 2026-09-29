@@ -49,6 +49,9 @@ in
 lib.mkMerge [
   (lib.mkIf (mode != "none") {
     hardware.graphics.enable = true;
+    # Steam and 32-bit games need the guest driver environment too: the host's
+    # /run/opengl-driver-32 is not shared into this VM.
+    hardware.graphics.enable32Bit = lib.mkDefault pkgs.stdenv.hostPlatform.isx86_64;
     users.users.${user}.extraGroups = [
       "video"
       "render"
@@ -95,6 +98,9 @@ lib.mkMerge [
       nv.out
       eglPlatforms
     ];
+    hardware.graphics.extraPackages32 = lib.optionals pkgs.stdenv.hostPlatform.isx86_64 [
+      nv.lib32
+    ];
     environment.etc."egl/egl_external_platform.d".source =
       "/run/opengl-driver/share/egl/egl_external_platform.d/";
     environment.systemPackages = [ nv.bin ]; # nvidia-smi
@@ -108,8 +114,8 @@ lib.mkMerge [
     };
     # /dev/nvgpu-capture (screen-capture injection): to the capture daemon's
     # group alone, never an application's (virtio-nvgpu's
-    # contrib/udev/70-nvgpu-capture.rules; no uaccess). The daemon itself isn't
-    # written yet (docs/HANDOFF-vm-sandbox.md).
+    # contrib/udev/70-nvgpu-capture.rules; no uaccess). The sbx-capture broker
+    # publishes each approved share on a private PipeWire instance.
     users.groups.nvgpu-capture = { };
     services.udev.extraRules = ''
       SUBSYSTEM=="misc", KERNEL=="nvgpu-wl*", GROUP="nvgpu-wl", MODE="0660"

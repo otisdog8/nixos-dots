@@ -28,6 +28,7 @@ let
   user = sbxHost.user;
   home = "/home/${user}";
   vsockRelay = import ./vsock-relay.nix pkgs;
+  dbusProxy = sbxHost.dbusProxy;
   grantsPkg = import ./grants.nix pkgs;
   fidoGuest = pkgs.writeScriptBin "sbx-fido-guest" (
     "#!${pkgs.python3}/bin/python3 -IS\n" + builtins.readFile ./fido-guest.py
@@ -118,16 +119,30 @@ let
     fi
 
     # Host services (audio, the filtered session bus) over the vsock relay: one
-    # guest socket per service the app was given.
+    # guest socket per service the app was given. The relay runs as the user, so
+    # each socket's directory is the user's — but never /run/sbx itself, which
+    # holds root's and sbx-capture's state (its owner could rename those away
+    # and plant its own): a socket meant directly in it (the broker's) listens
+    # in /run/sbx/relay, behind a root-owned link at the usual path.
     if [ "$(jq '.relay | length' "$spec")" -gt 0 ]; then
-      {
-        echo "$cid"
-        jq -r '.relay[] | "\(.name)=\(.path)"' "$spec"
-      } > /run/sbx/relay.args
-      for d in $(jq -r '.relay[].path' "$spec" | xargs -n1 dirname | sort -u); do
-        install -d -m 0755 -o "$user" -g "$group" "$d"
-      done
+      echo "$cid" > /run/sbx/relay.args
+      jq -r '.relay[] | [.name, .path] | @tsv' "$spec" |
+        while IFS=$'\t' read -r name path; do
+          if [ "$(dirname -- "$path")" = /run/sbx ]; then
+            ln -sfn -- "relay/$(basename -- "$path")" "$path"
+            path="/run/sbx/relay/$(basename -- "$path")"
+          fi
+          install -d -m 0755 -o "$user" -g "$group" -- "$(dirname -- "$path")"
+          printf '%s=%s\n' "$name" "$path" >> /run/sbx/relay.args
+        done
       systemctl start --no-block sbx-relay.service || true
+      if jq -e '.relay | any(.name == "dbus" or .name == "capture-dbus")' "$spec" >/dev/null; then
+        if jq -e '.capture' "$spec" >/dev/null; then
+          touch /run/sbx/capture-enabled
+          systemctl start --no-block sbx-capture-broker.service
+        fi
+        systemctl start --no-block sbx-dbus-proxy.service
+      fi
     fi
 
     # Folder grants (lib/vm/grants.py): the host's allowlisted view of the home,
@@ -259,6 +274,12 @@ in
       isNormalUser = true;
       uid = sbxHost.uid;
       group = sbxHost.group;
+      # SSH diagnostics need the guest service logs (capture, D-Bus, graphics),
+      # and the user is the only account SSH admits. This VM's journal only, but
+      # all of it — the guest kernel's log and every guest service's, root's
+      # too — and to the apps as well, which run as this user. Nothing logged
+      # there may be secret from the apps (capture tokens are never logged).
+      extraGroups = [ "systemd-journal" ];
       inherit home;
       createHome = true;
       # "*" (no valid password) rather than "!" (locked): sshd refuses key logins
@@ -331,6 +352,90 @@ in
       User = user;
       Restart = "on-failure";
       RestartSec = 1;
+    };
+  };
+
+  # Accept Unix FD negotiation locally, but keep the host connection behind
+  # its existing policy filter and FD-free vsock transport.
+  systemd.services.sbx-dbus-proxy = {
+    description = "Guest D-Bus proxy to the filtered host session bus";
+    requires = [ "sbx-relay.service" ];
+    after = [
+      "sbx-setup.service"
+      "sbx-relay.service"
+    ];
+    script = ''
+      # The relay binds its sockets after systemd considers it started. The
+      # capture broker is dialled per share, not waited for: the app's bus
+      # must not depend on it (a share then fails, and says so).
+      for ((attempt = 0; attempt < 100; attempt++)); do
+        if [ -S /run/sbx/bus/transport.sock ]; then
+          if [ -f /run/sbx/capture-enabled ]; then
+            exec ${dbusProxy}/bin/vm-dbus-capture-proxy --role guest \
+              --listen /run/sbx/bus/bus --upstream /run/sbx/bus/transport.sock \
+              --broker /run/sbx/capture/broker.sock
+          fi
+          exec ${dbusProxy}/bin/vm-dbus-proxy \
+            --listen /run/sbx/bus/bus \
+            --upstream /run/sbx/bus/transport.sock
+        fi
+        ${pkgs.coreutils}/bin/sleep 0.1
+      done
+      echo "sbx-dbus-proxy: host bus transport socket did not appear" >&2
+      exit 1
+    '';
+    serviceConfig = {
+      User = user;
+      ExecStartPre = "${pkgs.coreutils}/bin/rm -f /run/sbx/bus/bus";
+      Restart = "on-failure";
+      RestartSec = 1;
+    };
+  };
+
+  users.groups.sbx-capture = { };
+  users.groups.nvgpu-capture = { };
+  users.users.sbx-capture = {
+    isSystemUser = true;
+    group = "sbx-capture";
+    # The capture node and the render node its imports are opened against;
+    # not video (card nodes, and cameras passed through to the VM).
+    extraGroups = [
+      "nvgpu-capture"
+      "render"
+    ];
+  };
+  # Created even in non-capture guests, but the service starts only when the
+  # instance spec enables capture. Apps cannot inspect per-session runtimes.
+  systemd.tmpfiles.rules = [ "d /run/sbx/capture 0711 sbx-capture sbx-capture -" ];
+  systemd.services.sbx-capture-broker = {
+    description = "Private PipeWire publishers for approved host screen shares";
+    after = [ "sbx-setup.service" ];
+    serviceConfig = {
+      User = "sbx-capture";
+      Group = "sbx-capture";
+      ExecStartPre = "${pkgs.coreutils}/bin/rm -f /run/sbx/capture/broker.sock";
+      ExecStart =
+        "${dbusProxy}/bin/vm-capture-broker --role guest"
+        + " --listen /run/sbx/capture/broker.sock --allowed-uid ${toString sbxHost.uid}"
+        + " --runtime-dir /run/sbx/capture --worker ${dbusProxy}/bin/vm-capture"
+        + " --pipewire ${pkgs.pipewire}/bin/pipewire --wireplumber ${pkgs.wireplumber}/bin/wireplumber";
+      Restart = "on-failure";
+      RestartSec = 1;
+      NoNewPrivileges = true;
+      CapabilityBoundingSet = "";
+      ProtectSystem = "strict";
+      ProtectHome = true;
+      ReadWritePaths = [ "/run/sbx/capture" ];
+      PrivateTmp = true;
+      PrivateNetwork = true;
+      ProtectKernelTunables = true;
+      ProtectKernelModules = true;
+      ProtectControlGroups = true;
+      LockPersonality = true;
+      RestrictSUIDSGID = true;
+      RestrictAddressFamilies = [ "AF_UNIX" ];
+      # Its publishers hold every live share's tokens: no core dumps.
+      LimitCORE = 0;
     };
   };
 

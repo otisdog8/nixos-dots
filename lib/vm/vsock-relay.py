@@ -9,9 +9,10 @@ Host side (`host`): listen on vsock port = the VM's CID; accept only connections
 whose peer CID is that VM's; read the service line; connect to the unix socket
 mapped to that name; splice both ways. A service the VM wasn't given is refused.
 
-The payload is spliced verbatim, never parsed. File descriptors (SCM_RIGHTS)
-cannot cross vsock, so only protocols that work without them are carried
-(PulseAudio with shm/memfd off, D-Bus without fd-passing calls).
+File descriptors (SCM_RIGHTS) cannot cross vsock. The host side therefore
+mediates D-Bus authentication and rejects Unix fd negotiation before splicing
+the binary message stream. Other services are spliced verbatim (PulseAudio
+must have shm/memfd off).
 
   vsock-relay guest --port CID SERVICE=/run/sbx/x/sock ...
   vsock-relay host --cid CID SERVICE=/host/socket ...
@@ -25,6 +26,60 @@ import threading
 
 HOST_CID = 2
 MAX_NAME = 64
+MAX_AUTH_LINE = 16384
+
+
+def read_auth_line(conn):
+    # Do not read ahead: BEGIN can be followed immediately by binary messages.
+    line = bytearray()
+    while len(line) < MAX_AUTH_LINE:
+        byte = conn.recv(1)
+        if not byte:
+            raise EOFError("D-Bus authentication disconnected")
+        line.extend(byte)
+        if line.endswith(b"\r\n"):
+            return bytes(line)
+    raise ValueError("D-Bus authentication line too long")
+
+
+def auth_word(line):
+    # libdbus takes a space or a tab after the command: split on any blank.
+    words = line[:-2].split(None, 1)
+    return words[0] if words else b""
+
+
+def dbus_auth(client, server):
+    """Forward SASL exchanges but never negotiate fds on the host connection.
+
+    Run on the host, so even a guest bypassing its local relay cannot negotiate
+    a feature that this transport cannot carry. Authentication and identity
+    checks remain the upstream proxy's responsibility.
+    """
+    if client.recv(1) != b"\0":
+        raise ValueError("D-Bus authentication must start with NUL")
+    server.sendall(b"\0")
+    authenticated = False
+    while True:
+        line = read_auth_line(client)
+        command = auth_word(line)
+        if command == b"NEGOTIATE_UNIX_FD":
+            client.sendall(b"ERROR Unix file descriptor passing is unavailable over vsock\r\n")
+            continue
+        if command == b"BEGIN":
+            if not authenticated or line != b"BEGIN\r\n":
+                raise ValueError("D-Bus BEGIN before authentication or with arguments")
+            server.sendall(line)
+            return
+        server.sendall(line)
+        reply = read_auth_line(server)
+        status = auth_word(reply)
+        if status == b"AGREE_UNIX_FD":
+            raise ValueError("unexpected D-Bus fd agreement")
+        if status == b"OK":
+            authenticated = True
+        elif status == b"REJECTED":
+            authenticated = False
+        client.sendall(reply)
 
 
 def log(msg):
@@ -153,6 +208,21 @@ def serve_host(cid, services):
             log(f"{name}: {path}: {e}")
             conn.close()
             return
+        # Only the plain bus is raw D-Bus. Capture VMs carry "capture-dbus"
+        # instead: the capture adapter's own framing, whose host end does the
+        # SASL exchange itself and refuses the guest's fd negotiation.
+        if name == "dbus":
+            try:
+                conn.settimeout(10)
+                down.settimeout(10)
+                dbus_auth(conn, down)
+                conn.settimeout(None)
+                down.settimeout(None)
+            except (OSError, EOFError, ValueError) as e:
+                log(f"dbus: {e}")
+                conn.close()
+                down.close()
+                return
         splice(conn, down)
 
     while True:

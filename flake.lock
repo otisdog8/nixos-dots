@@ -1526,6 +1526,7 @@
         "rose-pine-hyprcursor": "rose-pine-hyprcursor",
         "sops-nix": "sops-nix",
         "virtio-nvgpu": "virtio-nvgpu",
+        "vm-dbus-proxy": "vm-dbus-proxy",
         "zen-browser": "zen-browser"
       }
     },
@@ -1831,6 +1832,23 @@
         "ref": "display-passthrough",
         "type": "git",
         "url": "file:///home/jrt/Documents/nixos-dots/virtio-nvgpu"
+      }
+    },
+    "vm-dbus-proxy": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1790645735,
+        "narHash": "sha256-dAUmLJwXbBw6wc6RleiC767BL5cxsMGgRXCdNGQZAfU=",
+        "ref": "main",
+        "rev": "34da25a9d3792fa858735b5482ecbe50c4b271f0",
+        "revCount": 11,
+        "type": "git",
+        "url": "file:///home/jrt/Documents/nixos-dots/vm-dbus-proxy"
+      },
+      "original": {
+        "ref": "main",
+        "type": "git",
+        "url": "file:///home/jrt/Documents/nixos-dots/vm-dbus-proxy"
       }
     },
     "xdph": {

@@ -138,7 +138,13 @@ let
         name = appName;
         members = [ member ];
         perCwd = caps.cwd;
-        inherit (cfg.sandbox.vm) persistent memory vcpus;
+        inherit (cfg.sandbox.vm)
+          persistent
+          memory
+          vcpus
+          gpuMemoryMiB
+          gpuMemoryProcessPercent
+          ;
         network = cfg.sandbox.network;
       }
     else

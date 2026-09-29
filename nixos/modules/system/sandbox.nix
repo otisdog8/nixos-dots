@@ -322,6 +322,16 @@ in
                 type = lib.types.ints.positive;
                 default = 8;
               };
+              gpuMemoryMiB = lib.mkOption {
+                type = lib.types.addCheck (lib.types.ints.between 1024 16384) (n: lib.mod n 1024 == 0);
+                default = 1024;
+                description = "virtio-nvgpu's shared window for the group's VM, in MiB (whole GiB); see modules.apps.<app>.sandbox.vm.gpuMemoryMiB.";
+              };
+              gpuMemoryProcessPercent = lib.mkOption {
+                type = lib.types.ints.between 1 95;
+                default = 50;
+                description = "Per-process share of each zone of the group VM's shared window, in percent; see modules.apps.<app>.sandbox.vm.gpuMemoryProcessPercent. A group VM runs several apps: above 50, one of them can leave the others only the reserve.";
+              };
             };
           };
         }

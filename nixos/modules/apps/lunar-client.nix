@@ -78,6 +78,10 @@
         { config, lib, ... }:
         {
           modules.apps.lunar-client.sandbox.dedicatedUser = true;
+          # Match Prism's gaming VM: one game may use most of each GPU window zone.
+          modules.apps.lunar-client.sandbox.vm.memory = lib.mkDefault 16384;
+          modules.apps.lunar-client.sandbox.vm.gpuMemoryMiB = lib.mkDefault 16384;
+          modules.apps.lunar-client.sandbox.vm.gpuMemoryProcessPercent = lib.mkDefault 90;
           # X11 forward for the Java/LWJGL game window (see
           # xwayland-forward.md; shares jrt's X server).
           modules.apps.lunar-client.sandbox.x11Forward = true;

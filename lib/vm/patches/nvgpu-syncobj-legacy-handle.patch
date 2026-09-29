@@ -1,0 +1,65 @@
+--- a/nvgpu_fence.c
++++ b/nvgpu_fence.c
+@@ -733,6 +733,22 @@
+   return copy_from_user(karg, uarg, _IOC_SIZE(cmd)) ? -EFAULT : 0;
+ }
+ 
++/* Accept the pre-timeline 16-byte syncobj handle ABI as well as the
++ * current structure. Never read or write beyond the caller's encoded size;
++ * the absent timeline point is zero, as in the DRM core's ioctl handling.
++ */
++static int nvgpu_fence_copy_handle(unsigned int cmd, unsigned int want,
++                                    struct drm_syncobj_handle *a,
++                                    const void __user *uarg) {
++  unsigned int legacy = (want & ~(_IOC_SIZEMASK << _IOC_SIZESHIFT)) |
++                        (16U << _IOC_SIZESHIFT);
++
++  if (cmd != want && cmd != legacy)
++    return -EINVAL;
++  memset(a, 0, sizeof(*a));
++  return copy_from_user(a, uarg, _IOC_SIZE(cmd)) ? -EFAULT : 0;
++}
++
+ /* ───────── syncobj waits, slept here ───────── */
+ 
+ /*
+@@ -1589,14 +1605,14 @@
+   struct drm_syncobj_handle a;
+   long ret;
+ 
+-  ret = nvgpu_fence_copy_in(cmd, DRM_IOCTL_SYNCOBJ_HANDLE_TO_FD, &a, uarg);
++  ret = nvgpu_fence_copy_handle(cmd, DRM_IOCTL_SYNCOBJ_HANDLE_TO_FD, &a, uarg);
+   if (ret)
+     return ret;
+   p.want_kind = a.flags & DRM_SYNCOBJ_HANDLE_TO_FD_FLAGS_EXPORT_SYNC_FILE
+                     ? NVGPU_HK_SYNC_FILE
+                     : NVGPU_HK_SYNCOBJ;
+-  ret = nvgpu_fence_call(&p, nfd->handle, cmd, &a, true);
+-  if (copy_to_user(uarg, &a, sizeof(a)))
++  ret = nvgpu_fence_call(&p, nfd->handle, DRM_IOCTL_SYNCOBJ_HANDLE_TO_FD, &a, true);
++  if (copy_to_user(uarg, &a, _IOC_SIZE(cmd)))
+     ret = -EFAULT;
+   return ret;
+ }
+@@ -1619,7 +1635,7 @@
+   bool owned;
+   long ret;
+ 
+-  ret = nvgpu_fence_copy_in(cmd, DRM_IOCTL_SYNCOBJ_FD_TO_HANDLE, &a, uarg);
++  ret = nvgpu_fence_copy_handle(cmd, DRM_IOCTL_SYNCOBJ_FD_TO_HANDLE, &a, uarg);
+   if (ret)
+     return ret;
+   if (a.pad || (a.flags & ~valid))
+@@ -1663,10 +1679,10 @@
+     p.has_in = true;
+   }
+ 
+-  ret = nvgpu_fence_call(&p, nfd->handle, cmd, &a, true);
++  ret = nvgpu_fence_call(&p, nfd->handle, DRM_IOCTL_SYNCOBJ_FD_TO_HANDLE, &a, true);
+   if (held)
+     fput(held);
+-  if (copy_to_user(uarg, &a, sizeof(a)))
++  if (copy_to_user(uarg, &a, _IOC_SIZE(cmd)))
+     ret = -EFAULT;
+   return ret;
+ }

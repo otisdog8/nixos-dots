@@ -1,0 +1,23 @@
+--- a/nvgpu_main.c
++++ b/nvgpu_main.c
+@@ -730,6 +730,11 @@
+     .open = nvgpu_gpu_open,
+     .release = nvgpu_release,
+     .unlocked_ioctl = nvgpu_ioctl,
++    /* 32-bit RM clients, as nvidia.ko serves them (compat_ioctl is its native
++     * handler): RM's structs are fixed-width with NvP64 pointers, so no layout
++     * differs, and a compat caller reaches only what a native one can. Only
++     * the pointer is widened, as the DRM node's compat path does. */
++    .compat_ioctl = compat_ptr_ioctl,
+     .mmap = nvgpu_mmap,
+     .poll = nvgpu_poll,
+ };
+@@ -739,6 +744,8 @@
+     .open = nvgpu_ctl_open,
+     .release = nvgpu_release,
+     .unlocked_ioctl = nvgpu_ioctl,
++    /* As nvgpu_gpu_fops. */
++    .compat_ioctl = compat_ptr_ioctl,
+     .mmap = nvgpu_mmap,
+     .poll = nvgpu_poll,
+ };

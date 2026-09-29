@@ -42,7 +42,12 @@ let
         ro = false;
       }) g.shareHome;
       inherit (g) network;
-      inherit (g.vm) memory vcpus;
+      inherit (g.vm)
+        memory
+        vcpus
+        gpuMemoryMiB
+        gpuMemoryProcessPercent
+        ;
     };
 
   # `sandbox-vm list | stop NAME [PROJECT-DIR] | status NAME [PROJECT-DIR]`:
@@ -59,7 +64,7 @@ let
     case "''${1:-list}" in
       list)
         ${pkgs.systemd}/bin/systemctl list-units --no-legend --plain --state=active 'sandbox-vm-*.service' \
-          | ${pkgs.gnugrep}/bin/grep -Ev -- '-(prep|net|wl|gpu|relay|bus|grantsfs|grants|docs|camera)(@.*)?\.service' \
+          | ${pkgs.gnugrep}/bin/grep -Ev -- '-(prep|net|wl|gpu|relay|bus|capture-bus|capture-broker|grantsfs|grants|docs|camera)(@.*)?\.service' \
           | ${pkgs.gawk}/bin/awk '{print $1}' | ${pkgs.gnused}/bin/sed -E 's/^sandbox-vm-//; s/\.service$//' || true ;;
       stop) ${pkgs.systemd}/bin/systemctl stop "$(unit_for "$2" "''${3:-}")" ;;
       camera)
@@ -79,6 +84,7 @@ let
 
   guest = inputs.nixpkgs.lib.nixosSystem {
     specialArgs.sbxHost = {
+      dbusProxy = cfg.dbusProxy;
       inherit (cfg) user graphics;
       inherit (user) uid group;
       gid = config.users.groups.${user.group}.gid;
@@ -179,6 +185,14 @@ in
           "nvgpu"
         ];
       description = "Whether any VM may get virtio-nvgpu on this host.";
+    };
+
+    dbusProxy = lib.mkOption {
+      type = lib.types.package;
+      readOnly = true;
+      internal = true;
+      default = import inputs.vm-dbus-proxy { inherit pkgs; };
+      description = "D-Bus and consented screen-capture adapters for sandbox VMs.";
     };
 
     nvgpu = lib.mkOption {

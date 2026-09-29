@@ -29,6 +29,12 @@
       url = "git+file:///home/jrt/Documents/nixos-dots/virtio-nvgpu?ref=display-passthrough";
       flake = false;
     };
+    # Standalone guest D-Bus transport adapter. Pin the local repository until
+    # it is published; then this can become github:otisdog8/vm-dbus-proxy.
+    vm-dbus-proxy = {
+      url = "git+file:///home/jrt/Documents/nixos-dots/vm-dbus-proxy?ref=main";
+      flake = false;
+    };
     nixpkgs-older.url = "github:NixOS/nixpkgs?rev=3e042434c17eff8ed5528faa4c4503facc2bdf6c";
     # nixpkgs-unstable branch: carries fixes ahead of the nixos-* channels
     # (e.g. the cantarell-fonts 0.311 rebuild). Used for isolated package pins.

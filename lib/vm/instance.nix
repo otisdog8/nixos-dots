@@ -81,11 +81,21 @@
   network,
   memory,
   vcpus,
+  gpuMemoryMiB ? 1024,
+  gpuMemoryProcessPercent ? 50,
 }:
 let
   paths = import ../paths.nix { inherit lib; };
   netpolicy = import ../netpolicy.nix { inherit lib; };
   vmHost = config.modules.sandbox.vm;
+  # This VM's backend: the fork's, or a variant with its own shared-window size
+  # and per-process share (sandbox.vm.gpuMemoryMiB / gpuMemoryProcessPercent,
+  # a group's vm.* for a group VM; lib/vm/nvgpu.nix `backendFor`). The window is
+  # address space for mapping GPU memory into the guest, not guest RAM or VRAM.
+  nvgpuBackend = vmHost.nvgpu.backendFor {
+    windowMiB = gpuMemoryMiB;
+    ownerPercent = gpuMemoryProcessPercent;
+  };
   guest = vmHost.guest.config;
 
   first = lib.head members;
@@ -111,6 +121,19 @@ let
   crossDomain = gui && !nvgpu;
   gpuDevice = nvgpu || crossDomain;
   crosvmPkg = if nvgpu then vmHost.nvgpu.crosvm else pkgs.crosvm;
+  # passt 2026_07_16 asserts on an exactly full receive iovec array: the
+  # result is a COUNT, so equality with remaining capacity is valid. Permit
+  # negative results to reach the existing error handler before unsigned
+  # conversion. Keep the bound check, rather than disabling assertions.
+  # The earlier brk exception only exposed this assertion (glibc allocates
+  # while reporting it); it was not a fix for the network failure.
+  passtPkg = pkgs.passt.overrideAttrs (old: {
+    postPatch = (old.postPatch or "") + ''
+      substituteInPlace tcp_vu.c --replace-fail \
+        'assert(cnt < ARRAY_SIZE(iov_msg) - j);' \
+        'assert(cnt < 0 || (size_t)cnt <= ARRAY_SIZE(iov_msg) - j);'
+    '';
+  });
   # The virtio-nvgpu backend runs as a user of this VM's own (virtio-nvgpu's
   # DEPLOY.md, "Per-VM users"), never the desktop user or the VMM's: a
   # compromised backend is then neither a step from the session nor the VMM.
@@ -127,12 +150,14 @@ let
   # Zero-copy screen capture (virtio-nvgpu's "capture injection", DEPLOY.md):
   # the backend takes host dma-bufs on an inject socket from ONE helper user of
   # this VM's own (never the backend's, the VMM's or the desktop user's) and
-  # makes them guest dma-bufs, opened in the guest through /dev/nvgpu-capture
-  # with an id and a secret token. The helper (host: the portal request under
-  # the app's identity, the PipeWire stream, IMPORT) and the guest daemon
-  # (OPEN, a PipeWire source node) are not written yet — see
-  # docs/HANDOFF-vm-sandbox.md; this wires the user, the socket and the node.
-  capture = nvgpu && lib.any (m: m.screenCast or false) members;
+  # makes them guest dma-bufs, opened in the guest through /dev/nvgpu-capture.
+  # The D-Bus adapter obtains only the portal-approved PipeWire remote; the
+  # dedicated capture helper injects buffers and the guest publishes them on
+  # a private per-session PipeWire server. The portal is reached over the VM's
+  # filtered bus, so no bus (an unsandboxed member: no policy, no identity)
+  # means no capture — the adapter unit would otherwise require a -bus unit
+  # that doesn't exist, and the VM would not start.
+  capture = nvgpu && bus && lib.any (m: m.screenCast or false) members;
   captureUserName =
     let
       n = "sbx-cap-${name}";
@@ -196,6 +221,7 @@ let
   builtinRelays = [
     "pulse"
     "dbus"
+    "capture-dbus"
     "broker"
     "grants"
   ];
@@ -364,8 +390,10 @@ let
       }) guestServices;
       # Guest sockets for the relay (the grant agent dials the host directly).
       relay = map (n: {
-        name = n;
-        path = guestSockets.${n};
+        name = if n == "dbus" && capture then "capture-dbus" else n;
+        # Apps use the message-aware guest proxy; only that proxy needs this
+        # raw FD-free transport to the host's filtering proxy.
+        path = if n == "dbus" then "/run/sbx/bus/transport.sock" else guestSockets.${n};
       }) (lib.remove "grants" relayServices);
     }
   );
@@ -404,6 +432,9 @@ let
     ''}
     ${lib.optionalString bus ''
       ${co}/install -d -m 0700 -o ${username} -g ${hostUser.group} "$rt/bus"
+    ''}
+    ${lib.optionalString capture ''
+      ${co}/install -d -m 0711 -o ${captureUserName} -g ${captureUserName} "$rt/capture"
     ''}
     ${lib.optionalString grants ''
       ${co}/install -d -m 0700 -o ${username} -g ${hostUser.group} "$rt/grants"
@@ -521,7 +552,7 @@ let
     set -euo pipefail
     dir="''${1:-}"
     ${idPrelude}
-    exec ${pkgs.passt}/bin/passt --foreground --quiet --vhost-user \
+    exec ${passtPkg}/bin/passt --foreground --quiet --vhost-user \
       --socket "$rt/net/passt.sock" \
       -t none -u none --no-map-gw \
       ${
@@ -578,7 +609,7 @@ let
     + (
       if nvgpu then
         ''
-          exec ${vmHost.nvgpu.backend}/bin/vhost-user-nvgpu --socket "$rt/gpu/gpu.sock" ${lib.optionalString gui ''--wayland-socket "$rt/wl/wayland.sock"''} ${lib.optionalString gpuCap "--allow-compute"} ${lib.optionalString capture ''--inject-socket "$rt/gpu/inject.sock" --inject-uid "$(${co}/id -u ${captureUserName})"''}
+          exec ${nvgpuBackend}/bin/vhost-user-nvgpu --socket "$rt/gpu/gpu.sock" ${lib.optionalString gui ''--wayland-socket "$rt/wl/wayland.sock"''} ${lib.optionalString gpuCap "--allow-compute"} ${lib.optionalString capture ''--inject-socket "$rt/gpu/inject.sock" --inject-uid "$(${co}/id -u ${captureUserName})"''}
         ''
       else
         ''
@@ -631,16 +662,26 @@ let
   # over virtio-fs (crosvm's jailed fs device; the portal's FUSE enforces the
   # per-app view). The portal is D-Bus activated, so it's started first.
   docsScript = pkgs.writeShellScript "${unit}-docs" ''
-    set -euo pipefail
+    set -Eeuo pipefail
+    stage="initialization"
+    trap 'rc=$?; echo "${unit}-docs: $stage failed (exit $rc, line $LINENO)" >&2; exit "$rc"' ERR
     dir="''${1:-}"
     ${idPrelude}
     eu="$(${co}/id -u)"
     eg="$(${co}/id -g)"
     appid="$(${pkgs.gnused}/bin/sed -n 's/^name=//p' ${busFlatpakInfo} | ${co}/head -n1)"
-    ${pkgs.systemd}/bin/busctl --user call org.freedesktop.portal.Documents \
+    stage="activating the document portal"
+    SYSTEMD_LOG_TARGET=console SYSTEMD_LOG_LEVEL=debug \
+      ${pkgs.systemd}/bin/busctl --user call org.freedesktop.portal.Documents \
       /org/freedesktop/portal/documents org.freedesktop.portal.Documents GetMountPoint >/dev/null
     src="${hostRuntimeDir}/doc/by-app/$appid"
+    stage="waiting for the document portal view $src"
     for _ in $(${co}/seq 1 100); do [ -d "$src" ] && break; ${co}/sleep 0.05; done
+    if [ ! -d "$src" ]; then
+      echo "${unit}-docs: document portal view missing after 5 s: $src" >&2
+      exit 1
+    fi
+    stage="starting the document virtio-fs backend"
     ${co}/rm -f "$rt/docs/fs.sock"
     ${pkgs.crosvm}/bin/crosvm device fs \
       --socket-path "$rt/docs/fs.sock" \
@@ -651,9 +692,11 @@ let
       --uid-map "$eu $eu 1" --gid-map "$eg $eg 1" &
     pid=$!
     ${lib.optionalString (principal != username) ''
+      stage="granting the VM access to the document virtio-fs socket"
       for _ in $(${co}/seq 1 200); do [ -S "$rt/docs/fs.sock" ] && break; ${co}/sleep 0.05; done
       ${pkgs.acl}/bin/setfacl -m "u:${principal}:rw" "$rt/docs/fs.sock"
     ''}
+    stage="waiting for the document virtio-fs backend"
     wait "$pid"
   '';
 
@@ -807,6 +850,10 @@ let
         map (d: if d == "/dev/dri" then "char-drm rw" else "${d} rw") config.modules.sandbox.gpuDevices
       else
         [
+          # Match /proc/devices: open NVIDIA drivers register major 195 as
+          # "nvidia". Keep the frontend name for drivers that use it; allowing
+          # only that name leaves /dev/nvidia0 denied by DevicePolicy=closed.
+          "char-nvidia rw"
           "char-nvidia-frontend rw"
           "char-drm rw"
         ]
@@ -832,7 +879,8 @@ let
           else
             "${hostRuntimeDir}/pulse/native"
         }"
-        ++ lib.optional bus ''dbus="$rt/bus/bus.sock"''
+        ++ lib.optional (bus && !capture) ''dbus="$rt/bus/bus.sock"''
+        ++ lib.optional (bus && capture) ''capture-dbus="$rt/bus/capture.sock"''
         ++ lib.optional broker "broker=${hostRuntimeDir}/sbx-broker/${brokerName}.sock"
         ++ lib.optional grants ''grants="$rt/grants/guest.sock"''
         ++ lib.mapAttrsToList (n: r: lib.escapeShellArg "${n}=${r.host}") extraRelays
@@ -860,6 +908,43 @@ let
       --die-with-parent \
       -- ${pkgs.xdg-dbus-proxy}/bin/xdg-dbus-proxy "$DBUS_SESSION_BUS_ADDRESS" "$rt/bus/bus.sock" \
         ${lib.concatMapStringsSep " " lib.escapeShellArg (dbusArgs ++ [ "--filter" ])}
+  '';
+
+  # Screen capture (capture VMs), two units so no uid holds both halves:
+  #   -capture-bus, the user: between the relay and the -bus proxy, answers the
+  #     guest's ScreenCast calls and, after the portal's own consent dialog,
+  #     takes the restricted PipeWire remote and hands it to the broker. It
+  #     parses what the guest sends, so it is confined like the relay.
+  #   -capture-broker, sbx-cap-<vm>: the only uid the backend's inject socket
+  #     serves; consumes that remote and injects its buffers. It takes requests
+  #     from the user's uid alone (SO_PEERCRED), never from the guest.
+  # The capture worker's host GPU: EGL's modifier query on the render node it
+  # opens (--render-node, /dev/dri/renderD128 by default) and the NVIDIA nodes
+  # behind it (major 195: nvidia*, nvidiactl, nvidia-modeset). No card nodes,
+  # udmabuf or UVM, which only the backend needs; injection itself is the
+  # backend's socket.
+  captureDeviceAllow = [
+    "char-nvidia rw"
+    "char-nvidia-frontend rw"
+    "/dev/dri/renderD128 rw"
+  ];
+  captureBrokerScript = pkgs.writeShellScript "${unit}-capture-broker" ''
+    set -euo pipefail
+    dir="''${1:-}"
+    ${idPrelude}
+    ${co}/rm -f "$rt/capture/broker.sock"
+    exec ${vmHost.dbusProxy}/bin/vm-capture-broker --role host \
+      --listen "$rt/capture/broker.sock" --allowed-uid ${toString hostUser.uid} \
+      --worker ${vmHost.dbusProxy}/bin/vm-capture --inject-socket "$rt/gpu/inject.sock"
+  '';
+  captureBusScript = pkgs.writeShellScript "${unit}-capture-bus" ''
+    set -euo pipefail
+    dir="''${1:-}"
+    ${idPrelude}
+    ${co}/rm -f "$rt/bus/capture.sock"
+    exec ${vmHost.dbusProxy}/bin/vm-dbus-capture-proxy --role host \
+      --listen "$rt/bus/capture.sock" --upstream "$rt/bus/bus.sock" \
+      --broker "$rt/capture/broker.sock"
   '';
 
   # ── Launchers ────────────────────────────────────────────────────────────────
@@ -972,7 +1057,9 @@ let
       # Wait for the guest's sshd (the unit is up once its keys exist).
       up=0
       for _ in $(${co}/seq 1 240); do
-        if ${ssh} "''${ssh_opts[@]}" -o ConnectTimeout=2 -T -- "vsock/$cid" true 2>/dev/null; then
+        if ${ssh} "''${ssh_opts[@]}" -o ConnectTimeout=2 -T -- "vsock/$cid" ${
+          if bus then "test -S ${guestSockets.dbus}" else "true"
+        } 2>/dev/null; then
           up=1
           break
         fi
@@ -1115,13 +1202,17 @@ let
       # device processes into empty roots, so those namespace types, the mount
       # syscalls and seccomp itself must stay available. Never deny @privileged as
       # a group: pivot_root is in it.
+      # A compute VM's UVM semaphore pools (virtio-nvgpu's crosvm patch 0007,
+      # RegisterUvmPool) are checked resident with mincore before they get a
+      # KVM slot; mincore is not in @system-service, and EPERM refuses the pool.
       RestrictNamespaces = "user pid mnt net";
       SystemCallFilter = [
         "@system-service"
         "@mount"
         "@sandbox"
         "~@obsolete @raw-io @reboot @swap @module @cpu-emulation @debug @clock"
-      ];
+      ]
+      ++ lib.optional (nvgpu && gpuCap) "mincore";
       SystemCallArchitectures = "native";
       SystemCallErrorNumber = "EPERM";
       LockPersonality = true;
@@ -1138,7 +1229,9 @@ let
         "-/persist"
         "-/large"
         "-/cache"
-      ];
+      ]
+      # The pool check's access() goes through /proc/self/fd, not this path.
+      ++ lib.optional (nvgpu && gpuCap) "-/dev/nvidia-uvm";
       BindPaths = storageBinds ++ rwBinds ++ lib.optional perCwd (bindPair "%f" cwdMount);
       BindReadOnlyPaths = roBinds;
       ReadWritePaths = [ base ];
@@ -1156,10 +1249,17 @@ let
       ProtectProc = "invisible";
 
       DevicePolicy = "closed";
+      # A compute VM's pool check also asks whether this uid could open the
+      # backend's UVM file for writing (mincore answers truthfully only then:
+      # can_do_mincore), and the device cgroup is part of that answer. The node
+      # is 0666 on NixOS, so no group; "w" is all access(W_OK) needs, and the
+      # path itself is hidden below: the VMM checks the backend's descriptor,
+      # it never opens UVM itself.
       DeviceAllow = [
         "/dev/kvm rw"
         "/dev/vhost-vsock rw"
-      ];
+      ]
+      ++ lib.optional (nvgpu && gpuCap) "/dev/nvidia-uvm w";
       # No IP at all: the guest's network (if any) is passt, over a unix socket.
       RestrictAddressFamilies = [
         "AF_UNIX"
@@ -1337,7 +1437,11 @@ let
   );
 
   relayService = helper (
-    afterPrep (lib.optional bus (ref "${unit}-bus") ++ lib.optional grants (ref "${unit}-grants"))
+    afterPrep (
+      lib.optional bus (ref "${unit}-bus")
+      ++ lib.optional capture (ref "${unit}-capture-bus")
+      ++ lib.optional grants (ref "${unit}-grants")
+    )
     // {
       description = "Sandbox VM host services (vsock relay): ${label}";
       serviceConfig = {
@@ -1391,6 +1495,98 @@ let
         RestrictAddressFamilies = [ "AF_UNIX" ];
         SystemCallArchitectures = "native";
         LimitCORE = 0;
+      };
+    }
+  );
+
+  captureBrokerService = helper (
+    afterPrep [ (ref "${unit}-gpu") ]
+    // {
+      description = "Sandbox VM screen-capture injection helper: ${label}";
+      environment.__EGL_VENDOR_LIBRARY_FILENAMES = "/run/opengl-driver/share/glvnd/egl_vendor.d/10_nvidia.json";
+      serviceConfig = {
+        ExecStart = "${captureBrokerScript}${instArg}";
+        User = captureUserName;
+        Group = captureUserName;
+        # The render node's group; the NVIDIA nodes are the driver's 0666.
+        SupplementaryGroups = [ "render" ];
+        NoNewPrivileges = true;
+        CapabilityBoundingSet = "";
+        AmbientCapabilities = "";
+        ProtectSystem = "strict";
+        ProtectHome = true;
+        ReadWritePaths = [ base ];
+        PrivateTmp = true;
+        PrivateIPC = true;
+        PrivateNetwork = true;
+        ProtectKernelTunables = true;
+        ProtectKernelModules = true;
+        ProtectKernelLogs = true;
+        ProtectControlGroups = true;
+        ProtectClock = true;
+        ProtectHostname = true;
+        ProtectProc = "invisible";
+        RestrictNamespaces = true;
+        LockPersonality = true;
+        RestrictRealtime = true;
+        RestrictSUIDSGID = true;
+        RestrictAddressFamilies = [ "AF_UNIX" ];
+        SystemCallArchitectures = "native";
+        SystemCallFilter = [ "@system-service" ];
+        SystemCallErrorNumber = "EPERM";
+        # Not MemoryDenyWriteExecute: libglvnd writes its dispatch stubs.
+        DevicePolicy = "closed";
+        DeviceAllow = captureDeviceAllow;
+        LimitCORE = 0;
+        UMask = "0077";
+      };
+    }
+  );
+  captureBusService = helper (
+    afterPrep [
+      (ref "${unit}-bus")
+      (ref "${unit}-capture-broker")
+    ]
+    // {
+      description = "Sandbox VM D-Bus capture adapter: ${label}";
+      serviceConfig = {
+        ExecStart = "${captureBusScript}${instArg}";
+        User = username;
+        Group = hostUser.group;
+        NoNewPrivileges = true;
+        CapabilityBoundingSet = "";
+        AmbientCapabilities = "";
+        # Only this VM's runtime dir: not the session bus, the compositor or
+        # PipeWire under /run/user, and nothing in /home.
+        ProtectSystem = "strict";
+        ProtectHome = true;
+        ReadWritePaths = [ base ];
+        PrivateTmp = true;
+        PrivateIPC = true;
+        PrivateDevices = true;
+        PrivateNetwork = true;
+        ProtectKernelTunables = true;
+        ProtectKernelModules = true;
+        ProtectKernelLogs = true;
+        ProtectControlGroups = true;
+        ProtectClock = true;
+        ProtectHostname = true;
+        ProtectProc = "invisible";
+        RestrictNamespaces = true;
+        LockPersonality = true;
+        RestrictRealtime = true;
+        RestrictSUIDSGID = true;
+        RestrictAddressFamilies = [ "AF_UNIX" ];
+        SystemCallArchitectures = "native";
+        SystemCallFilter = [ "@system-service" ];
+        SystemCallErrorNumber = "EPERM";
+        UMask = "0077";
+        LimitCORE = 0;
+        # It buffers what the guest sends: a misbehaving guest costs this
+        # unit (and so its own screen sharing and bus), not the session.
+        MemoryMax = "512M";
+        MemorySwapMax = 0;
+        TasksMax = 512;
       };
     }
   );
@@ -1486,6 +1682,19 @@ let
         AmbientCapabilities = "";
         ProtectSystem = "strict";
         ProtectHome = "tmpfs";
+        # ProtectHome also hides /run/user. Restore this user's runtime tree
+        # for the session bus and the document portal's FUSE mount, which may
+        # appear only after GetMountPoint activates the portal. Keep /home,
+        # /root and other users' runtime directories hidden. The guest still
+        # receives only doc/by-app/$appid, never this runtime tree or bus:
+        # crosvm's fs device pivots into that view before serving it. What
+        # this bind adds (the unfiltered session bus, compositor, PipeWire and
+        # broker sockets) is reachable by this script, and by crosvm only
+        # before it jails itself or after escaping that jail. Not narrower:
+        # systemd sets binds up as root, and root can't stat the user's FUSE
+        # mount (no allow_other), so binding doc/ itself fails the unit; the
+        # whole tree carries the mount along without looking inside.
+        BindPaths = [ hostRuntimeDir ];
         ReadWritePaths = [ base ];
         RestrictNamespaces = "user pid mnt net";
         SystemCallFilter = [
@@ -1571,6 +1780,10 @@ in
   // lib.optionalAttrs gpuDevice { "${unit}-gpu${tmpl}" = gpuService; }
   // lib.optionalAttrs relay { "${unit}-relay${tmpl}" = relayService; }
   // lib.optionalAttrs bus { "${unit}-bus${tmpl}" = busService; }
+  // lib.optionalAttrs capture {
+    "${unit}-capture-broker${tmpl}" = captureBrokerService;
+    "${unit}-capture-bus${tmpl}" = captureBusService;
+  }
   // lib.optionalAttrs docs { "${unit}-docs${tmpl}" = docsService; }
   // lib.optionalAttrs camera { "${unit}-camera${tmpl}" = cameraService; }
   // lib.optionalAttrs grants {
@@ -1667,6 +1880,12 @@ in
           lib.unique (lib.filter (p: lib.count (q: q == p) entryPaths > 1) entryPaths)
         )
       }).";
+    }
+    {
+      # One capture helper uid per VM (virtio-nvgpu's DEPLOY.md): per-project
+      # instances would all share sbx-cap-<name>, each able to inject into all.
+      assertion = !(capture && perCwd);
+      message = "sandbox VM '${name}': screen capture (ScreenCast) isn't supported for per-project (cwd) VMs.";
     }
     {
       assertion = username == vmHost.user;

@@ -88,8 +88,13 @@
       # binary with the CAP_SYS_NICE capability needed for realtime scheduling.
       # Use via Steam per-game launch options: `gamescope -- %command%`.
       customConfig =
-        { ... }:
+        { lib, ... }:
         {
+          modules.apps.steam.sandbox.vm.vcpus = lib.mkDefault 12;
+          modules.apps.steam.sandbox.vm.memory = lib.mkDefault 16384;
+          # Match the gaming GPU policy: a single game can use most of each zone.
+          modules.apps.steam.sandbox.vm.gpuMemoryMiB = lib.mkDefault 16384;
+          modules.apps.steam.sandbox.vm.gpuMemoryProcessPercent = lib.mkDefault 90;
           programs.gamescope.enable = true;
         };
     };
