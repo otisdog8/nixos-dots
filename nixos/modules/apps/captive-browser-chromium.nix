@@ -50,8 +50,28 @@
       # Baseline policies only (no telemetry, DoH off so name resolution stays with
       # the portal's SOCKS proxy, no password saving): no extensions, search engine
       # or package changes — the command line above stays as it is.
-      # A portal login page has no business recording: sound out only.
+      # A portal login page has no business recording: sound out only, and only
+      # xdg.nix's benign portal baseline — no screen capture, screenshots or
+      # camera (browser.nix adds those; this browser runs on hostile networks,
+      # and ScreenCast would also give its VM the capture bridge).
       capabilities.microphone = lib.mkForce false;
+      portalInterfaces = lib.mkForce [
+        "FileChooser"
+        "OpenURI"
+        "Email"
+        "Print"
+        "Trash"
+        "Notification"
+        "Inhibit"
+        "Settings"
+        "NetworkMonitor"
+        "ProxyResolver"
+        "MemoryMonitor"
+        "PowerProfileMonitor"
+        "Realtime"
+        "GameMode"
+        "Secret"
+      ];
       capabilities.binds.ro = browserSettings.chromiumBinds {
         appName = "captive-browser-chromium";
         inherit policyRoot;
