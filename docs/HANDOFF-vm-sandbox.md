@@ -78,7 +78,8 @@ pick for that app):
   fixes, the leak, and two missing deployment facts);
 - Codex's `*.log` traces in the repo root are untracked; delete when done.
 
-**Validate next (in order)** — §5.8 has the concrete steps.
+**Validate next (in order)** — §5.8 has the concrete steps; as of 2026-09-30
+items 1–4 there are unconfirmed (deferred behind the user's virtio-nvgpu work).
 
 ## 0. Ground rules the user set (keep them)
 
@@ -399,16 +400,20 @@ browser) in a virtio-nvgpu VM. Steps in §5.8.
 
 ### 5.8 Validate next, in this order
 
-1. **Rebuild and restart VMs fully** (the guest changed: root-owned
+Status (2026-09-30): items 1–4 are **UNCONFIRMED** — not yet run by the user,
+deferred while other virtio-nvgpu changes land first. Re-run them after those
+changes (a fork bump rebuilds the backend, crosvm and the guest module).
+
+1. **[UNCONFIRMED] Rebuild and restart VMs fully** (the guest changed: root-owned
    `/run/sbx`, the D-Bus adapter, the capture broker). In a VM:
    `ls -ld /run/sbx` → root:root; `/run/sbx/broker.sock` → symlink to
    `relay/broker.sock`; `sbx-request exec -- true`, a FIDO login and (1Password
    VM) op-uplink still reach the broker; `sandbox-vm list` shows no
    `-capture-*` entries.
-2. **D-Bus adapter** (any VM app): notifications and file chooser work; an
+2. **[UNCONFIRMED] D-Bus adapter** (any VM app): notifications and file chooser work; an
    fd-passing action gets an error, not a crash; several apps in one VM keep
    their buses independently. Guest log: `journalctl -u sbx-dbus-proxy`.
-3. **Screen share** from Chromium/Firefox in a VM: the host picker appears
+3. **[UNCONFIRMED] Screen share** from Chromium/Firefox in a VM: the host picker appears
    (every time — no restore), the share shows moving content for 60 s; host
    `journalctl -u 'sandbox-vm-<app>-capture-*'` shows at most a few
    "reclaimed" lines and never "EGL modifier query unavailable" (that would
@@ -419,7 +424,7 @@ browser) in a virtio-nvgpu VM. Steps in §5.8.
    re-share; close the browser, then the VM, mid-share — the host indicator
    must disappear each time. Stopping the guest `sbx-capture-broker` must not
    break the app's other D-Bus use.
-4. **Gaming VMs** (steam, prismlauncher, lunar-client at 16 GiB / 90%): Prism
+4. **[UNCONFIRMED] Gaming VMs** (steam, prismlauncher, lunar-client at 16 GiB / 90%): Prism
    no longer logs `(Owner)` refusals or hits Xid 69 quickly — note whether the
    refusals merely come later (the fork's leak); Steam's 32-bit client starts;
    a CUDA workload in a compute VM registers its UVM pools (if crosvm logs
