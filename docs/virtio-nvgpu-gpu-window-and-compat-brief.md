@@ -1,5 +1,11 @@
 # Brief for virtio-nvgpu: what nixos-dots patches, and what to upstream
 
+> **Status 2026-09-30: done upstream.** The fork's `heavyfix` (cc9a481) has
+> `--window-size` / `--window-owner-share` and the guest driver's caller-sized
+> DRM ioctls (16-byte syncobj handle) and `compat_ptr_ioctl` on every NVIDIA
+> node (d50bb92). nixos-dots now passes the flags (`lib/vm/nvgpu.nix`
+> `windowArgs`) and patches nothing in the fork. Kept below for history.
+
 From the nixos-dots side (branch `vm-sandbox`), 2026-09-29, against the pinned
 fork revision `2eec306` (`display-passthrough`). nixos-dots builds the fork in
 `lib/vm/nvgpu.nix` and changes it in three places. Each is a stopgap until the

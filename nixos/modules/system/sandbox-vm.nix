@@ -187,6 +187,18 @@ in
       description = "Whether any VM may get virtio-nvgpu on this host.";
     };
 
+    prefaultMemory = lib.mkOption {
+      type = lib.types.bool;
+      default = true;
+      description = ''
+        virtio-nvgpu VMs: fault all guest RAM in and collapse it onto 2 MiB pages
+        at boot (crosvm --prefault-memory, the fork's patch 0011), instead of on
+        first touch one 4 KiB page at a time, which stalls frames for 20-40 ms.
+        Each such VM then holds all of its memory from boot (and free-page
+        reporting is off for it). Other VMs are unaffected.
+      '';
+    };
+
     dbusProxy = lib.mkOption {
       type = lib.types.package;
       readOnly = true;

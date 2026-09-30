@@ -128,9 +128,9 @@
               description = "vCPUs for ${appName}'s VM.";
             };
             gpuMemoryMiB = lib.mkOption {
-              type = lib.types.addCheck (lib.types.ints.between 1024 16384) (n: lib.mod n 1024 == 0);
+              type = lib.types.addCheck (lib.types.ints.between 256 65536) (n: lib.mod n 64 == 0);
               default = 1024;
-              description = "virtio-nvgpu's shared window for ${appName}'s VM, in MiB (whole GiB): how much GPU memory its processes may keep CPU-mapped at once. It is address space, not guest RAM or VRAM; touched pages count against the VM's memory limit. A non-default value builds a backend variant (lib/vm/nvgpu.nix backendFor). Group members use their group's setting.";
+              description = "virtio-nvgpu's shared window for ${appName}'s VM, in MiB (a multiple of 64, 256-65536; at most 64512 for GPU-compute VMs): how much GPU memory its processes may keep CPU-mapped at once (the backend's --window-size). It is address space, not guest RAM or VRAM. Keep the default unless the backend logs `SHM alloc failed` (the fork's DEPLOY.md, \"Sizing the window\"). Group members use their group's setting.";
             };
             gpuMemoryProcessPercent = lib.mkOption {
               type = lib.types.ints.between 1 95;

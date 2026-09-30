@@ -323,9 +323,9 @@ in
                 default = 8;
               };
               gpuMemoryMiB = lib.mkOption {
-                type = lib.types.addCheck (lib.types.ints.between 1024 16384) (n: lib.mod n 1024 == 0);
+                type = lib.types.addCheck (lib.types.ints.between 256 65536) (n: lib.mod n 64 == 0);
                 default = 1024;
-                description = "virtio-nvgpu's shared window for the group's VM, in MiB (whole GiB); see modules.apps.<app>.sandbox.vm.gpuMemoryMiB.";
+                description = "virtio-nvgpu's shared window for the group's VM, in MiB (a multiple of 64, 256-65536); see modules.apps.<app>.sandbox.vm.gpuMemoryMiB.";
               };
               gpuMemoryProcessPercent = lib.mkOption {
                 type = lib.types.ints.between 1 95;

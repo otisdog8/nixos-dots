@@ -88,14 +88,20 @@ let
   paths = import ../paths.nix { inherit lib; };
   netpolicy = import ../netpolicy.nix { inherit lib; };
   vmHost = config.modules.sandbox.vm;
-  # This VM's backend: the fork's, or a variant with its own shared-window size
-  # and per-process share (sandbox.vm.gpuMemoryMiB / gpuMemoryProcessPercent,
-  # a group's vm.* for a group VM; lib/vm/nvgpu.nix `backendFor`). The window is
-  # address space for mapping GPU memory into the guest, not guest RAM or VRAM.
-  nvgpuBackend = vmHost.nvgpu.backendFor {
+  # This VM's shared-window size and per-process share as backend flags
+  # (sandbox.vm.gpuMemoryMiB / gpuMemoryProcessPercent, a group's vm.* for a
+  # group VM; lib/vm/nvgpu.nix `windowArgs`). The window is address space for
+  # mapping GPU memory into the guest, not guest RAM or VRAM.
+  nvgpuWindowArgs = vmHost.nvgpu.windowArgs {
     windowMiB = gpuMemoryMiB;
     ownerPercent = gpuMemoryProcessPercent;
+    compute = gpuCap;
   };
+  # Guest RAM faulted in and collapsed onto 2 MiB pages as the VM starts
+  # (the fork's crosvm patch 0011), instead of one 4 KiB fault at a time on
+  # first touch, which stalled frames for 20-40 ms. Commits all of the VM's RAM
+  # at boot, so free-page reporting (which hands pages back) is off with it.
+  prefault = nvgpu && vmHost.prefaultMemory;
   guest = vmHost.guest.config;
 
   first = lib.head members;
@@ -480,7 +486,7 @@ let
       --mem size=${toString memory}
       --cpus num-cores=${toString vcpus}
       ${lib.optionalString (!camera) "--no-usb"}
-      --balloon-page-reporting
+      ${if prefault then "--prefault-memory" else "--balloon-page-reporting"}
       --serial type=stdout,hardware=serial,console=true
       --vsock "cid=$cid"
       -s "$rt/ctl/crosvm.sock"
@@ -609,7 +615,7 @@ let
     + (
       if nvgpu then
         ''
-          exec ${nvgpuBackend}/bin/vhost-user-nvgpu --socket "$rt/gpu/gpu.sock" ${lib.optionalString gui ''--wayland-socket "$rt/wl/wayland.sock"''} ${lib.optionalString gpuCap "--allow-compute"} ${lib.optionalString capture ''--inject-socket "$rt/gpu/inject.sock" --inject-uid "$(${co}/id -u ${captureUserName})"''}
+          exec ${vmHost.nvgpu.backend}/bin/vhost-user-nvgpu --socket "$rt/gpu/gpu.sock" ${lib.optionalString gui ''--wayland-socket "$rt/wl/wayland.sock"''} ${lib.optionalString gpuCap "--allow-compute"} ${lib.escapeShellArgs nvgpuWindowArgs} ${lib.optionalString capture ''--inject-socket "$rt/gpu/inject.sock" --inject-uid "$(${co}/id -u ${captureUserName})"''}
         ''
       else
         ''

@@ -233,8 +233,15 @@ ephemeral.
   "git+file:///home/jrt/Documents/nixos-dots").nixosConfigurations.excelsior.config;
   in [ c.systemd.units."sandbox-vm-firefox.service".unit c.modules.sandbox.vm.guest.config.system.build.toplevel ]'`.
   Scenarios: `.extendModules { modules = [ { … } ]; }`.
-- `virtio-nvgpu` flake input is `git+file:///…/virtio-nvgpu?ref=display-passthrough`
-  (locked 2eec306, which has capture injection; GitHub `otisdog8/virtio-nvgpu`
+- `virtio-nvgpu` flake input is `git+file:///…/virtio-nvgpu?ref=heavyfix`
+  (2026-09-30 perf checkpoint, locked cc9a481: the WIP branch = display-passthrough
+  + prefaulted 2 MiB guest RAM (crosvm patch 0011, passed as `--prefault-memory`
+  to virtio-nvgpu VMs; `modules.sandbox.vm.prefaultMemory`) and pump/session
+  latency fixes — point it back at `display-passthrough` once merged there. It
+  has the window flags (`--window-size`, `--window-owner-share`, passed from
+  `sandbox.vm.gpuMemoryMiB`/`gpuMemoryProcessPercent` by `nvgpu.nix`
+  `windowArgs`) and our former guest-driver fixes, so nixos-dots patches nothing
+  in the fork any more. Earlier pins: 0869ef9, 2eec306 (capture injection); GitHub `otisdog8/virtio-nvgpu`
   only has an older `dev` — switch the URL when the user pushes). Update:
   `nix flake update virtio-nvgpu`, then rebuild `lib/vm/nvgpu.nix`'s four
   packages (crosvm's patch series lives in the fork and changes with it).
@@ -458,9 +465,11 @@ quotes each side separately), passt flag differences, crosvm seccomp gaps.
   alive across window resizes (pool/format changes); explicit sync; an SHM
   fallback; commit the xdph patch wiring (hyprland/default.nix, other session)
   and drop xdph `--verbose`.
-- **Upstream to the fork** (`docs/virtio-nvgpu-gpu-window-and-compat-brief.md`):
-  window/share flags (then delete `backendFor`'s patching), the two guest kmod
-  patches, the unmap-by-VA leak behind the Prism stall.
+- **Upstreamed** (2026-09-30, `heavyfix`): the window/share flags and both guest
+  driver fixes — nixos-dots dropped its patches. The Prism window exhaustion was
+  "in part a backend defect since fixed" (fork DEPLOY.md): steam/prism/lunar
+  may no longer need 16 GiB / 90% (the fork suggests the default unless the
+  backend logs `SHM alloc failed`; 8192 at 50% for creative apps).
 - **Original capture design (historical):** The
   virtio-nvgpu side is done and hardware-tested by its agents: see
   `docs/virtio-nvgpu-zero-copy-capture.md` (our brief),
