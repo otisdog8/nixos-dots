@@ -263,6 +263,14 @@ the relay's SASL mediation (9 tests in its build), the patched GPU backend
 variant's tests, and the guest private PipeWire config run locally (a consumer
 linked, plugin factories refused).
 
+**Confirmed by the user on hardware (2026-09-30):** Firefox (Developer Edition)
+shows Vimium, uBlock Origin and op-broker's extension; ungoogled-chromium
+showed only op-broker's (fixed since in `b5eb947`: Vimium and uBlock Origin
+Lite now load unpacked from the store — re-check `chrome://extensions`);
+microphone prompts work, including "Allow for this session"; `sbx-request exec`
+works; nixvim in its VM works; notifications work; nested virtualization is off.
+Not yet tested: file chooser, folder grants, security keys, camera.
+
 Hardware: Codex ran GPU VMs (Prism, Lunar, Chromium) and Firefox screen-share
 attempts on excelsior (logs in the repo root), but no outcome was confirmed as
 working. Treat everything VM-side as unverified until the user confirms it:
@@ -290,8 +298,8 @@ Logs: `journalctl -b -u 'sandbox-*' -u 'sbx-*'`, `journalctl --user -u sbx-broke
 | **Browser policies** (`lib/browser-settings.nix`) | `about:policies` / `chrome://policy` | policies active; built-in password manager and card autofill off; DoH off; telemetry off |
 | **Default search engine** DuckDuckGo (set once, changeable; Brave keeps Brave Search, captive browser none) | new window's search | DuckDuckGo |
 | **Chromium-family wrapper flags**: one `--enable-features=WebRtcPipeWireCapturer,AcceleratedVideoDecodeLinuxGL,AcceleratedVideoEncoder` + `--no-first-run` (previously a second `--enable-features` silently dropped Brave's own VA-API flags) | `chrome://gpu` in Brave/Chromium, a screen share in a call | video decode hardware-accelerated; screen sharing uses the portal picker |
-| **Extensions**: uBlock Origin (Firefox/Zen), uBlock Origin Lite (Chromium), Vimium (Firefox, Zen, Chromium, Brave) | `about:addons` / `chrome://extensions` | installed and locked; none in ungoogled-chromium or the captive browser (by design) |
-| **1Password runs in its VM** (`onepassword.nix` default) and **op-broker is on** | start 1Password | its window appears (through virtio-nvgpu); vault works; see 5.4 |
+| **Extensions**: uBlock Origin (Firefox/Zen), uBlock Origin Lite (Chromium), Vimium (Firefox, Zen, Chromium, Brave) | `about:addons` / `chrome://extensions` | installed and locked; ungoogled-chromium gets Vimium + uBlock Origin Lite unpacked from the store (`lib/chromium-extensions.nix`; the Web Store can't work there); none in the captive browser (by design). **Firefox confirmed 2026-09-30** |
+| **1Password runs in its VM** (`onepassword.nix` default) and **op-broker is on** | start 1Password | its window appears (cross-domain display, software rendering: 1Password has no GPU access by design since `00681d8`); vault works; see 5.4 |
 | **op-broker's extension** in the browsers it serves, official 1Password extension blocked | extensions page | "op-broker" present; the official one refused |
 | **sbx-broker** user service | `systemctl --user status sbx-broker` | active; sockets under `$XDG_RUNTIME_DIR/sbx-broker/` (`*.sock`, `*.pulse`) |
 | **"(container)" / "(vm)" launcher entries** (variants on desktops/laptops) | app launcher | each sandboxed app listed twice; the plain entry hidden |
@@ -529,7 +537,8 @@ quotes each side separately), passt flag differences, crosvm seccomp gaps.
 
 virtio-nvgpu only for GPU apps; prompts are desktop dialogs; agents sandbox =
 declared projects + grants; builds allowed, no rebuilds; nested virt off;
-1Password in its VM; broker prompt for each fill + 1Password's own prompt for the
+1Password in its VM, without GPU access (software rendering; no virtio-nvgpu for
+the vault's sandbox); broker prompt for each fill + 1Password's own prompt for the
 CLI connection; system auth via host polkit; Firefox Developer Edition; Vimium;
 probing notice thresholds 4 sites / 2 min, one per 10 min, block 1 h (accepted);
 subdomain matching on but labelled; audio playback-only by default, microphone
