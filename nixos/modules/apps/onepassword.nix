@@ -27,7 +27,10 @@
       # chromium.nix (Electron): carves .config/1Password's regenerable caches to
       # /cache, keeps the profile+vault on persist. Also pulls in gui.nix.
       ../../../lib/features/chromium.nix
-      ../../../lib/features/needs-gpu.nix
+      # No needs-gpu.nix: the vault's app renders in software. Its container
+      # gets no GPU device nodes, and its VM gets crosvm's cross-domain display
+      # instead of virtio-nvgpu — no host GPU driver interface reachable from
+      # the sandbox holding the vault.
       ../../../lib/features/network.nix
       ../../../lib/features/xdg-desktop.nix
       # 1Password lives in the tray.
