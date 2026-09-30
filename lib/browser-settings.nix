@@ -630,22 +630,49 @@ rec {
       allFeatures = lib.unique (
         [ "WebRtcPipeWireCapturer" ] ++ lib.optionals hardwareVideoDecoding vaapiFeatures ++ features
       );
-      loadFlag = "--load-extension=${lib.concatStringsSep "," (lib.unique loadExtensions)}";
       flags = [
         "--ozone-platform=wayland"
         "--enable-features=${lib.concatStringsSep "," allFeatures}"
         "--no-first-run"
-      ]
-      ++ lib.optional (loadExtensions != [ ]) loadFlag;
+      ];
+      # Unpacked extensions are loaded from COPIES in the sandbox's runtime dir,
+      # not from the store: Chromium writes into an unpacked extension's own
+      # directory (declarativeNetRequest indexes its rulesets there, so uBlock
+      # Origin Lite fails from the read-only store), and it derives a keyless
+      # extension's id from its path, so a fixed per-name path keeps the id — and
+      # the extension's settings — across version bumps. Re-copied when the store
+      # path changes.
+      launcher = pkgs.writeShellScript "${name}-launcher" (
+        ''
+          set -eu
+        ''
+        + lib.optionalString (loadExtensions != [ ]) ''
+          dir="''${XDG_RUNTIME_DIR:-''${TMPDIR:-/tmp}}/sbx-chromium-extensions"
+          ${pkgs.coreutils}/bin/mkdir -p -m 0700 "$dir"
+          exts=""
+          for src in ${lib.escapeShellArgs (lib.unique loadExtensions)}; do
+            n="''${src##*/}"
+            case "$n" in ????????????????????????????????-*) n="''${n#*-}" ;; esac # a store hash
+            if [ "$(${pkgs.coreutils}/bin/cat "$dir/$n.source" 2>/dev/null)" != "$src" ]; then
+              ${pkgs.coreutils}/bin/rm -rf "$dir/$n"
+              ${pkgs.coreutils}/bin/cp -rL --no-preserve=mode,ownership "$src" "$dir/$n"
+              printf '%s' "$src" > "$dir/$n.source"
+            fi
+            exts="''${exts:+$exts,}$dir/$n"
+          done
+          set -- "--load-extension=$exts" "$@"
+        ''
+        + ''
+          exec ${base}/bin/${bin} ${lib.escapeShellArgs flags} "$@"
+        ''
+      );
     in
     pkgs.symlinkJoin {
       inherit name;
       paths = [ base ];
-      nativeBuildInputs = [ pkgs.makeWrapper ];
       postBuild = ''
         rm $out/bin/${bin}
-        makeWrapper ${base}/bin/${bin} $out/bin/${bin} \
-          --add-flags "${lib.concatStringsSep " " flags}"
+        ln -s ${launcher} $out/bin/${bin}
       '';
     };
 }

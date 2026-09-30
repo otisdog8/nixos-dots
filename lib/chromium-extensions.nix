@@ -8,6 +8,7 @@
   # Its repository root is the unpacked extension (Vimium's "install from
   # source"); no build step.
   vimium = pkgs.fetchFromGitHub {
+    name = "vimium"; # the loaded copy's directory name (browser-settings.nix)
     owner = "philc";
     repo = "vimium";
     rev = "v2.4.2";
@@ -17,6 +18,7 @@
   # uBlock Origin Lite's Chromium release (MV3; the full uBlock Origin is MV2,
   # which current Chromium no longer runs).
   ublock-origin-lite = pkgs.fetchzip {
+    name = "ublock-origin-lite";
     url = "https://github.com/uBlockOrigin/uBOL-home/releases/download/2026.926.2202/uBOLite_2026.926.2202.chromium.zip";
     stripRoot = false;
     hash = "sha256-i/JMXBLXi2P5SQ9Fz0VsfmnVW44aAl2Sa9j/FtmtUKs=";
