@@ -70,6 +70,17 @@
             modules.apps.ungoogled-chromium.sandbox.dedicatedUser = true;
             # Downloads land in jrt's ~/Downloads/ungoogled-chromium (host-visible).
             modules.apps.ungoogled-chromium.sandbox.sharedDownloads = true;
+            # Vimium and uBlock Origin Lite, loaded unpacked from the store
+            # (lib/chromium-extensions.nix): the Web Store can't work here (see
+            # below). Merged with op-broker's; to drop them on a host, mkForce the list.
+            modules.apps.ungoogled-chromium.browser.unpackedExtensions =
+              let
+                ext = import ../../../lib/chromium-extensions.nix { inherit pkgs; };
+              in
+              [
+                "${ext.vimium}"
+                "${ext.ublock-origin-lite}"
+              ];
             users.users."app-ungoogled-chromium".extraGroups = [
               "video"
               "audio"
@@ -78,11 +89,10 @@
           (browserSettings.chromiumConfig {
             appName = "ungoogled-chromium";
             inherit policyRoot mkPackage;
-            # No default extensions (not even uBlock Origin Lite / Vimium, which the
-            # other browsers get): force-installing from the Chrome Web Store would
-            # make this browser fetch from Google on every (ephemeral) start. Add
-            # some through modules.apps.ungoogled-chromium.browser.extensions, or
-            # an unpacked one through …browser.unpackedExtensions.
+            # No Web Store force-installs: ungoogled-chromium rewrites Google's
+            # domains, so they can't work (and would contact Google on every
+            # ephemeral start). Vimium and uBlock Origin Lite come unpacked from
+            # the store instead (unpackedExtensions above).
             defaultExtensions = { };
           } args)
         ];
