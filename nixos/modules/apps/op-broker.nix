@@ -158,23 +158,49 @@ let
   # by root and not on FUSE, and the guest's virtio-fs /nix/store is FUSE with
   # the host's root-owned files showing as nobody's.
   guestOpDir = "/run/sbx/op-bin";
+  # How long one `op` run may take in the guest. The first run (and any run
+  # while 1Password is locked) waits for 1Password's own authorization: the
+  # host's polkit dialog, answered by you typing a password. Killing op before
+  # that is answered cancels the host dialog under your fingers (and counts as
+  # a failed authentication towards the broker's 3-strikes pause), so this is
+  # well above the host-side serve mode's 30 s. The launcher (`timeout`) stops
+  # op itself; the broker's own limit is later, so it never kills only the
+  # launcher and leaves op running.
+  guestOpTimeout = 120;
   guestConfigFile = pkgs.writeText "op-broker-guest.json" (
     builtins.toJSON (
       lib.recursiveUpdate (brokerConfig null) {
         audit.file = null;
         op = {
           path = "${guestOpDir}/op";
+          timeout = guestOpTimeout + 10;
           # timeout forks op and waits, so op's parent is this root-owned copy
           # (the broker's own interpreter is a store path).
           launcher = [
             "${guestOpDir}/timeout"
             "--kill-after=5"
-            "60"
+            (toString guestOpTimeout)
           ];
         };
       }
     )
   );
+  # The broker's dialogs (zenity, GTK 4) in the guest. The guest services get
+  # only XDG_RUNTIME_DIR/WAYLAND_DISPLAY/the session bus, none of the GUI
+  # environment the app's launcher passes: the generic guest system has no
+  # fonts at all (fonts.packages is empty; the app gets the host's
+  # FONTCONFIG_FILE), and with the cross-domain display there is no GPU
+  # behind the guest's virtio-gpu, so GTK's default Vulkan/GL renderers probe
+  # drivers that can't work. Dialogs need neither: the host's font
+  # configuration (store paths plus their prebuilt cache, as the app gets it)
+  # and GTK's software renderer.
+  guestDialogEnv = {
+    GSK_RENDERER = "cairo";
+    LIBGL_ALWAYS_SOFTWARE = "1";
+  }
+  // lib.optionalAttrs config.fonts.fontconfig.enable {
+    FONTCONFIG_FILE = "${lib.removeSuffix "/" "${config.environment.etc.fonts.source}"}/fonts.conf";
+  };
   # The guest service (as root): copy op and timeout to a root-owned tmpfs
   # directory, then become the user with primary group onepassword-cli (the
   # group the app checks a connecting CLI's gid against) and run the broker.
@@ -190,15 +216,19 @@ let
     }
     d=${guestOpDir}
     umask 022
+    # Declared in the guest system (guestModules below), so it exists before
+    # 1Password starts; this is only the fallback for an older guest.
+    getent group onepassword-cli >/dev/null || groupadd -r onepassword-cli
     install -d -m 0755 -o root -g root "$d"
     install -m 0755 -o root -g root "$(readlink -f ${lib.getExe' cfg.opPackage "op"})" "$d/op.new"
     mv -f "$d/op.new" "$d/op"
     install -m 0755 -o root -g root "$(readlink -f ${pkgs.coreutils}/bin/timeout)" "$d/timeout.new"
     mv -f "$d/timeout.new" "$d/timeout"
-    getent group onepassword-cli >/dev/null || groupadd -r onepassword-cli
     home="$(getent passwd ${user} | cut -d: -f6)"
     exec setpriv --reuid=${user} --regid=onepassword-cli --init-groups \
-      env HOME="$home" USER=${user} LOGNAME=${user} \
+      env HOME="$home" USER=${user} LOGNAME=${user} ${
+        lib.concatStringsSep " " (lib.mapAttrsToList (k: v: "${k}=${lib.escapeShellArg v}") guestDialogEnv)
+      } \
       ${opb.broker}/bin/op-broker uplink --config ${guestConfigFile} --path /run/sbx/op-uplink/sock
   '';
   bridgeConfigFile = pkgs.writeText "op-broker-bridge.json" (
@@ -640,6 +670,13 @@ in
         auth = "service-account". See docs/op-broker.md.'';
 
       users.groups.onepassword-cli = { };
+      # The same group in the guest, from boot on: 1Password checks a
+      # connecting CLI's gid against it, and the app may start (and resolve the
+      # group) before the guest broker's start script gets to create it.
+      # Inert in the other VMs (one guest system for all).
+      modules.sandbox.vm.guestModules = lib.mkIf (desktop && opInVm) [
+        { users.groups.onepassword-cli = { }; }
+      ];
       users.users.op-broker = lib.mkIf (!desktop) {
         isSystemUser = true;
         group = "op-broker";

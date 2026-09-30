@@ -748,11 +748,14 @@ class TestSockets(unittest.TestCase):
             [sys.executable, NATIVE_HOST],
             input=struct.pack("=I", 20) + b'{"v":1,"op":"hello"}',
             stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             env=dict(os.environ, OP_BROKER_SOCKET="/nonexistent/sock"),
             timeout=10,
         )
         (n,) = struct.unpack("=I", p.stdout[:4])
         self.assertEqual(json.loads(p.stdout[4 : 4 + n])["error"], "unavailable")
+        # Says why on stderr (the browser's console / journal), naming the socket.
+        self.assertIn(b"op-broker-native-host: /nonexistent/sock: ", p.stderr)
 
     def test_bridge_and_uplink(self):
         env = Env()

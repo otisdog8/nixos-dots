@@ -125,7 +125,13 @@ def main():
             obj = json.loads(reply)
             if not isinstance(obj, dict):
                 raise ValueError("reply is not an object")
-        except (OSError, ValueError, UnicodeDecodeError):
+        except (OSError, ValueError, UnicodeDecodeError) as e:
+            # Why, for troubleshooting (docs/op-broker.md): Firefox shows a
+            # native host's stderr in its Browser Console, Chromium passes it
+            # to its own stderr (the sandbox unit's journal). Never the reply's
+            # content: only the socket error, or the kind of bad reply.
+            why = str(e) if isinstance(e, OSError) else type(e).__name__
+            print(f"op-broker-native-host: {path}: {why}", file=sys.stderr, flush=True)
             broker.close()
             write_message(stdout, error(rid, "unavailable"))
             continue

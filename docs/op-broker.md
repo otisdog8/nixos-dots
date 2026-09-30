@@ -148,7 +148,10 @@ spawns it), one JSON line per request to `/run/sbx/op/sock` (or
 `$OP_BROKER_SOCKET`). Limits: 16 KiB from the extension, 64 KiB from the broker,
 1 MiB to the browser. It re-serializes requests and relays replies; it keeps no
 state and holds a credential only while copying it from the broker's reply to
-stdout. On broker errors it answers `unavailable` and reconnects next time.
+stdout. On broker errors it answers `unavailable` and reconnects next time, and
+says why on stderr (`op-broker-native-host: /run/sbx/op/sock: [Errno 2] …`):
+Firefox shows that in its Browser Console, Chromium in its own stderr (the
+sandbox unit's journal). Never the reply's content.
 
 ### Broker protocol (native host ↔ broker)
 
@@ -387,7 +390,15 @@ there), and runs with the guest's config file from
 (`sandbox.vm.guestServices.<n>.root`) only to prepare: it copies `op` and
 `timeout` to `/run/sbx/op-bin/` (tmpfs, root:root 0755), creates the group, then
 `setpriv`s to the user with primary group `onepassword-cli` and runs the broker,
-which runs `op` as `/run/sbx/op-bin/timeout 60 /run/sbx/op-bin/op …`. Why: the
+which runs `op` as `/run/sbx/op-bin/timeout 120 /run/sbx/op-bin/op …` (120 s, not
+the host serve mode's 30: the first `op` waits for 1Password's authorization,
+i.e. for you to answer the host's polkit dialog, and killing op earlier cancels
+that dialog under your fingers and counts towards the 3-strikes pause). The
+group is also declared in the guest system (`modules.sandbox.vm.guestModules`),
+so it exists before 1Password starts and resolves it. The broker's dialogs get
+the host's font configuration (the generic guest has no fonts) and GTK's
+software renderer (`GSK_RENDERER=cairo`: no GPU behind the cross-domain
+display), since guest services get none of the app's GUI environment. Why: the
 app's root-ownership checks above apply to the CLI's binary **and its parent's**,
 and the guest's `/nix/store` is virtio-fs, i.e. FUSE, with the host's root-owned
 files showing as nobody's (crosvm's jailed fs device maps only its own uid). The
@@ -648,6 +659,129 @@ Everything below needs the real desktop. 1Password in its VM
     in its container, a fill answers `unavailable` and 1Password's logs show it
     rejected the CLI; "Unlock using system authentication" isn't offered. That
     confirms the analysis above.
+
+## Troubleshooting
+
+For 1Password in its VM (the default). Paste the output of each step; each one
+narrows the failure to one hop. `b` is the browser's app name (`firefox`,
+`zen-browser`, `ungoogled-chromium`).
+
+**0. The usual suspects.** After a rebuild that touched op-broker, restart the
+browser (its sandbox binds `/run/op-broker/clients/<b>` only when it starts) and
+1Password (its VM gets the relay, the guest services and the guest system at VM
+start). In 1Password: Settings → Security → *Unlock using system
+authentication* on, then Settings → Developer → *Integrate with 1Password CLI* on
+(the second needs the first; without it every fill answers `unavailable`).
+1Password must be running (its VM, and with it the bridge, runs only then).
+The extension's toolbar icon shows `x` on failure; its tooltip names the error.
+
+**1. Host: the bridge and the chain behind it, without the browser** (run as
+yourself; `sudo` for the app uid):
+
+```sh
+b=firefox
+systemctl status --no-pager op-broker-bridge sandbox-vm-onepassword sandbox-vm-onepassword-relay
+journalctl -b --no-pager -u op-broker-bridge | tail -n 30
+sudo ls -la /run/op-broker/clients/$b /run/op-broker/uplink; getfacl -p /run/op-broker/clients/$b
+
+# Talk to the broker exactly as the browser's native host does, as the browser's uid:
+nh=$(nix-store -qR /run/current-system | grep -- '-op-broker-native-host-bin-' | head -n 1)/bin/op-broker-native-host
+py=$(head -n 1 "$nh" | cut -c3- | cut -d' ' -f1)
+opb() { sudo -u app-$b "$py" -c 'import socket,sys; s=socket.socket(socket.AF_UNIX); s.connect(sys.argv[1]); s.sendall(sys.argv[2].encode()+b"\n"); print(s.makefile().readline().strip() or "(closed without a reply)")' /run/op-broker/clients/$b/sock "$1"; }
+opb '{"v":1,"op":"hello"}'
+opb '{"v":1,"op":"fill","origin":"https://github.com","want":["username"]}'   # a site you have a login for
+```
+
+| `hello` answers | means | next |
+| --- | --- | --- |
+| `{"ok": true, "requester": "Firefox", …}` | host, relay, uplink and the broker in the guest all work | the `fill` line; then step 3 if the browser still fails |
+| `ConnectionRefusedError` / `FileNotFoundError` | the bridge isn't running (1Password's VM isn't) or never started | `systemctl status op-broker-bridge`, its journal |
+| `(closed without a reply)` | the bridge refused the peer | bridge journal: `"refused"` with the uid (and cgroup) it saw |
+| `{"ok": false, "error": "unavailable"}` | the bridge has no uplink from the guest: bridge journal says `no uplink (is 1Password running?)` | step 2 (guest broker, relay) |
+
+| `fill` answers | means |
+| --- | --- |
+| `"ok": true` with your username, after op-broker's dialog | everything works; a browser failure is in step 3 |
+| `no-match` | works; no login saved for that origin (item website URLs) |
+| `unavailable` (no dialog) | `op` failed in the guest: step 2, the broker's journal has op's error |
+| `denied` with no dialog on screen | the dialog couldn't be shown in the guest: step 2, dialog test |
+| `cooldown` / `rate-limited` / `busy` | the limits in *Rate limiting* (restart the VM to reset) |
+
+The first `fill` after 1Password starts shows the **host's** polkit dialog
+(hyprpolkitagent: "The 1Password CLI in 1Password's sandbox VM … asks you to
+authenticate"), maybe 1Password's own prompt, then op-broker's dialog. The host
+side of that: `journalctl --user -b -u sbx-broker | grep authenticate`
+(`authenticated` / `dismissed` / `no authentication agent` → is
+`hyprpolkitagent` running? / `paused after repeated failed authentications` →
+wait 5 minutes).
+
+**2. Inside 1Password's VM** (SSH as yourself, as the launcher does; your user
+there may read the whole guest journal):
+
+```sh
+cid=$(( 3 + 16#$(printf %s onepassword/main | sha256sum | cut -c1-7) ))
+rt=/run/sandbox-vm/onepassword/main
+vmssh() { ssh -F /dev/null -o "ProxyCommand=/run/current-system/systemd/lib/systemd/systemd-ssh-proxy %h %p" \
+  -o ProxyUseFdpass=yes -o User=$USER -o IdentityFile=$rt/client/id_ed25519 -o IdentitiesOnly=yes \
+  -o UserKnownHostsFile=$rt/client/known_hosts -o HostKeyAlias=sandbox-vm -o BatchMode=yes -T "vsock/$cid" \
+  "PATH=/run/current-system/sw/bin; $1"; }
+
+vmssh 'systemctl status --no-pager sbx-svc-op-broker sbx-svc-polkit-agent sbx-relay'
+vmssh 'journalctl -b --no-pager -u sbx-svc-op-broker | tail -n 40'
+vmssh 'ls -ld /run/sbx /run/sbx/op-bin; ls -la /run/sbx/op-bin /run/sbx/op-uplink /run/user/$(id -u); getent group onepassword-cli'
+vmssh 'ps -eo pid,user,group,args | grep -e op-broker -e 1password | grep -v grep'
+vmssh 'journalctl -b --no-pager -u sbx-svc-polkit-agent -u polkit | tail -n 30'
+```
+
+- `sbx-svc-op-broker` must be active; its journal starts with `"event": "ready",
+  "mode": "uplink"` and shows one `connect … "via": "uplink"` per browser
+  connection and one `fill` line per request, with `decision` and, for
+  `unavailable`, `reason`: op's own error. `op exited 1: … connecting to
+  desktop app …` → CLI integration is off, 1Password isn't running, or it
+  rejected the CLI (binary/parent ownership, gid: see *1Password in its VM*);
+  `op failed to run: TimeoutExpired` → nobody answered 1Password's
+  authorization within 2 minutes; `multiple accounts` → set
+  `modules.apps.op-broker.account`.
+- `/run/sbx/op-bin/{op,timeout}` root:root 0755; `/run/sbx` root-owned;
+  `/run/sbx/op-uplink/sock` exists; `/run/user/<uid>` has
+  `1Password-BrowserSupport.sock` (1Password's CLI socket: none means the app
+  isn't running in this VM) and `wayland-0`; the group exists; the broker's
+  process runs as you with group `onepassword-cli`.
+- The polkit agent says `serving …` and `Registered Authentication Agent …`
+  appears in polkit's log for the `1password` processes; a failed CLI
+  authorization shows there too.
+- Dialog test (op-broker's dialogs run in the guest, shown on your screen
+  through the VM's display):
+
+  ```sh
+  vmssh 's=$(systemctl show -p ExecStart --value sbx-svc-op-broker | grep -o "/nix/store/[^ ;]*op-broker-guest-start" | head -n 1);
+    p=$(grep -o "/nix/store/[^\"]*/bin/sbx-prompt" $(grep -o "/nix/store/[^ ]*op-broker-guest.json" "$s"));
+    env $(grep -o "FONTCONFIG_FILE=[^ ]*" "$s") GSK_RENDERER=cairo XDG_RUNTIME_DIR=/run/user/$(id -u) WAYLAND_DISPLAY=wayland-0 \
+      DBUS_SESSION_BUS_ADDRESS=unix:path=/run/sbx/bus/bus \
+      "$(grep -o "/nix/store/[^ ]*/bin/zenity" "$p")" --info --text "op-broker dialog test"'
+  ```
+
+  A window must appear on the host; an error printed here is why op-broker's
+  prompts answer `denied` without one.
+
+**3. The browser's side** (step 1 works, the browser doesn't):
+
+```sh
+pid=$(pgrep -u app-$b -n)
+sudo nsenter -t "$pid" -m -- ls -la /run/sbx/op                                   # the socket, seen from the sandbox
+sudo nsenter -t "$pid" -m -- ls -la /home/app-$b/.mozilla/native-messaging-hosts  # Firefox, Zen
+sudo nsenter -t "$pid" -m -- ls -la /etc/chromium/native-messaging-hosts          # Chromium family
+```
+
+No `/run/sbx/op` → the browser started before `/run/op-broker` existed: restart
+it. Then trigger a fill and read the extension's view: Firefox —
+`about:debugging` → This Firefox → op-broker → Inspect (console), and the
+Browser Console (Ctrl+Shift+J) for `op-broker-native-host: …` lines (why the
+native host couldn't reach the broker) or "No such native application
+com.otisroot.op_broker" (manifest not found); Chromium —
+`chrome://extensions` → Developer mode → op-broker → *service worker* (console:
+"Specified native messaging host not found" = manifest), and `journalctl -b -u
+sandbox-$b | grep op-broker-native-host`.
 
 ## Decisions (the former open questions)
 
