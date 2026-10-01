@@ -31,9 +31,17 @@ pkgs.stdenvNoCC.mkDerivation {
     tail -n 3 test.log
     runHook postCheck
   '';
+  # -I, not -IS: -S would drop the environment's own site-packages (jeepney)
+  # along with the user's.
   installPhase = ''
     install -Dm755 /dev/null $out/bin/sbx-polkit-agent
-    { echo "#!${python}/bin/python3 -IS"; cat polkit-agent.py; } > $out/bin/sbx-polkit-agent
+    { echo "#!${python}/bin/python3 -I"; cat polkit-agent.py; } > $out/bin/sbx-polkit-agent
+  '';
+  # The tests import the module through `python3 -m unittest`; this runs the
+  # installed script itself, as the guest does.
+  doInstallCheck = true;
+  installCheckPhase = ''
+    $out/bin/sbx-polkit-agent --help > /dev/null
   '';
   meta.mainProgram = "sbx-polkit-agent";
 }
