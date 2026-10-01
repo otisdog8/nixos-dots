@@ -456,6 +456,7 @@ in
   # (systemd's fido_id tags it) belongs to the user outright.
   services.udev.extraRules = ''
     SUBSYSTEM=="hidraw", ENV{ID_FIDO_TOKEN}=="1", OWNER="${user}", MODE="0600"
+    KERNEL=="ntsync", OWNER="${user}", MODE="0600"
   '';
 
   systemd.services.sbx-grantd = {

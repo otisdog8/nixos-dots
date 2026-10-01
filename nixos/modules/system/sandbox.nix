@@ -332,6 +332,14 @@ in
                 default = 50;
                 description = "Per-process share of each zone of the group VM's shared window, in percent; see modules.apps.<app>.sandbox.vm.gpuMemoryProcessPercent. A group VM runs several apps: above 50, one of them can leave the others only the reserve.";
               };
+              tuning = lib.mkOption {
+                type = lib.types.enum [
+                  "default"
+                  "game"
+                ];
+                default = "default";
+                description = "The group VM's tuning; see modules.apps.<app>.sandbox.vm.tuning.";
+              };
             };
           };
         }

@@ -47,6 +47,7 @@ let
         vcpus
         gpuMemoryMiB
         gpuMemoryProcessPercent
+        tuning
         ;
     };
 

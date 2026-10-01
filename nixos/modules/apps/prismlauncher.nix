@@ -102,6 +102,9 @@
           modules.apps.prismlauncher.sandbox.vm.memory = lib.mkDefault 16384;
           modules.apps.prismlauncher.sandbox.vm.gpuMemoryMiB = lib.mkDefault 16384;
           modules.apps.prismlauncher.sandbox.vm.gpuMemoryProcessPercent = lib.mkDefault 90;
+          # 8 vCPUs, pinned on 4 whole cores, with the other game settings.
+          modules.apps.prismlauncher.sandbox.vm.vcpus = lib.mkDefault 8;
+          modules.apps.prismlauncher.sandbox.vm.tuning = lib.mkDefault "game";
           # X11 forward for the Qt launcher + Java/LWJGL game (see
           # xwayland-forward.md; shares jrt's X server).
           modules.apps.prismlauncher.sandbox.x11Forward = true;

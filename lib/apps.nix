@@ -137,6 +137,21 @@
               default = 50;
               description = "How much of each zone of the shared window one guest process may hold, in percent (the fork's default is 50). Above 50, one process can leave the VM's other processes only the reserve, which is shrunk to what the share leaves. Suits a single-game VM, not a VM shared by several apps. A non-default value builds a backend variant. Group members use their group's setting.";
             };
+            tuning = lib.mkOption {
+              type = lib.types.enum [
+                "default"
+                "game"
+              ];
+              default = "default";
+              description = ''
+                "game": virtio-nvgpu's measured settings for games, for a GPU VM
+                (lib/vm/instance.nix `gameTuning`): a 100 µs scheduler slice for
+                the VMM, one core-scheduling cookie for the VMM and its backend,
+                the vCPUs pinned in pairs on whole cores of the CPU's
+                least-preferred L3 domain (an even vcpus count; else unpinned),
+                and transparent huge pages and ntsync in the guest. Group
+                members use their group's setting.'';
+            };
             nested = lib.mkOption {
               type = lib.types.bool;
               default = config.modules.sandbox.vm.nested;

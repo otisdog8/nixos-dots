@@ -83,6 +83,8 @@
   vcpus,
   gpuMemoryMiB ? 1024,
   gpuMemoryProcessPercent ? 50,
+  # "game": virtio-nvgpu's measured settings for games (`gameTuning` below).
+  tuning ? "default",
 }:
 let
   paths = import ../paths.nix { inherit lib; };
@@ -102,6 +104,22 @@ let
   # first touch, which stalled frames for 20-40 ms. Commits all of the VM's RAM
   # at boot, so free-page reporting (which hands pages back) is off with it.
   prefault = nvgpu && vmHost.prefaultMemory;
+  # Games (sandbox.vm.tuning = "game"; the fork's DEPLOY.md, "Frame pacing",
+  # "Tuning" and "vCPU placement", measured on this host's CPU):
+  #   - the VMM's threads get a 100 µs EEVDF slice (the backend sets its own by
+  #     default): a woken vCPU gets a CPU back sooner on a loaded host;
+  #   - one core-scheduling cookie for the VMM and its backend ("shared")
+  #     instead of crosvm's one per vCPU: the backend thread answering a vCPU
+  #     may run on its SMT sibling, nothing else of the host's or another VM's
+  #     may (per-vCPU cookies cost ~12% fps and most of the 1% lows);
+  #   - the vCPUs pinned in pairs on whole cores of the CPU's least-preferred
+  #     L3 domain (the `smt` layout, the guest told they're siblings): lows that
+  #     hold while the desktop loads the other CCD, for 3-8% of the average on an
+  #     idle host. Two game VMs at once get the same cores. Unpinned if the
+  #     layout can't be worked out (an odd count, too many vCPUs);
+  #   - the guest kernel: transparent huge pages for every process, and ntsync
+  #     (Wine/Proton's fast path; /dev/ntsync).
+  gameTuning = nvgpu && tuning == "game";
   guest = vmHost.guest.config;
 
   first = lib.head members;
@@ -479,7 +497,11 @@ let
     # a host window, titled "crosvm", once the guest scans anything out: the
     # kernel's framebuffer console does, at boot. Cross-domain Wayland doesn't
     # use the display, so the guest's connector is disabled and nothing is.
-    ++ lib.optional crossDomain "video=Virtual-1:d";
+    ++ lib.optional crossDomain "video=Virtual-1:d"
+    ++ lib.optionals gameTuning [
+      "transparent_hugepage=always"
+      "modules_load=ntsync"
+    ];
   # What the launcher waits for in the guest before running the app: sshd,
   # then the session bus and the Wayland socket the app will use (a GUI app
   # started before the proxy's socket exists has no display at all).
@@ -500,6 +522,7 @@ let
     eg="$(${co}/id -g)"
     # Writable shares: the guest user (uid ${guestUid}) is this VMM's uid on the host.
     rw="${fsCommon}:cache=auto:uid=${guestUid}:gid=${guestGid}:uidmap=${guestUid} $eu 1:gidmap=${guestGid} $eg 1"
+    pre=()
     args=(
       run
       --name ${lib.escapeShellArg "sbx-${name}"}
@@ -560,9 +583,58 @@ let
       args+=(--vhost-user "type=gpu,socket=$rt/gpu/gpu.sock")
     ''}
     for p in ${lib.escapeShellArgs guestKernelParams}; do args+=(-p "$p"); done
-    exec ${crosvm} "''${args[@]}" \
+    ${lib.optionalString gameTuning ''
+      # The VMM's own cookie, shared with the backend by ExecStartPost.
+      args+=(--core-scheduling=false)
+      aff="$(${vmHost.nvgpu.pinLayout} ${toString vcpus} smt 2>&1 | ${pkgs.gnused}/bin/sed -n 's/^  --cpu-affinity //p')" || aff=
+      if [ -n "$aff" ]; then
+        args+=(--cpu-affinity "$aff")
+      else
+        echo "${unit}: no smt vCPU layout for ${toString vcpus} vCPUs on this host; running unpinned" >&2
+      fi
+      pre=(${pkgs.util-linux}/bin/chrt --other --sched-runtime 100000 0
+        ${pkgs.util-linux}/bin/coresched new --)
+    ''}
+    exec ''${pre[@]+"''${pre[@]}"} ${crosvm} "''${args[@]}" \
       --initrd ${guest.system.build.initialRamdisk}/${guest.system.boot.loader.initrdFile} \
       ${guest.boot.kernelPackages.kernel}/${guest.system.boot.loader.kernelFile}
+  '';
+
+  # Games (gameTuning): as root, once the VMM holds the cookie `coresched new`
+  # made for it, give the backend's whole thread group the same one (the fork's
+  # contrib/systemd/nvgpu-vmm-exec `join`). Until then, or if this fails, the
+  # backend has none: it may share a core with anything, as without the
+  # setting, and the guest never runs outside the VMM's cookie.
+  coreschedJoin = pkgs.writeShellScript "${unit}-coresched" ''
+    set -u
+    backendUnit="$1" vmm="$2"
+    PATH=${
+      lib.makeBinPath [
+        pkgs.util-linux
+        pkgs.coreutils
+        pkgs.systemd
+      ]
+    }
+    cookie() { c="$(coresched get -s "$1" 2>/dev/null)" || return 0; echo "''${c##* }"; }
+    be="$(systemctl show -P MainPID "$backendUnit")"
+    if [ -z "$be" ] || [ "$be" = 0 ]; then
+      echo "${unit}: $backendUnit has no main process; the backend keeps no core-scheduling cookie" >&2
+      exit 0
+    fi
+    for _ in $(seq 1 200); do
+      c="$(cookie "$vmm")"
+      if [ -n "$c" ] && [ "$c" != 0x0 ]; then
+        if coresched copy -s "$vmm" -d "$be" -t tgid && [ "$(cookie "$be")" = "$c" ]; then
+          echo "${unit}: the backend (pid $be) shares the VMM's core-scheduling cookie $c"
+        else
+          echo "${unit}: could not give the backend (pid $be) the VMM's core-scheduling cookie" >&2
+        fi
+        exit 0
+      fi
+      kill -0 "$vmm" 2>/dev/null || exit 0
+      sleep 0.05
+    done
+    echo "${unit}: the VMM (pid $vmm) has no core-scheduling cookie after 10 s" >&2
   '';
 
   # ACPI power button → orderly guest shutdown; systemd kills whatever remains.
@@ -1215,6 +1287,7 @@ let
     serviceConfig = {
       Type = "simple";
       ExecStart = "${runScript}${instArg}";
+      ExecStartPost = lib.optional gameTuning "+${coreschedJoin} ${ref "${unit}-gpu"} $MAINPID";
       ExecStop = "-${stopScript}${instArg}";
       TimeoutStopSec = 20;
       KillMode = "mixed";

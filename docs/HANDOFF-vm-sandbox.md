@@ -233,11 +233,21 @@ ephemeral.
   "git+file:///home/jrt/Documents/nixos-dots").nixosConfigurations.excelsior.config;
   in [ c.systemd.units."sandbox-vm-firefox.service".unit c.modules.sandbox.vm.guest.config.system.build.toplevel ]'`.
   Scenarios: `.extendModules { modules = [ { … } ]; }`.
-- `virtio-nvgpu` flake input is `git+file:///…/virtio-nvgpu?ref=heavyfix`
-  (2026-09-30 perf checkpoint, locked cc9a481: the WIP branch = display-passthrough
-  + prefaulted 2 MiB guest RAM (crosvm patch 0011, passed as `--prefault-memory`
-  to virtio-nvgpu VMs; `modules.sandbox.vm.prefaultMemory`) and pump/session
-  latency fixes — point it back at `display-passthrough` once merged there. It
+- `virtio-nvgpu` flake input is `git+file:///…/virtio-nvgpu?ref=display-passthrough`
+  (locked 4cc75d1, 2026-10-01; `heavyfix`, the 2026-09-30 perf checkpoint cc9a481,
+  is merged into it): prefaulted 2 MiB guest RAM (crosvm patch 0011, passed as
+  `--prefault-memory` to virtio-nvgpu VMs; `modules.sandbox.vm.prefaultMemory`),
+  pump/session latency fixes, the backend's 100 µs EEVDF slice (its default) and
+  the tuning knobs (DEPLOY.md "Tuning", "vCPU placement"). Game VMs take the
+  measured ones through `sandbox.vm.tuning = "game"` (steam, prismlauncher,
+  lunar-client; `gameTuning` in instance.nix): the VMM under `chrt --other
+  --sched-runtime 100000`, one core-scheduling cookie for VMM + backend
+  (`coresched new`, then a root ExecStartPost copies it to the backend),
+  `--cpu-affinity` from the fork's `rig/pin-layout.sh N smt` (nvgpu.nix
+  `pinLayout`; unpinned when it has no layout), and `transparent_hugepage=always`
+  + `modules_load=ntsync` in the guest. Not taken: `--vram-limit`, a host C-state
+  cap, `--core-scheduling=false` outright (a side-channel trade), Hyprland
+  `render:direct_scanout` (the other session's file). It
   has the window flags (`--window-size`, `--window-owner-share`, passed from
   `sandbox.vm.gpuMemoryMiB`/`gpuMemoryProcessPercent` by `nvgpu.nix`
   `windowArgs`) and our former guest-driver fixes, so nixos-dots patches nothing

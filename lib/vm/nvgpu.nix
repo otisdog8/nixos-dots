@@ -102,6 +102,20 @@ in
       (toString ownerPercent)
     ];
 
+  # The fork's vCPU layouts for this host (rig/pin-layout.sh; DEPLOY.md, "vCPU
+  # placement"): `nvgpu-pin-layout VCPUS LAYOUT` prints them, crosvm's as an
+  # indented `--cpu-affinity` line. It only reads /sys/devices/system/cpu.
+  pinLayout = pkgs.writeShellScript "nvgpu-pin-layout" ''
+    export PATH=${
+      lib.makeBinPath [
+        pkgs.coreutils
+        pkgs.gawk
+        pkgs.gnused
+      ]
+    }
+    exec ${pkgs.bash}/bin/bash ${src}/rig/pin-layout.sh "$@"
+  '';
+
   wlGuest = mkCrate {
     pname = "nvgpu-wl-guest";
     crate = "nvgpu-wl-guest";

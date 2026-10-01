@@ -95,6 +95,8 @@
           # Match the gaming GPU policy: a single game can use most of each zone.
           modules.apps.steam.sandbox.vm.gpuMemoryMiB = lib.mkDefault 16384;
           modules.apps.steam.sandbox.vm.gpuMemoryProcessPercent = lib.mkDefault 90;
+          # Slice, shared core-scheduling cookie, vCPUs pinned on 6 whole cores, THP, ntsync.
+          modules.apps.steam.sandbox.vm.tuning = lib.mkDefault "game";
           programs.gamescope.enable = true;
         };
     };

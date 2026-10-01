@@ -144,6 +144,7 @@ let
           vcpus
           gpuMemoryMiB
           gpuMemoryProcessPercent
+          tuning
           ;
         network = cfg.sandbox.network;
       }
