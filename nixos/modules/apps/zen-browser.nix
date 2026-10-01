@@ -76,6 +76,11 @@
             # persists Downloads; the launcher ACLs it + tmpfiles creates it). Keeps each
             # dedicated app's downloads separate instead of a shared pool.
             modules.apps.zen-browser.sandbox.sharedDownloads = true;
+            # Zen upstream's one policy (its wrapper's): trust the system's CA
+            # store through p11-kit. Kept, now that ours actually apply
+            # (browser-settings.nix: the executable is copied, not linked).
+            modules.apps.zen-browser.browser.policies.SecurityDevices."System Trust" =
+              "${pkgs.p11-kit}/lib/pkcs11/p11-kit-trust.so";
           }
           (browserSettings.geckoConfig {
             appName = "zen-browser";

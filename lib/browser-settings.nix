@@ -474,9 +474,31 @@ rec {
       (lib.mkIf b.managePolicies {
         # mkDefault: a host that sets modules.apps.<app>.package itself wins.
         modules.apps.${appName}.package = lib.mkDefault (
-          basePackage.override (old: {
+          (basePackage.override (old: {
             extraPolicies = (old.extraPolicies or { }) // geckoPolicies b;
-          })
+          })).overrideAttrs
+            (old: {
+              # Gecko finds its application directory, and so
+              # distribution/policies.json, from its executable's REAL path.
+              # wrapFirefox copies the executable only under the name it expects;
+              # Zen's is lib/zen-bin-*/zen (the command is zen-beta), so it stayed
+              # a symlink into the unwrapped package, whose policies.json has
+              # only upstream's System Trust: none of these policies applied.
+              # Replace whatever the wrapper execs (and its -bin twin) with copies.
+              buildCommand = old.buildCommand + ''
+                for w in "$out"/bin/.*-wrapped; do
+                  [ -L "$w" ] || continue
+                  exe="$(dirname "$w")/$(readlink "$w")"
+                  for e in "$exe" "$exe-bin"; do
+                    if [ -L "$e" ]; then
+                      t="$(readlink -f "$e")"
+                      rm "$e"
+                      cp "$t" "$e"
+                    fi
+                  done
+                done
+              '';
+            })
         );
       })
     ];
