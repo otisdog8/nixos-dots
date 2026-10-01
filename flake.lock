@@ -1820,16 +1820,16 @@
     "virtio-nvgpu": {
       "flake": false,
       "locked": {
-        "lastModified": 1790735686,
-        "narHash": "sha256-IJSlcsL+BKwrXrD7iGaeZSxCZrc9tv0vUaDtUw5eFbE=",
-        "ref": "heavyfix",
-        "rev": "cc9a48188f2bc3e51149983536b94f3237ecbc73",
-        "revCount": 585,
+        "lastModified": 1790815206,
+        "narHash": "sha256-90lecngB80LqU9XXk2rXsBXGyLkkmDzd57Hn3mprito=",
+        "ref": "display-passthrough",
+        "rev": "4cc75d10324e7a13be5306309f2c7cbf5e89b968",
+        "revCount": 712,
         "type": "git",
         "url": "file:///home/jrt/Documents/nixos-dots/virtio-nvgpu"
       },
       "original": {
-        "ref": "heavyfix",
+        "ref": "display-passthrough",
         "type": "git",
         "url": "file:///home/jrt/Documents/nixos-dots/virtio-nvgpu"
       }

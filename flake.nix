@@ -26,10 +26,7 @@
     # url to the fork once that branch is pushed there. Update with
     # `nix flake update virtio-nvgpu`.
     virtio-nvgpu = {
-      # Perf checkpoint (2026-09-30): the WIP `heavyfix` branch, display-passthrough
-      # plus prefaulted 2 MiB guest RAM and pump/session latency fixes. Go back to
-      # ?ref=display-passthrough once it's merged there.
-      url = "git+file:///home/jrt/Documents/nixos-dots/virtio-nvgpu?ref=heavyfix";
+      url = "git+file:///home/jrt/Documents/nixos-dots/virtio-nvgpu?ref=display-passthrough";
       flake = false;
     };
     # Standalone guest D-Bus transport adapter. Pin the local repository until
