@@ -468,10 +468,30 @@ let
   # Principal: the VMM. crosvm keeps its own sandbox on (per-device minijail
   # processes with seccomp, user/pid/mount/net namespaces).
   fsCommon = "type=fs:posix_acl=false:security_ctx=false";
-  guestKernelParams = guest.boot.kernelParams ++ [
-    "init=${guest.system.build.toplevel}/init"
-    "sbx.spec=${spec}"
-  ];
+  guestKernelParams =
+    guest.boot.kernelParams
+    ++ [
+      "init=${guest.system.build.toplevel}/init"
+      "sbx.spec=${spec}"
+    ]
+    # crosvm's GPU device always gives cross-domain VMs a display on the same
+    # Wayland socket (its `hidden` is honoured on Windows only), and opens it as
+    # a host window, titled "crosvm", once the guest scans anything out: the
+    # kernel's framebuffer console does, at boot. Cross-domain Wayland doesn't
+    # use the display, so the guest's connector is disabled and nothing is.
+    ++ lib.optional crossDomain "video=Virtual-1:d";
+  # What the launcher waits for in the guest before running the app: sshd,
+  # then the session bus and the Wayland socket the app will use (a GUI app
+  # started before the proxy's socket exists has no display at all).
+  guestReady = lib.concatStringsSep " && " (
+    lib.optional bus "test -S ${guestSockets.dbus}"
+    ++ lib.optional gui "test -S ${
+      if lib.hasPrefix "/" guestWaylandDisplay then
+        guestWaylandDisplay
+      else
+        "${guestRuntimeDir}/${guestWaylandDisplay}"
+    }"
+  );
   runScript = pkgs.writeShellScript "${unit}-run" ''
     set -euo pipefail
     dir="''${1:-}"
@@ -1064,7 +1084,7 @@ let
       up=0
       for _ in $(${co}/seq 1 240); do
         if ${ssh} "''${ssh_opts[@]}" -o ConnectTimeout=2 -T -- "vsock/$cid" ${
-          if bus then "test -S ${guestSockets.dbus}" else "true"
+          if guestReady != "" then lib.escapeShellArg guestReady else "true"
         } 2>/dev/null; then
           up=1
           break
@@ -1073,7 +1093,10 @@ let
         ${co}/sleep 0.25
       done
       if [ "$up" != 1 ]; then
-        echo "${member.bin}: the VM did not come up (see: journalctl -u '$unit')" >&2
+        echo "${member.bin}: the VM did not come up${
+          lib.optionalString (guestReady != "")
+            ", or its bus/display never appeared: in the guest, journalctl -u sbx-setup -u sbx-dbus-proxy -u 'sbx-wayland-*'"
+        } (see: journalctl -u '$unit')" >&2
         finish 1
       fi
       ${lib.optionalString (member.caps.camera && broker && member.cameraOnLaunch or false) ''
