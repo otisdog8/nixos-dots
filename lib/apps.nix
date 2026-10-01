@@ -152,6 +152,17 @@
                 and transparent huge pages and ntsync in the guest. Group
                 members use their group's setting.'';
             };
+            hostKeyring = lib.mkOption {
+              type = lib.types.bool;
+              default = false;
+              description = ''
+                Let ${appName}'s VM talk to the host's Secret Service
+                (org.freedesktop.secrets: kwallet) through its filtered session
+                bus. That is every unlocked collection the host keyring serves,
+                not just ${appName}'s own entries: grant it only to an app as
+                trusted with your secrets as the keyring itself. VM mode only,
+                and not for group members.'';
+            };
             nested = lib.mkOption {
               type = lib.types.bool;
               default = config.modules.sandbox.vm.nested;

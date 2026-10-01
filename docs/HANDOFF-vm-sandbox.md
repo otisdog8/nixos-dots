@@ -370,7 +370,13 @@ Logs: `journalctl -b -u 'sandbox-*' -u 'sbx-*'`, `journalctl --user -u sbx-broke
 1. Log in to 1Password (in its VM). Settings → Security → "Unlock using system
    authentication": turns on; lock + unlock → the host's polkit agent
    (hyprpolkitagent) asks for your password; Cancel keeps it locked.
+   (Needs the host's hyprpolkitagent running: on 2026-10-01 it wasn't — its
+   unit is `PartOf=graphical-session.target`, which this session never starts,
+   and it stopped right after login, so pkcheck found no agent. Fix pending in
+   the hyprland module: exec the agent from Hyprland instead of its unit.)
 2. Settings → Developer → "Integrate with 1Password CLI": turns on.
+   1Password's VM has `sandbox.vm.hostKeyring` (kwallet's Secret Service on its
+   bus) so it can keep the 2FA "remember this device" token; no other VM does.
 3. In a browser, on a login page, press the op-broker toolbar button / Ctrl+Shift+L:
    the first time, the host polkit agent asks to authorize the CLI; then
    op-broker's dialog (browser, item, username, vault, site) → Allow → fields

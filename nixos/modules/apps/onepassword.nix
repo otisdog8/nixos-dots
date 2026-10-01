@@ -11,9 +11,13 @@
 #   - In its VM (sandbox.mode = "vm"), onepassword-system-auth.nix gives it
 #     "unlock using system authentication" and CLI authorization (op-broker),
 #     answered by you authenticating on the HOST with your polkit agent.
-#   - We do NOT grant the Secret Service (org.freedesktop.secrets) DBus policy, so the
-#     app can't stash its local key in jrt's kwallet — which would defeat the hiding.
-#     It keeps the vault key material inside its OWN app-onepassword profile instead.
+#   - Its container gets no Secret Service (org.freedesktop.secrets): the vault key
+#     material stays in its OWN app-onepassword profile, never in jrt's kwallet.
+#   - Its VM does (sandbox.vm.hostKeyring, on below), for one thing: the token that
+#     remembers this device for two-factor sign-in. Without a keyring 1Password
+#     asks for the 2FA code at every start. The VM can then read whatever
+#     kwallet serves unlocked; the vault itself is still unlocked only by the
+#     account password or system authentication, not by anything kept there.
 
 (import ../../../lib/apps.nix).mkApp (
   {
@@ -75,6 +79,7 @@
           # `op` and offer system authentication (docs/op-broker.md, "Why not
           # the container"); the container stays available per host.
           modules.apps.onepassword.sandbox.mode = lib.mkDefault "vm";
+          modules.apps.onepassword.sandbox.vm.hostKeyring = lib.mkDefault true;
           users.users."app-onepassword".extraGroups = [
             "video"
             "audio"

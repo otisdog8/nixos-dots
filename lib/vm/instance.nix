@@ -85,6 +85,8 @@
   gpuMemoryProcessPercent ? 50,
   # "game": virtio-nvgpu's measured settings for games (`gameTuning` below).
   tuning ? "default",
+  # The host's Secret Service on this VM's bus (sandbox.vm.hostKeyring).
+  hostKeyring ? false,
 }:
 let
   paths = import ../paths.nix { inherit lib; };
@@ -220,6 +222,9 @@ let
   dbusArgs = lib.unique (lib.concatMap (m: if m.dbusArgs == null then [ ] else m.dbusArgs) members);
   flatpakInfoFile = lib.findFirst (i: i != null) null (map (m: m.flatpakInfoFile) members);
   bus = dbusArgs != [ ] && flatpakInfoFile != null;
+  # sandbox.vm.hostKeyring: the host keyring (kwallet's Secret Service) too,
+  # for this VM's proxy only. The container backends never get it.
+  busArgs = dbusArgs ++ lib.optional hostKeyring "--talk=org.freedesktop.secrets" ++ [ "--filter" ];
   # The sandbox broker (modules/system/sandbox-broker.nix): escapes and grants.
   broker = config.modules.sandbox.broker.enable;
   brokerName = "vm-${name}";
@@ -1005,7 +1010,7 @@ let
       --ro-bind ${busFlatpakInfo} /.flatpak-info \
       --die-with-parent \
       -- ${pkgs.xdg-dbus-proxy}/bin/xdg-dbus-proxy "$DBUS_SESSION_BUS_ADDRESS" "$rt/bus/bus.sock" \
-        ${lib.concatMapStringsSep " " lib.escapeShellArg (dbusArgs ++ [ "--filter" ])}
+        ${lib.concatMapStringsSep " " lib.escapeShellArg busArgs}
   '';
 
   # Screen capture (capture VMs), two units so no uid holds both halves:

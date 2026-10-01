@@ -145,6 +145,7 @@ let
           gpuMemoryMiB
           gpuMemoryProcessPercent
           tuning
+          hostKeyring
           ;
         network = cfg.sandbox.network;
       }
@@ -198,7 +199,12 @@ in
     systemd.services = lib.optionalAttrs (group == null) instance.services;
     modules.sandbox.units = lib.optionals (group == null) instance.polkitUnits;
     modules.sandbox.unitTemplates = lib.optionals (group == null) instance.polkitTemplates;
-    assertions = lib.optionals (group == null) instance.assertions;
+    assertions =
+      lib.optionals (group == null) instance.assertions
+      ++ lib.optional (group != null && cfg.sandbox.vm.hostKeyring) {
+        assertion = false;
+        message = "${appName}: sandbox.vm.hostKeyring is per app VM; a group VM's bus is shared by all its members.";
+      };
     modules.sandbox.dnsAllow = lib.optionals (group == null) instance.dnsAllow;
     users.users = lib.optionalAttrs (group == null) (instance.gpuUsers.users or { });
     users.groups = lib.optionalAttrs (group == null) (instance.gpuUsers.groups or { });
