@@ -277,6 +277,12 @@ Lite now load unpacked from the store — re-check `chrome://extensions`);
 microphone prompts work, including "Allow for this session"; `sbx-request exec`
 works; nixvim in its VM works; notifications work; nested virtualization is off.
 Not yet tested: file chooser, folder grants, security keys, camera.
+2026-10-01: 1Password runs in its VM with the cross-domain display (no GPU) —
+the first confirmed cross-domain VM, after the stray "crosvm" window
+(`video=Virtual-1:d`) and launch-before-display race fixes (`7b03f32`). Its
+log's "No virgl contexts available on host" is Mesa probing the GPU-less
+virtio-gpu (harmless); the native-messaging manifests 1Password writes land in
+the guest's tmpfs home. op-broker fills: not yet re-tested after `08362ba`.
 
 Hardware: Codex ran GPU VMs (Prism, Lunar, Chromium) and Firefox screen-share
 attempts on excelsior (logs in the repo root), but no outcome was confirmed as
