@@ -234,7 +234,7 @@ ephemeral.
   in [ c.systemd.units."sandbox-vm-firefox.service".unit c.modules.sandbox.vm.guest.config.system.build.toplevel ]'`.
   Scenarios: `.extendModules { modules = [ { … } ]; }`.
 - `virtio-nvgpu` flake input is `git+file:///…/virtio-nvgpu?ref=display-passthrough`
-  (locked 4cc75d1, 2026-10-01; `heavyfix`, the 2026-09-30 perf checkpoint cc9a481,
+  (locked f78961b, 2026-10-01; `heavyfix`, the 2026-09-30 perf checkpoint cc9a481,
   is merged into it): prefaulted 2 MiB guest RAM (crosvm patch 0011, passed as
   `--prefault-memory` to virtio-nvgpu VMs; `modules.sandbox.vm.prefaultMemory`),
   pump/session latency fixes, the backend's 100 µs EEVDF slice (its default) and
@@ -490,8 +490,13 @@ quotes each side separately), passt flag differences, crosvm seccomp gaps.
 - **Upstreamed** (2026-09-30, `heavyfix`): the window/share flags and both guest
   driver fixes — nixos-dots dropped its patches. The Prism window exhaustion was
   "in part a backend defect since fixed" (fork DEPLOY.md): steam/prism/lunar
-  may no longer need 16 GiB / 90% (the fork suggests the default unless the
-  backend logs `SHM alloc failed`; 8192 at 50% for creative apps).
+  were then deliberately sized UP at the user's request (2026-10-01): 12 vCPUs
+  (`smt` on six whole cores; the fork: at 16, which fills a CCD, no layout
+  wins), 32 GiB, a 24 GiB window at 90%. Costs: RAM is committed whole at VM
+  start (two game VMs = 64 of the host's 92 GiB); each window's WC zone may
+  take ~18.5 GiB of the 5090's 32 GiB BAR1 (the backend warns at start), fine
+  for games' tens of MiB but two heavy mappers at once could run BAR1 out. The
+  VMM's MemoryMax is now RAM + 512 MiB + the window (the fork's sizing note).
 - **Original capture design (historical):** The
   virtio-nvgpu side is done and hardware-tested by its agents: see
   `docs/virtio-nvgpu-zero-copy-capture.md` (our brief),

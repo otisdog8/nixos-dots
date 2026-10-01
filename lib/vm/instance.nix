@@ -1375,7 +1375,10 @@ let
       IPAddressDeny = "any";
 
       LimitCORE = 0;
-      MemoryMax = "${toString (memory + 512)}M";
+      # Guest RAM, plus virtio-nvgpu's window: under crosvm it is shared
+      # memory a guest kernel could fault in and charge here, up to its size
+      # (the fork's DEPLOY.md, "Sizing the window").
+      MemoryMax = "${toString (memory + 512 + (if nvgpu then gpuMemoryMiB else 0))}M";
       MemorySwapMax = 0;
       TasksMax = 1024;
       OOMPolicy = "stop";

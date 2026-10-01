@@ -90,12 +90,16 @@
       customConfig =
         { lib, ... }:
         {
+          # Game VM sizing (shared by prismlauncher, lunar-client): 12 vCPUs, pinned
+          # in pairs on six whole cores of the second CCD (two left free beside
+          # them; at 16, which fills the CCD, the fork finds no layout wins);
+          # 32 GiB, committed whole at start; a 24 GiB window, of which one game
+          # may hold 90% of each zone.
           modules.apps.steam.sandbox.vm.vcpus = lib.mkDefault 12;
-          modules.apps.steam.sandbox.vm.memory = lib.mkDefault 16384;
-          # Match the gaming GPU policy: a single game can use most of each zone.
-          modules.apps.steam.sandbox.vm.gpuMemoryMiB = lib.mkDefault 16384;
+          modules.apps.steam.sandbox.vm.memory = lib.mkDefault 32768;
+          modules.apps.steam.sandbox.vm.gpuMemoryMiB = lib.mkDefault 24576;
           modules.apps.steam.sandbox.vm.gpuMemoryProcessPercent = lib.mkDefault 90;
-          # Slice, shared core-scheduling cookie, vCPUs pinned on 6 whole cores, THP, ntsync.
+          # Slice, shared core-scheduling cookie, smt pinning, THP, ntsync.
           modules.apps.steam.sandbox.vm.tuning = lib.mkDefault "game";
           programs.gamescope.enable = true;
         };
