@@ -371,14 +371,17 @@ inside the 1Password guest **dials out**:
 ```
 browser (container or VM) ─► /run/op-broker/clients/<app>/sock ─► op-broker-bridge (host, own uid)
                                                                      │ pairs each client connection with an idle uplink,
-                                                                     │ sends {"v":1,"client":"<app>"}\n first, then splices
+                                                                     │ sends {"v":1,"client":"<app>","label":…}\n first, then splices
 1Password VM: op-broker uplink ─► /run/sbx/op-uplink/sock ─vsock "op-uplink"─► /run/op-broker/uplink/sock
 ```
 
 - `op-broker uplink` keeps a pool of idle connections to the bridge (default 4,
   replacing each as soon as it's paired, up to 64), reads the header naming the
-  client (must be a configured client), then serves that connection exactly like
-  `serve` does, including prompts and grants, inside the guest.
+  client, then serves that connection exactly like `serve` does, including
+  prompts and grants, inside the guest. A client its own config doesn't list
+  (added on the host after 1Password's VM started: a rebuild doesn't restart
+  the VM) is taken from the header with the bridge's label, sanitised, up to 64
+  of them; a configured client keeps the guest's label.
 - `op-broker-bridge.service` (host, `op-broker-bridge` uid, AF_UNIX only) owns the
   client sockets, checks peers like the broker does, and accepts uplinks only
   from jrt in `sandbox-vm-onepassword-relay.service`. It holds no secrets; a

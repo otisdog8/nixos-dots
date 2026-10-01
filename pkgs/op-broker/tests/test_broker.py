@@ -762,9 +762,16 @@ class TestSockets(unittest.TestCase):
         d = env.dir
         os.makedirs(os.path.join(d, "bridge", "uplink"))
         os.makedirs(os.path.join(d, "bridge", "firefox"))
+        os.makedirs(os.path.join(d, "bridge", "zen-vm"))
         bridge_cfg = {
             "clients": {
                 "firefox": {"socket": os.path.join(d, "bridge", "firefox", "sock"), "users": [os.getuid()]},
+                # Configured on the host only (added after the guest started).
+                "zen-vm": {
+                    "socket": os.path.join(d, "bridge", "zen-vm", "sock"),
+                    "users": [os.getuid()],
+                    "label": "Zen (VM)",
+                },
             },
             "uplink": {"socket": os.path.join(d, "bridge", "uplink", "sock"), "users": [os.getuid()], "wait": 3},
         }
@@ -780,6 +787,9 @@ class TestSockets(unittest.TestCase):
             self.assertEqual(rpc(s, {"v": 1, "op": "hello"})["requester"], "Firefox (test)", i)
         r = rpc(socks[0], {"v": 1, "op": "fill", "origin": "https://login.example.com", "want": ["password"]})
         self.assertEqual(r["password"], "example-pw")
+        z = connect(bridge_cfg["clients"]["zen-vm"]["socket"])
+        socks.append(z)
+        self.assertEqual(rpc(z, {"v": 1, "op": "hello"})["requester"], "Zen (VM)")
         for s in socks:
             s.close()
 
@@ -811,6 +821,29 @@ class TestSockets(unittest.TestCase):
         conn2, _ = srv.accept()
         conn2.sendall(b'{"v":1,"client":"chromium"}\n')
         self.assertEqual(rpc(conn2, {"v": 1, "op": "hello"})["requester"], "Chromium (test)")
+        # A known client keeps the guest's own label, whatever the header says.
+        conn3, _ = srv.accept()
+        conn3.sendall(b'{"v":1,"client":"chromium","label":"Other"}\n')
+        self.assertEqual(rpc(conn3, {"v": 1, "op": "hello"})["requester"], "Chromium (test)")
+
+    def test_uplink_learns_new_client_from_bridge(self):
+        # A client the host added after the guest broker started (1Password's
+        # VM outlives a rebuild): the bridge's header names it and its label.
+        env = Env()
+        path = os.path.join(env.dir, "up.sock")
+        srv = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        srv.bind(path)
+        srv.listen(4)
+        ob.run_uplink(env.broker(), path, pool=1, block=False)
+        conn, _ = srv.accept()
+        conn.settimeout(5)
+        conn.sendall(b'{"v":1,"client":"zen-browser-vm","label":"Zen Browser (VM)\\u202e"}\n')
+        self.assertEqual(rpc(conn, {"v": 1, "op": "hello"})["requester"], "Zen Browser (VM)?")
+        # Not a client name: refused, even with a label.
+        conn2, _ = srv.accept()
+        conn2.settimeout(5)
+        conn2.sendall(b'{"v":1,"client":"../x","label":"X"}\n')
+        self.assertEqual(conn2.recv(10), b"")
 
 
 if __name__ == "__main__":

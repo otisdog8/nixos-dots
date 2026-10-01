@@ -65,6 +65,8 @@ ERRORS = (
 # also matches before a trailing newline).
 OP_ID_RE = re.compile(r"[a-z0-9]{26}")
 CLIENT_RE = re.compile(r"[a-z0-9][a-z0-9_-]{0,63}")
+# Uplink mode: at most this many clients taken from the bridge's headers.
+MAX_ADDED_CLIENTS = 64
 LABEL_RE = re.compile(r"(?!-)[a-z0-9-]{1,63}(?<!-)")
 IPV4_RE = re.compile(r"(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])(\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])){3}")
 IPV6_RE = re.compile(r"\[[0-9a-f:.]{2,45}\]")
@@ -1121,6 +1123,7 @@ def run_uplink(broker, path, pool, max_conns=64, block=True):
     bridge, never from a browser: the bridge knows which socket the client used."""
     lock = threading.Lock()
     total = [0]
+    added = [0]  # clients learned from the bridge (MAX_ADDED_CLIENTS)
 
     def spawn():
         with lock:
@@ -1145,7 +1148,24 @@ def run_uplink(broker, path, pool, max_conns=64, block=True):
                         raise ValueError("bad header")
                     who = hdr.get("client")
                     if who not in broker.clients:
-                        raise ValueError("unknown client")
+                        # The bridge (host, its own uid: the only peer of this
+                        # socket) decides who a connection is; a client added
+                        # on the host after this VM started is taken from it.
+                        label = hdr.get("label")
+                        if (
+                            not isinstance(who, str)
+                            or not CLIENT_RE.fullmatch(who)
+                            or not isinstance(label, str)
+                            or not label
+                        ):
+                            raise ValueError("unknown client")
+                        with lock:
+                            if who not in broker.clients:
+                                if added[0] >= MAX_ADDED_CLIENTS:
+                                    raise ValueError("too many added clients")
+                                added[0] += 1
+                                broker.clients = {**broker.clients, who: {"label": clean(label, 60)}}
+                        audit("uplink", added=who)
                 except (OSError, ValueError) as e:
                     s.close()
                     if isinstance(e, ValueError):
@@ -1239,7 +1259,7 @@ def run_bridge(cfg, block=True):
             raise SystemExit(f"op-broker: bad client name {name!r}")
         sock = listen_unix(spec["socket"])
 
-        def on_conn(conn, info, name=name):
+        def on_conn(conn, info, name=name, spec=spec):
             s = take_uplink()
             if s is None:
                 audit("bridge", requester=name, error="no uplink (is 1Password running?)")
@@ -1252,7 +1272,11 @@ def run_bridge(cfg, block=True):
                 conn.close()
                 return
             try:
-                s.sendall(json.dumps({"v": PROTO, "client": name}).encode() + b"\n")
+                # The label too: a guest broker started before this client was
+                # configured (1Password's VM outlives a host rebuild) learns it
+                # from here.
+                hdr = {"v": PROTO, "client": name, "label": spec.get("label") or name}
+                s.sendall(json.dumps(hdr).encode() + b"\n")
             except OSError:
                 s.close()
                 conn.close()
