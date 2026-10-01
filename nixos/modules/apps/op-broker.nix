@@ -185,7 +185,7 @@ let
       lib.recursiveUpdate (brokerConfig null) {
         audit.file = null;
         op = {
-          path = "${guestOpDir}/op";
+          path = "/run/wrappers/bin/op";
           timeout = guestOpTimeout + 10;
           # timeout forks op and waits, so op's parent is this root-owned copy
           # (the broker's own interpreter is a store path).
@@ -215,8 +215,8 @@ let
     FONTCONFIG_FILE = "${lib.removeSuffix "/" "${config.environment.etc.fonts.source}"}/fonts.conf";
   };
   # The guest service (as root): copy op and timeout to a root-owned tmpfs
-  # directory, then become the user with primary group onepassword-cli (the
-  # group the app checks a connecting CLI's gid against) and run the broker.
+  # directory, then become the user (own groups: op gets onepassword-cli from
+  # its setgid wrapper, /run/wrappers/bin/op) and run the broker.
   guestBrokerStart = pkgs.writeShellScript "op-broker-guest-start" ''
     set -euo pipefail
     export PATH=${
@@ -238,7 +238,7 @@ let
     install -m 0755 -o root -g root "$(readlink -f ${pkgs.coreutils}/bin/timeout)" "$d/timeout.new"
     mv -f "$d/timeout.new" "$d/timeout"
     home="$(getent passwd ${user} | cut -d: -f6)"
-    exec setpriv --reuid=${user} --regid=onepassword-cli --init-groups \
+    exec setpriv --reuid=${user} --regid="$(id -g ${user})" --init-groups \
       env HOME="$home" USER=${user} LOGNAME=${user} ${
         lib.concatStringsSep " " (lib.mapAttrsToList (k: v: "${k}=${lib.escapeShellArg v}") guestDialogEnv)
       } \
@@ -688,7 +688,24 @@ in
       # group) before the guest broker's start script gets to create it.
       # Inert in the other VMs (one guest system for all).
       modules.sandbox.vm.guestModules = lib.mkIf (desktop && opInVm) [
-        { users.groups.onepassword-cli = { }; }
+        {
+          users.groups.onepassword-cli = { };
+          # The CLI as 1Password's own install has it (and NixOS's
+          # programs._1password): setgid onepassword-cli, so op's EFFECTIVE gid
+          # is the group and its real gid stays the user's. A process whose real
+          # gid is the group too (setpriv --regid) is refused: "invalid group
+          # attempted to connect". The wrapper runs the root-owned tmpfs copy
+          # (guestBrokerStart): the app also checks op's executable is
+          # root-owned and not on FUSE, which the virtio-fs store is. /run is
+          # nosuid; /run/wrappers isn't.
+          security.wrappers.op = {
+            source = "${guestOpDir}/op";
+            owner = "root";
+            group = "onepassword-cli";
+            setuid = false;
+            setgid = true;
+          };
+        }
       ];
       users.users.op-broker = lib.mkIf (!desktop) {
         isSystemUser = true;
