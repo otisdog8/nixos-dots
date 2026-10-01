@@ -93,13 +93,21 @@ class FakePolkit:
         Proxy(message_bus, self.router, timeout=5).RequestName("org.freedesktop.PolicyKit1", 0)
         self.agents = {}  # subject pid -> (unique name, path, subject)
         self.responses = queue.Queue()
+        self.pending = {}  # cookie -> creator uid of the agent asked
         self.q = queue.Queue()
         self.router.filter(MatchRule(type="method_call", path=self.ADDR), queue=self.q)
         threading.Thread(target=self.serve, daemon=True).start()
 
+    def close(self):
+        self.q.put(None)
+        self.router.close()
+        self.conn.close()
+
     def serve(self):
         while True:
             msg = self.q.get()
+            if msg is None:
+                return
             member = msg.header.fields.get(HeaderFields.member)
             sender = msg.header.fields.get(HeaderFields.sender)
             sig = msg.header.fields.get(HeaderFields.signature)
@@ -113,6 +121,13 @@ class FakePolkit:
                 self.router.send(new_method_return(msg))
             elif member == "AuthenticationAgentResponse2":
                 assert sig == "us(sa{sv})", sig
+                # As polkitd: the cookie is looked up among the sessions of
+                # agents whose creator uid is the one given, and an agent root
+                # registers for a process is created as that process's user.
+                uid, cookie, _ = msg.body
+                if self.pending.get(cookie) != uid:
+                    self.router.send(new_error(msg, "org.freedesktop.PolicyKit1.Error.Failed", "s", ("No session for cookie",)))
+                    continue
                 self.responses.put(msg.body)
                 self.router.send(new_method_return(msg))
             else:
@@ -120,7 +135,8 @@ class FakePolkit:
 
     def begin(self, pid, action, cookie, uid, timeout=10):
         """BeginAuthentication on pid's agent, as polkitd would; returns the reply."""
-        name, path, _ = self.agents[pid]
+        name, path, subject = self.agents[pid]
+        self.pending[cookie] = subject[1]["uid"][1]
         addr = DBusAddress(path, bus_name=name, interface="org.freedesktop.PolicyKit1.AuthenticationAgent")
         identities = [("unix-user", {"uid": ("u", uid)}), ("unix-group", {"gid": ("u", 1)})]
         msg = new_method_call(
@@ -192,6 +208,10 @@ class TestAgent(unittest.TestCase):
 
     @classmethod
     def tearDownClass(cls):
+        # The fake's connection first: a receiver thread still reading when the
+        # bus goes away prints a traceback during interpreter shutdown, which
+        # aborts the process (and the build) after the tests have passed.
+        cls.polkit.close()
         cls.bus.close()
 
     def setUp(self):
@@ -254,7 +274,7 @@ class TestAgent(unittest.TestCase):
         self.assertEqual(r.header.message_type, MessageType.method_return)
         self.assertEqual(self.broker.requests, [{"op": "authenticate", "action": UNLOCK}])
         uid, cookie, identity = self.polkit.responses.get(timeout=5)
-        self.assertEqual((uid, cookie), (0, "cookie-1"))
+        self.assertEqual((uid, cookie), (self.uid, "cookie-1"))
         self.assertEqual(identity, ("unix-user", {"uid": ("u", self.uid)}))
 
     def test_denied(self):

@@ -17,9 +17,11 @@ root in the guest, fills that gap by asking the HOST user instead:
     broker has the user authenticate with THEIR polkit agent (password,
     fingerprint: whatever the host's PAM polkit-1 stack asks) for a host action
     the host config maps this one to, and answers granted/denied.
-  - Granted: as root it answers polkitd itself (AuthenticationAgentResponse2,
-    uid 0) with the identity polkit asked for (the guest user), which completes
-    the app's authorization. Anything else, and every other action: refused.
+  - Granted: as root it answers polkitd itself (AuthenticationAgentResponse2)
+    with the identity polkit asked for (the guest user), which completes the
+    app's authorization. The uid it passes is the user's, not its own: polkitd
+    files an agent root registers for a process under that process's user, and
+    looks the cookie up there ("No session for cookie" otherwise). Anything else, and every other action: refused.
 
 Trust: the guest's root is inside the VM boundary, like the app; the host
 decides, and only for the actions its config maps for this VM.
@@ -247,7 +249,7 @@ class Agent:
                     AUTHORITY,
                     "AuthenticationAgentResponse2",
                     "us(sa{sv})",
-                    (0, cookie, identity),
+                    (self.cfg.uid, cookie, identity),
                 ),
                 timeout=10,
             )
