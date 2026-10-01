@@ -348,7 +348,9 @@ What the module still generates for it:
   socket the app creates there is on the host, where the broker, same uid, sees
   it) and `/etc/group` (so the app can resolve `onepassword-cli`).
 - `/run/op-broker/clients/<app>/` (0710, owner the broker uid, ACL `u:<client>:--x`)
-  holds each client's socket. The browser's sandbox binds that directory at
+  holds each client's socket; a browser's VM is the separate client `<app>-vm`
+  (both exist with sandbox variants, whose launcher offers "(container)" and
+  "(vm)" whatever the app's mode). The browser's sandbox binds that directory at
   `/run/sbx/op` (a directory, so a restarted broker's new socket is seen) and the
   native host manifest where it looks, via `modules.apps.<browser>.sandbox.nixpakModules`.
 
@@ -558,7 +560,7 @@ reported "No such native application com.otisroot.op_broker".
 Wired through three generic per-app VM options (`lib/apps.nix`,
 `lib/vm/instance.nix`, `lib/vm/guest.nix`), which this module sets:
 
-1. `sandbox.vm.relays.op` on browser VMs: host `/run/op-broker/clients/<app>/sock`,
+1. `sandbox.vm.relays.op` on browser VMs: host `/run/op-broker/clients/<app>-vm/sock`,
    guest `/run/sbx/op/sock`, carried by the VM's vsock relay (the host end runs
    as jrt in `sandbox-vm-<app>-relay.service`, which the broker's peer check expects).
 2. `sandbox.vm.relays.op-uplink` on the 1Password VM: host
@@ -666,8 +668,10 @@ Everything below needs the real desktop. 1Password in its VM
 ## Troubleshooting
 
 For 1Password in its VM (the default). Paste the output of each step; each one
-narrows the failure to one hop. `b` is the browser's app name (`firefox`,
-`zen-browser`, `ungoogled-chromium`).
+narrows the failure to one hop. `b` is the browser's client: its app name
+(`firefox`, `zen-browser`, `ungoogled-chromium`) for the container, with `-vm`
+(`zen-browser-vm`) for its VM. For a VM client, probe as `jrt` (the relay's
+uid), not `app-<b>`.
 
 **0. The usual suspects.** After a rebuild that touched op-broker, restart the
 browser (its sandbox binds `/run/op-broker/clients/<b>` only when it starts) and

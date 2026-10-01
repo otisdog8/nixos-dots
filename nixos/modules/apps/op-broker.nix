@@ -18,7 +18,8 @@
 #     session (and its system-authentication unlock) is asked of the host user
 #     by onepassword-system-auth.nix.
 #
-# Each browser in `browsers` gets its own socket, /run/op-broker/clients/<app>/sock.
+# Each browser in `browsers` gets its own socket, /run/op-broker/clients/<app>/sock,
+# and its VM /run/op-broker/clients/<app>-vm/sock (both, with sandbox variants).
 # The socket a request arrives on IS the requester the dialog names. Container
 # browsers get that directory bound at /run/sbx/op and the native-messaging
 # manifest bound where the browser looks (wired here, through the app's
@@ -99,22 +100,34 @@ let
   browserOn = b: has b && apps.${b}.enable && builtins.elem b cfg.browsers;
   browsers = lib.filter browserOn supported;
   inVm = b: apps.${b}.sandbox.mode == "vm";
+  # With sandbox variants the launcher offers both "<App> (container)" and
+  # "<App> (vm)", whatever the app's mode: each one gets its own client.
+  variantsOn = config.modules.sandbox.variants.enable;
+  containerWanted = b: !(inVm b) || variantsOn;
+  vmWanted = b: inVm b || variantsOn;
+  # The VM's client (and socket, /run/op-broker/clients/<app>-vm/sock).
+  vmClient = b: "${b}-vm";
 
-  browserClient = b: {
-    label = (cfg.labels.${b} or defaultLabels.${b}) + lib.optionalString (inVm b) " (VM)";
+  browserClient = vm: b: {
+    label = (cfg.labels.${b} or defaultLabels.${b}) + lib.optionalString vm " (VM)";
     # VM: the per-VM relay runs as the user in a system unit the user can't
     # move processes into. Container: the dedicated app uid, else the user.
     users =
-      if inVm b then
+      if vm then
         [ user ]
       else if apps.${b}.sandbox.dedicatedUser then
         [ "app-${b}" ]
       else
         [ user ];
     cgroup =
-      if inVm b then "/system\\.slice/sandbox-vm-${lib.escapeRegex b}-relay(@[^/]*)?\\.service" else null;
+      if vm then "/system\\.slice/sandbox-vm-${lib.escapeRegex b}-relay(@[^/]*)?\\.service" else null;
   };
-  clients = lib.genAttrs browsers browserClient // cfg.extraClients;
+  clients =
+    lib.genAttrs (lib.filter containerWanted browsers) (browserClient false)
+    // lib.listToAttrs (
+      map (b: lib.nameValuePair (vmClient b) (browserClient true b)) (lib.filter vmWanted browsers)
+    )
+    // cfg.extraClients;
 
   brokerConfig = configDir: {
     clients = lib.mapAttrs (n: c: {
@@ -578,7 +591,7 @@ in
       type = lib.types.attrsOf (lib.types.attrsOf lib.types.str);
       readOnly = true;
       default = lib.optionalAttrs cfg.enable (
-        lib.mapAttrs (n: _: { op = clientSock n; }) (lib.filterAttrs (n: _: has n && inVm n) clients)
+        lib.genAttrs (lib.filter vmWanted browsers) (b: { op = clientSock (vmClient b); })
         // lib.optionalAttrs opInVm { onepassword.op-uplink = "${uplinkDir}/sock"; }
       );
       defaultText = lib.literalMD "per VM app: vsock relay service name -> host socket";
@@ -611,16 +624,16 @@ in
     {
       modules.apps =
         lib.genAttrs (lib.filter has supported) (b: {
-          sandbox.nixpakModules = lib.mkIf (cfg.enable && browserOn b && !(inVm b)) [ (browserNixpak b) ];
+          sandbox.nixpakModules = lib.mkIf (cfg.enable && browserOn b && containerWanted b) [ (browserNixpak b) ];
           # VM browsers: the client socket over the VM's vsock relay (guest end at
           # /run/sbx/op/sock, as in containers) and the manifest in the guest.
-          sandbox.vm.relays = lib.mkIf (cfg.enable && browserOn b && inVm b) {
+          sandbox.vm.relays = lib.mkIf (cfg.enable && browserOn b && vmWanted b) {
             op = {
-              host = clientSock b;
+              host = clientSock (vmClient b);
               guest = "${sandboxDir}/sock";
             };
           };
-          sandbox.vm.guestBinds = lib.mkIf (cfg.enable && browserOn b && inVm b) (browserGuestBinds b);
+          sandbox.vm.guestBinds = lib.mkIf (cfg.enable && browserOn b && vmWanted b) (browserGuestBinds b);
         })
         // lib.optionalAttrs (has "onepassword") {
           onepassword.sandbox.nixpakModules = lib.mkIf (cfg.enable && desktop && !opInVm) [
