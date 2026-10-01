@@ -560,7 +560,6 @@ quotes each side separately), passt flag differences, crosvm seccomp gaps.
 - Container FIDO hotplug (containers still bind /dev/hidraw* at start).
 - DRM-lease / compositor VM (low priority per user).
 - 1Password in a namespace-less container (user leans no; VM is the answer).
-- Old `lib/features/onepassword*.nix` BrowserSupport binds in browsers can go.
 - Merged agent worktrees under `.claude/worktrees/` (4) can be removed once the
   user is happy (`git worktree remove`, delete `worktree-agent-*` branches).
 

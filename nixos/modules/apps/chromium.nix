@@ -30,7 +30,6 @@
       ../../../lib/features/browser.nix
       ../../../lib/features/needs-gpu.nix
       ../../../lib/features/xdg-desktop.nix
-      ../../../lib/features/onepassword-chromium.nix
     ];
 
     config.app = {

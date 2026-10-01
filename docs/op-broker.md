@@ -547,8 +547,11 @@ The official 1Password extension is blocked
 (`ExtensionSettings."{d634138d-c276-4fc8-924b-40a0ea21d284}".installation_mode =
 "blocked"` for Firefox, `ExtensionInstallBlocklist` with
 `aeblfdkhhhdcdjpifhhbdiojplfjncoa` and the beta `khgocmkkpikpnmmkgmdnfckapcdkgfaf`
-for Chromium). Not done yet: dropping the old `lib/features/onepassword*.nix`
-binds (`1Password-BrowserSupport`) from the browsers.
+for Chromium). The old direct-integration binds (`lib/features/onepassword*.nix`:
+`1Password-BrowserSupport`, and the host's `~/.mozilla/native-messaging-hosts` /
+`NativeMessagingHosts` read-write) are gone (2026-10-01): the Firefox-family one
+covered the directory op-broker's manifest is bound into, so Zen and Firefox
+reported "No such native application com.otisroot.op_broker".
 
 ## Sandbox-core hooks
 
