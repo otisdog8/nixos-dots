@@ -400,7 +400,10 @@ there), and runs with the guest's config file from
 1Password's own install and NixOS's `programs._1password` have the CLI. The app
 wants the group as op's **effective** gid with the real gid the user's: with
 both set to the group (`setpriv --regid`, tried first) it logs "invalid group
-attempted to connect, rejecting remote" and resets the connection (120 s, not
+attempted to connect, rejecting remote" and resets the connection; it says the
+same of a group whose gid is below 1000, so `onepassword-cli` is pinned to
+NixOS's 31002 (`ids.gids`, as `programs._1password` has it; auto-assigned it
+was 996) on the host and in the guest (120 s, not
 the host serve mode's 30: the first `op` waits for 1Password's authorization,
 i.e. for you to answer the host's polkit dialog, and killing op earlier cancels
 that dialog under your fingers and counts towards the 3-strikes pause). The

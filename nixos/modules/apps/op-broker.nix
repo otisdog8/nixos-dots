@@ -231,7 +231,7 @@ let
     umask 022
     # Declared in the guest system (guestModules below), so it exists before
     # 1Password starts; this is only the fallback for an older guest.
-    getent group onepassword-cli >/dev/null || groupadd -r onepassword-cli
+    getent group onepassword-cli >/dev/null || groupadd -g ${toString config.ids.gids.onepassword-cli} onepassword-cli
     install -d -m 0755 -o root -g root "$d"
     install -m 0755 -o root -g root "$(readlink -f ${lib.getExe' cfg.opPackage "op"})" "$d/op.new"
     mv -f "$d/op.new" "$d/op"
@@ -682,14 +682,17 @@ in
         1Password in its VM (modules.apps.onepassword.sandbox.mode = "vm"), or use
         auth = "service-account". See docs/op-broker.md.'';
 
-      users.groups.onepassword-cli = { };
+      # 1Password refuses a CLI whose group has a gid below 1000 ("invalid group
+      # attempted to connect"); NixOS reserves 31002 for it (ids.nix, as
+      # programs._1password uses).
+      users.groups.onepassword-cli.gid = config.ids.gids.onepassword-cli;
       # The same group in the guest, from boot on: 1Password checks a
       # connecting CLI's gid against it, and the app may start (and resolve the
       # group) before the guest broker's start script gets to create it.
       # Inert in the other VMs (one guest system for all).
       modules.sandbox.vm.guestModules = lib.mkIf (desktop && opInVm) [
         {
-          users.groups.onepassword-cli = { };
+          users.groups.onepassword-cli.gid = config.ids.gids.onepassword-cli;
           # The CLI as 1Password's own install has it (and NixOS's
           # programs._1password): setgid onepassword-cli, so op's EFFECTIVE gid
           # is the group and its real gid stays the user's. A process whose real
