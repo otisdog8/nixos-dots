@@ -1,0 +1,224 @@
+# The agent VM's guest (nixos/modules/system/agent-vm.nix): one long-running
+# NixOS system per host where orchestrated, headless agents work. agent-auth's
+# sandboxd (its nixosModules.sandboxd, through modules.agentVm.guestModules)
+# adds the agents; this file is the machine underneath.
+#
+# Unlike the app guest (guest.nix), which is disposable and mirrors one user:
+#   - / is a persistent ext4 disk (virtio-blk, formatted on first boot), so
+#     projects, agent homes and scratchpads survive VM restarts;
+#   - /nix/store is writable: the host's store (virtio-fs, read-only) under an
+#     overlay whose upper layer is on the disk, with a nix-daemon, so agents can
+#     `nix develop` and build. The guest system's own closure is registered in
+#     the store database at boot (its registration comes from the host on the
+#     kernel command line: the guest can't compute its own closure);
+#   - no display, audio, D-Bus relay or per-app wiring;
+#   - root logs in over vsock SSH with the per-boot key the host's prep unit
+#     generates (the only way in; operators on the host reach it through
+#     `agent-vm ssh`).
+{
+  config,
+  lib,
+  pkgs,
+  agentVmHost,
+  ...
+}:
+let
+  # Kernel command line value of `key=`.
+  cmdlineArg = key: ''
+    for w in $(cat /proc/cmdline); do
+      case "$w" in ${key}=*) printf '%s' "''${w#${key}=}"; break ;; esac
+    done
+  '';
+in
+{
+  system.stateVersion = agentVmHost.stateVersion;
+  networking.hostName = "agent-vm";
+
+  boot = {
+    # Same kernel as the host: nothing extra to build, and it has virtio-fs/vsock.
+    kernelPackages = agentVmHost.kernelPackages;
+    loader.grub.enable = false;
+    initrd.systemd.enable = true;
+    initrd.kernelModules = [
+      "virtio_pci"
+      "virtio_blk"
+      "virtiofs"
+      "overlay"
+    ];
+    initrd.supportedFilesystems = [ "ext4" ];
+    kernelModules = [ "vmw_vsock_virtio_transport" ];
+    kernelParams = [
+      "console=ttyS0"
+      # Reboot (= crosvm exits, the unit restarts) instead of hanging on a panic.
+      "panic=-1"
+      # The SSH socket below is explicit; don't let systemd-ssh-generator add another.
+      "systemd.ssh_auto=no"
+    ];
+    tmp.cleanOnBoot = true;
+  };
+
+  fileSystems = {
+    "/" = {
+      device = "/dev/vda";
+      fsType = "ext4";
+      autoFormat = true;
+    };
+    "/nix/.ro-store" = {
+      device = "nixstore";
+      fsType = "virtiofs";
+      options = [ "ro" ];
+      neededForBoot = true;
+    };
+    "/nix/store" = {
+      overlay = {
+        lowerdir = [ "/nix/.ro-store" ];
+        upperdir = "/nix/.rw-store/upper";
+        workdir = "/nix/.rw-store/work";
+      };
+      neededForBoot = true;
+    };
+    # Per-boot files from the host: the SSH host key and the operators' key.
+    "/run/agent-vm/meta" = {
+      device = "sbx-meta";
+      fsType = "virtiofs";
+      options = [
+        "ro"
+        "nofail"
+      ];
+    };
+  };
+
+  nix = {
+    enable = true;
+    settings = {
+      experimental-features = [
+        "nix-command"
+        "flakes"
+      ];
+      # Sandboxed builds; only root may change settings or add substituters.
+      sandbox = true;
+      trusted-users = [ "root" ];
+      substituters = agentVmHost.substituters;
+      trusted-public-keys = agentVmHost.trustedPublicKeys;
+    };
+    # The system closure lives in the host's store: a guest GC must never
+    # whiteout what the running system needs (it is rooted at
+    # /run/current-system), and nothing else here is worth collecting on a timer.
+    gc.automatic = false;
+  };
+
+  # Paths present in the lower (host) store but not in this guest's database
+  # would be treated as invalid and fetched again; register the system's own.
+  systemd.services.agent-vm-register-store = {
+    description = "Register the guest system's closure in the nix store database";
+    wantedBy = [ "multi-user.target" ];
+    before = [ "nix-daemon.service" ];
+    serviceConfig = {
+      Type = "oneshot";
+      RemainAfterExit = true;
+    };
+    script = ''
+      reg="$(${cmdlineArg "agentvm.registration"})"
+      if [ -z "$reg" ] || [ ! -f "$reg" ]; then
+        echo "no agentvm.registration on the kernel command line; skipping" >&2
+        exit 0
+      fi
+      stamp=/nix/var/nix/agent-vm-registered
+      if [ "$(cat "$stamp" 2>/dev/null)" = "$reg" ]; then
+        exit 0
+      fi
+      ${config.nix.package}/bin/nix-store --load-db < "$reg"
+      printf '%s' "$reg" > "$stamp"
+    '';
+  };
+
+  users = {
+    mutableUsers = false;
+    allowNoPasswordLogin = true;
+    users.root.hashedPassword = "!";
+  };
+  security.sudo.enable = false;
+  # Project users are added at run time by sandboxd as userdb records.
+  services.userdbd = {
+    enable = true;
+    # The nixbld users' uids are above 1000, so userdb lists them as regular
+    # users; that matters only to systemd-homed's first-boot flow, unused here.
+    silenceHighSystemUsers = true;
+  };
+
+  i18n.defaultLocale = agentVmHost.locale;
+  time.timeZone = agentVmHost.timeZone;
+  documentation.enable = false;
+  environment.systemPackages = [ pkgs.kitty.terminfo ];
+
+  # No login prompts on the consoles; the only way in is vsock SSH.
+  console.enable = false;
+  systemd.services."serial-getty@ttyS0".enable = false;
+
+  networking = {
+    useNetworkd = true;
+    useDHCP = false;
+    firewall.enable = true;
+  };
+  systemd.network = {
+    wait-online.enable = false;
+    networks."10-uplink" = {
+      matchConfig.Type = "ether";
+      networkConfig.DHCP = "yes";
+    };
+  };
+  services.resolved.enable = true;
+
+  # sshd can't use the meta share's files directly (they're owned by the VMM's
+  # host uid), so copy them root-owned into /run.
+  systemd.services.agent-vm-ssh-keys = {
+    description = "Install the host-provided SSH keys";
+    after = [ "run-agent\\x2dvm-meta.mount" ];
+    requires = [ "run-agent\\x2dvm-meta.mount" ];
+    serviceConfig = {
+      Type = "oneshot";
+      RemainAfterExit = true;
+    };
+    script = ''
+      install -d -m 0700 /run/agent-vm/ssh
+      install -m 0600 /run/agent-vm/meta/ssh_host_ed25519_key /run/agent-vm/ssh/
+      install -m 0600 /run/agent-vm/meta/authorized_keys /run/agent-vm/ssh/
+    '';
+    path = [ pkgs.coreutils ];
+  };
+  environment.etc."ssh/sshd_config".text = ''
+    HostKey /run/agent-vm/ssh/ssh_host_ed25519_key
+    AuthorizedKeysFile /run/agent-vm/ssh/authorized_keys
+    AllowUsers root
+    PermitRootLogin prohibit-password
+    PasswordAuthentication no
+    KbdInteractiveAuthentication no
+    UsePAM no
+    StrictModes yes
+    PermitUserEnvironment no
+    AllowAgentForwarding no
+    AllowTcpForwarding no
+    AllowStreamLocalForwarding no
+    X11Forwarding no
+    PermitTunnel no
+    PrintMotd no
+    AcceptEnv LANG LC_* COLORTERM
+  '';
+  systemd.sockets.agent-vm-sshd = {
+    description = "SSH over vsock";
+    wantedBy = [ "sockets.target" ];
+    listenStreams = [ "vsock::22" ];
+    socketConfig.Accept = true;
+  };
+  systemd.services."agent-vm-sshd@" = {
+    description = "SSH session over vsock";
+    requires = [ "agent-vm-ssh-keys.service" ];
+    after = [ "agent-vm-ssh-keys.service" ];
+    serviceConfig = {
+      ExecStart = "-${pkgs.openssh}/bin/sshd -i -f /etc/ssh/sshd_config";
+      StandardInput = "socket";
+      StandardError = "journal";
+      KillMode = "process";
+    };
+  };
+}

@@ -5,6 +5,27 @@ end of a long session. Read this whole file before changing anything; then read
 the design comments at the top of the files named below — they are the real
 documentation, kept current, and more precise than this summary.
 
+## Update 2026-10-03: lib/vm/core and the agent VM
+
+Design: agent-auth's `docs/sandbox-design.md` (agent VMs, host daemons, remote
+execution); this repo holds its NixOS side.
+- `lib/vm/core/` — the pieces every crosvm VM shares: passt + its unit
+  (`net.nix`, incl. `portFilter`: owner-matched iptables port limits for a
+  passt with a dedicated uid), the VMM's sandbox and the jailed syscall filter
+  (`hardening.nix`), shared-dir flags, vsock CID allocation (`cid.nix`: app VMs
+  in [3, 3+2^28), the agent VM at 3+2^28). Extracted from `instance.nix` with no
+  behaviour change: all 573 sandbox-vm-* units and the app guest evaluate to
+  identical derivations on all eight hosts. (Whole-system drvPaths can't show
+  that: anything embedding `${inputs.self}`, e.g. the sddm theme, changes with
+  every edit.)
+- `nixos/modules/system/agent-vm.nix` + `lib/vm/agent-guest.nix` — the agent VM:
+  one always-on VM per host (system units, no desktop session), its own guest
+  (persistent ext4 root on `/large/agent-vm/disk.img`, writable store overlay +
+  nix-daemon, userdbd, root SSH over vsock via `agent-vm ssh`), its own uids
+  (`sbx-agentvm`, `sbx-agentvm-net`), network = internet + an allowlist with
+  port limits (nixos/default.nix). Enabled on excelsior only, for bring-up.
+  **Never run on hardware yet.** Built: guest system, units.
+
 ## Update 2026-09-29: Codex's capture bridge and gaming work, reviewed
 
 After this handoff, Codex implemented VM screen sharing and tuned gaming VMs,
