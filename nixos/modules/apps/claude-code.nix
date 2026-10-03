@@ -31,14 +31,39 @@
 
       defaultBackend = "nixpak";
 
-      # `claude-nesbox`: the same sandbox plus the hardware the nesbox GPU/VM tests
-      # need. Opt-in per session; plain `claude` is unchanged. SECURITY: anything in
-      # the session can reach nvidia.ko and /dev/kvm and read all of /sys. Still no
-      # Wayland socket (a live compositor socket allows input injection and
-      # screencopy); run a separate compositor inside instead. Device binds are
+      # `claude-nesbox`: the same sandbox plus what the virtio-nvgpu GPU/VM tests
+      # need. Opt-in per session; plain `claude` is unchanged. Device binds are
       # bind-try, so nodes absent on a host are skipped. /dev/nvidia-uvm-tools is
       # left out on purpose (the backend refuses it).
+      # SECURITY: this session is effectively as powerful as the desktop itself:
+      #   - nvidia.ko, /dev/kvm and all of /sys are reachable;
+      #   - the live Hyprland Wayland socket (raw, NOT a security-context socket —
+      #     that one hides wp_drm_lease_device_v1, which the lease tests need)
+      #     exposes screencopy, virtual keyboard/pointer, data-control, layer-shell;
+      #   - $XDG_RUNTIME_DIR/hypr (hyprctl) allows `dispatch exec` — running any
+      #     command on the host outside the sandbox — and rewriting live config.
+      # Use it only for those test sessions.
       variantCommands.claude-nesbox.nixpakModules = [
+        (
+          { sloth, ... }:
+          {
+            # The live session's Wayland socket at the same path inside, and
+            # Hyprland's IPC sockets for hyprctl.
+            bubblewrap.bind.rw = [
+              (sloth.concat [
+                sloth.runtimeDir
+                "/"
+                (sloth.envOr "WAYLAND_DISPLAY" "wayland-1")
+              ])
+              (sloth.concat' sloth.runtimeDir "/hypr")
+            ];
+            # envOr, not env: nixpak aborts the launch on an unset referenced var.
+            bubblewrap.env = {
+              WAYLAND_DISPLAY = sloth.envOr "WAYLAND_DISPLAY" "wayland-1";
+              HYPRLAND_INSTANCE_SIGNATURE = sloth.envOr "HYPRLAND_INSTANCE_SIGNATURE" "";
+            };
+          }
+        )
         (_: {
           bubblewrap.bind.dev = [
             "/dev/kvm"
