@@ -19,7 +19,9 @@
 #     dedicated-only injection vector: jrt must NOT feed the app a jrt-writable env
 #     file (LD_PRELOAD → code exec as app-<name>), so dedicated uses a Nix-derived
 #     env only. Cross-uid GUI access to jrt's session sockets is granted just-in-
-#     time by the in-session launcher via ACLs.
+#     time by the in-session launcher via ACLs. With sandbox.appearAsUser (the
+#     default) the app SEES itself as jrt (uid/gid, ~, runtime dir path; see
+#     `identity` below), as in its VM; the host still runs it as app-<name>.
 #   (Neither stops a ROOT-level host escape — that's the microVM tier.)
 {
   appName,
@@ -48,6 +50,15 @@ let
   # jrt's 0700 /run/user/<uid> (nixpak needs to create .flatpak/nixpak-bus/etc.),
   # so it gets its OWN runtime dir with jrt's session sockets bind-mounted in.
   runtimeDir = if dedicated then "/run/${appUser}" else jrtRuntime;
+  # sandbox.appearAsUser: the dedicated app sees itself as the user. The
+  # runScript mounts the app's home over the user's home path and its runtime
+  # dir over the user's, in its own mount namespace, after staging the user's
+  # real home (the source of the shared binds) at stageHome; bwrap maps the
+  # app's uid/gid to the user's. The host still runs it as app-<name>, and every
+  # permission check is still against that uid. (A VM shows the app the same
+  # identity: lib/vm/guest.nix.)
+  identity = dedicated && cfg.sandbox.appearAsUser;
+  stageHome = "/run/sandbox-user-home/${appName}";
 
   co = "${pkgs.coreutils}/bin";
   ul = "${pkgs.util-linux}/bin";
@@ -134,8 +145,25 @@ let
     # app's is relayed into its own runtime dir by the runScript below.
     brokerSocketName = if dedicated then "sbx-broker.sock" else "sbx-broker/${appName}.sock";
     # dedicated: shared jrt data (extraBinds like the vault) lives in jrt's home,
-    # not the app's own home.
-    sharedHome = if dedicated then sharedHome else null;
+    # not the app's own home (with appearAsUser: at its stage, since the app's
+    # home is mounted over jrt's).
+    sharedHome =
+      if identity then
+        stageHome
+      else if dedicated then
+        sharedHome
+      else
+        null;
+    identity =
+      if identity then
+        {
+          uid = config.users.users.${username}.uid;
+          gid = config.users.groups.${config.users.users.${username}.group}.gid;
+          home = sharedHome;
+          oldHome = appHome;
+        }
+      else
+        null;
     # dedicated: expose the relayed doc FUSE at jrt's identity path inside the
     # sandbox (the portal returns jrt-absolute doc:// paths). Same-uid apps use
     # nixpak's own mountDocumentPortal (same uid, no relay needed).
@@ -314,6 +342,22 @@ let
           # bind mounts of jrt's sockets and must keep their owner.
           ${co}/chown "${appUser}" "${runtimeDir}"
           if [ -d "${runtimeDir}/pulse" ]; then ${co}/chown "${appUser}" "${runtimeDir}/pulse"; fi
+          ${lib.optionalString identity ''
+            # appearAsUser. Every path here sits in a root-owned parent (/home,
+            # /run, /run/user), so neither the user nor the app can redirect these
+            # mounts; the shared binds below the stage are resolved later by bwrap,
+            # as the app's uid. Recursive: the stash grafts above, and the user's
+            # impermanence mounts, come along. Private to this namespace.
+            ${co}/mkdir -p -m 0755 /run/sandbox-user-home
+            ${co}/mkdir -p -m 0755 "${stageHome}"
+            ${ul}/mount --rbind -- "${sharedHome}" "${stageHome}"
+            ${ul}/mount --rbind -- "${appHome}" "${sharedHome}"
+            ${ul}/mount --rbind -- "${runtimeDir}" "${jrtRuntime}"
+            export HOME="${sharedHome}" USER="${username}" LOGNAME="${username}"
+            export XDG_RUNTIME_DIR="${jrtRuntime}"
+            export DBUS_SESSION_BUS_ADDRESS="unix:path=${jrtRuntime}/bus"
+            export PULSE_SERVER="unix:${jrtRuntime}/pulse/native"
+          ''}
           exec ${ul}/setpriv --reuid="$__u" --regid="$__g" --init-groups ${innerPkg}/bin/${binName}
         ''
       else

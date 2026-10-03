@@ -230,6 +230,18 @@
             description = "systemd backend only: run under a dedicated app-<name> uid.";
           };
 
+          appearAsUser = lib.mkOption {
+            type = lib.types.bool;
+            default = true;
+            description = ''
+              systemd backend + dedicatedUser: inside its sandbox the app sees
+              itself as the user (uid and gid, HOME=/home/<user>, the user's
+              runtime dir path), as it does in its VM, while the host still runs
+              it as app-<name>. Paths the app saves are then the same in container
+              and VM mode. Its old home path stays bound to the same data.
+            '';
+          };
+
           envMode = lib.mkOption {
             type = lib.types.enum [
               "inject"

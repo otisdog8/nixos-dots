@@ -55,6 +55,13 @@
   # is the user's own). null → the sandbox's own pulse/native as is (the systemd
   # backend relays the filtered socket there itself).
   pulseSocketName ? null,
+  # systemd + dedicatedUser + sandbox.appearAsUser: the app runs as app-<name> but
+  # sees itself as the user. { uid; gid; home; oldHome; } — bwrap maps the app's
+  # uid/gid to the user's, the runScript has put the app's home at the user's
+  # home (`home`) in its mount namespace, and the app's previous home path
+  # (`oldHome`) stays bound to the same data for paths saved before. sharedHome
+  # is then the runScript's stage of the user's real home. null → off.
+  identity ? null,
 }:
 let
   nixpakSrc = inputs.nixpak or (builtins.throw "nixpak not available - add nixpak to flake inputs");
@@ -72,6 +79,17 @@ let
       substituteInPlace modules/launch.nix --replace-fail \
         '++ config.dbus.args ++ [ "--filter" ];' \
         '++ config.dbus.args ++ (optional config.dbus.filter "--filter");'
+      # bubblewrap.uid/gid: the uid/gid the app sees inside its user namespace
+      # (bwrap --uid/--gid, which need a definite --unshare-user).
+      substituteInPlace modules/bubblewrap.nix --replace-fail \
+        '    dieWithParent = mkOption {' \
+        '    uid = mkOption { default = null; type = types.nullOr types.int; description = "UID inside the sandbox (bwrap --uid)."; };
+    gid = mkOption { default = null; type = types.nullOr types.int; description = "GID inside the sandbox (bwrap --gid)."; };
+    dieWithParent = mkOption {'
+      substituteInPlace modules/launch.nix --replace-fail \
+        '    "--unshare-user-try"' \
+        '    "--unshare-user-try"
+    (optionals (config.bubblewrap.uid != null) [ "--unshare-user" "--uid" (toString config.bubblewrap.uid) "--gid" (toString config.bubblewrap.gid) ])'
       # Mount tmpfs entries BEFORE the binds (upstream mounts them after), so a
       # bind under a tmpfs path — $PWD under /tmp, /tmp/.X11-unix, anything under a
       # tmpfs $HOME — stays visible instead of being hidden by it.
@@ -115,6 +133,9 @@ let
       # from gui.nix's envOr "DISPLAY" ":0", and auth from the launcher's xhost.)
       bubblewrap.network = lib.mkOverride 999 false;
 
+      bubblewrap.uid = lib.mkIf (identity != null) identity.uid;
+      bubblewrap.gid = lib.mkIf (identity != null) identity.gid;
+
       # Stash entries (parent-first from storage.entries) — hard bind.
       bubblewrap.bind.rwHard = map (
         e:
@@ -139,25 +160,52 @@ let
         # makes the app's default ~/Downloads transparently BE jrt's ~/Downloads
         # (host-visible, no download-dir pref to change). The launcher ACLs the jrt-side
         # source (systemd.nix). Same-uid apps and absolute/$PWD paths bind as-is.
-        ++ (map (
+        #
+        # appearAsUser (identity): $HOME is the user's home path, which the runScript
+        # has made the app's home, so jrt's real data comes from its stage
+        # (sharedHome), and the app's previous home path gets the same view: its
+        # home first, then each shared bind again under it.
+        ++ lib.optional (identity != null) [
+          sloth.homeDir
+          identity.oldHome
+        ]
+        ++ (lib.concatMap (
           p:
           if bindPath.isAbsolute p then
-            p
+            if identity != null && lib.hasPrefix "${identity.home}/" p then
+              [
+                [
+                  "${sharedHome}/${lib.removePrefix "${identity.home}/" p}"
+                  p
+                ]
+              ]
+            else
+              [ p ]
           else if bindPath.isPwdRelative p then
-            sloth.concat' (sloth.env "PWD") "/${p}"
+            [ (sloth.concat' (sloth.env "PWD") "/${p}") ]
           else if sharedHome != null then
             [
+              [
+                "${sharedHome}/${p}"
+                (sloth.concat' sloth.homeDir "/${p}")
+              ]
+            ]
+            ++ lib.optional (identity != null) [
               "${sharedHome}/${p}"
-              (sloth.concat' sloth.homeDir "/${p}")
+              "${identity.oldHome}/${p}"
             ]
           else
-            sloth.concat' sloth.homeDir "/${p}"
+            [ (sloth.concat' sloth.homeDir "/${p}") ]
         ) cfg.sandbox.extraBinds)
         # Per-app shared downloads: jrt's ~/Downloads/<app> → the app's ~/Downloads.
         # The launcher ACLs the jrt-side subdir + tmpfiles creates it (systemd.nix).
         ++ lib.optional (sharedDownloads != null) [
           "${sharedHome}/Downloads/${sharedDownloads}"
           (sloth.concat' sloth.homeDir "/Downloads")
+        ]
+        ++ lib.optional (sharedDownloads != null && identity != null) [
+          "${sharedHome}/Downloads/${sharedDownloads}"
+          "${identity.oldHome}/Downloads"
         ]
         # Cross-uid doc-portal identity bind (dedicated). Soft (--bind-try): the
         # runScript only relays it when jrt actually has a doc portal running.
