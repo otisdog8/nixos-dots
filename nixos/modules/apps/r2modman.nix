@@ -13,11 +13,9 @@
       ../../../lib/features/needs-gpu.nix
       ../../../lib/features/network.nix
       ../../../lib/features/xdg-desktop.nix
-      # r2modman launches games through a shell wrapper that execs the hardcoded
-      # /bin/sh, which a bwrap tmpfs root lacks (same fix as steam.nix).
+      # r2modman runs its launch command through the hardcoded /bin/sh, which a
+      # bwrap tmpfs root lacks (same fix as steam.nix).
       ../../../lib/features/bin-sh.nix
-      # r2modman runs steam.sh inside its OWN sandbox when Steam isn't already
-      # up, and the Steam client is X11/XWayland-only (see steam.nix).
       ../../../lib/features/x11.nix
     ];
 
@@ -42,15 +40,37 @@
         }
       ];
 
-      # Access to Steam paths for game files
       nixpakModules = [
         (
-          { lib, sloth, ... }:
           {
+            config,
+            lib,
+            sloth,
+            ...
+          }:
+          {
+            # Game files, app manifests, the Steam user's launch options (which
+            # r2modman checks) and Proton prefixes (it adds the mod loader's DLL
+            # override to user.reg).
             bubblewrap.bind.rw = [
               (sloth.concat' sloth.homeDir "/.steam")
               (sloth.concat' sloth.homeDir "/.local/share/Steam")
             ];
+
+            # Launch through Steam, not by running it. Natively r2modman runs
+            # "<Steam dir>/steam.sh -applaunch <id> <mod args>" itself, which can't
+            # work here: steam.sh needs Steam's FHS runtime (/usr/bin/env, the 32-bit
+            # client) and would start a second Steam, inside this sandbox. With
+            # FLATPAK_ID set it takes its Flatpak path instead: it writes the mod
+            # args to ~/.config/r2modmanPlus-local/wrapper_args.txt and opens
+            # steam://run/<id> through the OpenURI portal (xdg-open from
+            # open-links.nix). The host's steam:// handler is the sandboxed Steam
+            # (steam.nix), which starts if it isn't running, and runs the game with
+            # its launch options: "<…>/web_start_wrapper.sh" %command% (set once
+            # per game; r2modman shows the line) reads the args back. Steam binds
+            # ~/.config/r2modmanPlus-local, so the game runs in Steam's sandbox
+            # with the mods. FLATPAK_ID also turns off r2modman's self-updater.
+            bubblewrap.env.FLATPAK_ID = config.flatpak.appId;
           }
         )
       ];

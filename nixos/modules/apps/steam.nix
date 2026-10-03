@@ -14,9 +14,9 @@
       ../../../lib/features/network.nix
       ../../../lib/features/audio.nix
       ../../../lib/features/xdg-desktop.nix
-      # Proton, game wrapper scripts, and r2modman's modded-launch scripts all exec a
-      # hardcoded /bin/sh, absent from a bwrap tmpfs root. Same fix r2modman needs; the
-      # full modded-launch chain (steam ↔ r2modman) still wants runtime testing.
+      # Proton, game wrapper scripts, and r2modman's modded-launch wrapper
+      # (web_start_wrapper.sh, see r2modman.nix) all exec a hardcoded /bin/sh,
+      # absent from a bwrap tmpfs root.
       ../../../lib/features/bin-sh.nix
       # The Steam client (and most Proton games) are X11/XWayland-only.
       ../../../lib/features/x11.nix
@@ -102,6 +102,11 @@
           # Slice, shared core-scheduling cookie, smt pinning, THP, ntsync.
           modules.apps.steam.sandbox.vm.tuning = lib.mkDefault "game";
           programs.gamescope.enable = true;
+          # The OpenURI portal hands steam:// links (r2modman's modded launches,
+          # store links) to the default handler: Steam's own sandboxed launcher.
+          home-manager.users.jrt.xdg.mimeApps.defaultApplications."x-scheme-handler/steam" = [
+            "steam.desktop"
+          ];
         };
     };
   }
