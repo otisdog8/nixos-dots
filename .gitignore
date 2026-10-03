@@ -1,2 +1,15 @@
 *.key
 .direnv
+__pycache__/
+/result
+/result-*
+/*.log
+# Nested repos pinned as flake inputs (git+file:…), not part of this tree
+/virtio-nvgpu/
+/vm-dbus-proxy/
+# Agent tool state
+/.claude/settings.local.json
+/.claude/worktrees/
+/.codex
+/.gsd/
+/.bg-shell/
