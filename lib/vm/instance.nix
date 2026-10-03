@@ -218,6 +218,10 @@ let
   # Temporary folder grants (lib/vm/grants.py): a virtio-fs share of the user's
   # home behind an allowlist that starts empty. Only when the VM runs as the user.
   grants = principal == username;
+  # A VM that runs as an app-<name> uid keeps the app's data from the user, so
+  # the user's SSH key into it is restricted to starting its members (no shell,
+  # no arguments, no environment of the user's): `forcedCommand` below.
+  restricted = principal != username;
   # Files the portals hand this app (FileChooser results, drag and drop): the
   # document portal's view for the VM's flatpak identity, shared like flatpak
   # binds it (by-app/<id> at $XDG_RUNTIME_DIR/doc), so only this app's documents.
@@ -414,6 +418,151 @@ let
     }
   );
 
+  # ── The app's environment in the guest ───────────────────────────────────────
+  # Fixed parts: the guest's sockets, display and GPU loaders.
+  fixedEnv =
+    lib.optionals audio [
+      "PULSE_SERVER=unix:${guestSockets.pulse}"
+      "PULSE_CLIENTCONFIG=${pulseClientConf}"
+    ]
+    ++ lib.optional bus "DBUS_SESSION_BUS_ADDRESS=unix:path=${guestSockets.dbus}"
+    ++ lib.optionals gui (
+      [
+        "XDG_RUNTIME_DIR=${guestRuntimeDir}"
+        "WAYLAND_DISPLAY=${guestWaylandDisplay}"
+      ]
+      ++ lib.optional x11 "DISPLAY=:0"
+      ++ (
+        if nvgpu then
+          # Pin every loader to NVIDIA's files (as virtio-nvgpu's guest does), so
+          # a broken NVIDIA ICD fails loudly instead of falling back to Mesa.
+          [
+            "VK_DRIVER_FILES=/run/opengl-driver/share/vulkan/icd.d/nvidia_icd.json"
+            "__EGL_VENDOR_LIBRARY_FILENAMES=/run/opengl-driver/share/glvnd/egl_vendor.d/10_nvidia.json"
+            "__GLX_VENDOR_LIBRARY_NAME=nvidia"
+            "GBM_BACKENDS_PATH=/run/opengl-driver/lib/gbm"
+          ]
+        else
+          # No host GPU behind cross-domain: render in software.
+          [
+            "LIBGL_ALWAYS_SOFTWARE=1"
+            "GALLIUM_DRIVER=llvmpipe"
+          ]
+      )
+    );
+  # gui.nix's defaults, for launches from outside the session environment (and
+  # all a restricted VM gets for these).
+  guiDefaults = [
+    "NIXOS_OZONE_WL=1"
+    "ELECTRON_OZONE_PLATFORM_HINT=wayland"
+    "MOZ_ENABLE_WAYLAND=1"
+    "QT_QPA_PLATFORM=wayland;xcb"
+    "QT_QPA_PLATFORMTHEME=qt6ct"
+    "XDG_CURRENT_DESKTOP=Hyprland"
+    "XDG_SESSION_TYPE=wayland"
+  ];
+  # Members first on PATH, so they can run each other.
+  memberPath =
+    member:
+    lib.concatMapStrings (m: "${m.package}/bin:") (
+      [ member ] ++ lib.filter (m: m.appName != member.appName) members
+    );
+
+  # Restricted VMs: the user's session can't supply the app's environment.
+  # Anything it names in the guest is reachable, the store included (the user
+  # can add to it), so GTK_PATH, QT_PLUGIN_PATH, GIO_EXTRA_MODULES and the like
+  # would load the user's code into the app. Root writes this file at prep from
+  # root-owned profiles only (the system's and the user's NixOS profile) plus the
+  # host's static session variables; `forcedCommand` reads it.
+  sessionVars = config.environment.sessionVariables;
+  staticSessionVars = lib.filterAttrs (
+    n: v:
+    lib.elem n [
+      "GIO_EXTRA_MODULES"
+      "GDK_PIXBUF_MODULE_FILE"
+      "GTK_A11Y"
+      "NO_AT_BRIDGE"
+    ]
+    && lib.isString v
+    && !(lib.hasInfix "$" v)
+  ) sessionVars;
+  restrictedEnvFile = pkgs.writeText "${unit}-launch.env" (
+    lib.concatMapStrings (l: l + "\n") (
+      fixedEnv
+      ++ lib.optionals gui guiDefaults
+      ++ lib.mapAttrsToList (n: v: "${n}=${v}") staticSessionVars
+      ++ [ "LANG=${config.i18n.defaultLocale}" ]
+    )
+  );
+  # VAR suffix… pairs: each suffix under each trusted profile, user's first.
+  profileVars = {
+    XDG_CONFIG_DIRS = [ "/etc/xdg" ];
+    GTK_PATH = config.environment.profileRelativeSessionVariables.GTK_PATH or [ ];
+    XCURSOR_PATH = [
+      "/share/icons"
+      "/share/pixmaps"
+    ];
+    QT_PLUGIN_PATH = [ "/lib/qt-6/plugins" ];
+    QML2_IMPORT_PATH = [ "/lib/qt-6/qml" ];
+  };
+  staticDataDirs = sessionVars.XDG_DATA_DIRS or "";
+  writeRestrictedEnv = ''
+    hostsw="$(${co}/readlink -f /run/current-system/sw)"
+    userprof="$(${co}/readlink -f /etc/profiles/per-user/${username} 2>/dev/null || true)"
+    profs=()
+    if [ -n "$userprof" ]; then profs+=("$userprof"); fi
+    profs+=("$hostsw")
+    under() {
+      local out="" p s
+      for s in "$@"; do for p in "''${profs[@]}"; do out="''${out:+$out:}$p$s"; done; done
+      printf '%s' "$out"
+    }
+    {
+      printf 'SBX_HOSTSW=%s\n' "$hostsw"
+      printf 'XDG_DATA_DIRS=%s\n' "${
+        lib.optionalString (
+          staticDataDirs != "" && !(lib.hasInfix "$" staticDataDirs)
+        ) "${staticDataDirs}:"
+      }$(under /share)"
+      ${lib.concatStrings (
+        lib.mapAttrsToList (
+          n: sufs: ''
+            printf '${n}=%s\n' "$(under ${lib.escapeShellArgs sufs})"
+          ''
+        ) profileVars
+      )}
+      fc="$(${co}/readlink -f /etc/fonts/fonts.conf 2>/dev/null || true)"
+      if [ -n "$fc" ]; then printf 'FONTCONFIG_FILE=%s\n' "$fc"; fi
+      ${co}/cat ${restrictedEnvFile}
+    } > "$rt/meta/launch.env"
+  '';
+  # The restricted key's forced command (sshd runs it for every login with that
+  # key; the client's command line arrives as SSH_ORIGINAL_COMMAND): "ready"
+  # (the launcher's readiness check) or "run <member>". The member starts in ~
+  # with no arguments, as the dedicated container backend starts it.
+  forcedCommand = pkgs.writeShellScript "${unit}-forced-command" ''
+    set -euo pipefail
+    case "''${SSH_ORIGINAL_COMMAND-}" in
+      ready) exec ${pkgs.bash}/bin/bash -c ${lib.escapeShellArg (if guestReady != "" then guestReady else "true")} ;;
+      ${lib.concatMapStrings (m: ''
+        ${lib.escapeShellArg "run ${m.bin}"}) path=${lib.escapeShellArg (memberPath m)}; exe=${m.package}/bin/${m.bin} ;;
+      '') members}
+      *) echo "sandbox-vm: this VM only starts ${lib.concatMapStringsSep ", " (m: m.bin) members}" >&2; exit 1 ;;
+    esac
+    envs=()
+    hostsw=""
+    while IFS= read -r line; do
+      case "$line" in
+        SBX_HOSTSW=*) hostsw="''${line#*=}" ;;
+        [A-Za-z_]*=*) envs+=("$line") ;;
+      esac
+    done < /run/sbx/launch.env
+    # Only LANG, LC_* and COLORTERM come through sshd (AcceptEnv); LANG is set below.
+    for v in ''${!LC_@}; do unset "$v"; done
+    cd "$HOME"
+    exec env "PATH=$path/run/current-system/sw/bin''${hostsw:+:$hostsw/bin}" "''${envs[@]}" "$exe"
+  '';
+
   # ── Scripts ──────────────────────────────────────────────────────────────────
   # Root: fresh per-launch runtime dir with this VM's SSH keys (guest host key +
   # the user's client key, both new on every VM start) and, for per-project VMs,
@@ -460,8 +609,23 @@ let
     ''}
     ${pkgs.openssh}/bin/ssh-keygen -q -t ed25519 -N "" -C "${unit}" -f "$rt/meta/ssh_host_ed25519_key"
     ${pkgs.openssh}/bin/ssh-keygen -q -t ed25519 -N "" -C "${username}@${unit}" -f "$rt/client/id_ed25519"
-    ${co}/install -m 0644 "$rt/client/id_ed25519.pub" "$rt/meta/authorized_keys"
+    ${
+      if restricted then
+        ''
+          printf 'restrict,pty,command="%s" %s\n' ${forcedCommand} "$(${co}/cat "$rt/client/id_ed25519.pub")" > "$rt/meta/authorized_keys"
+          ${writeRestrictedEnv}
+        ''
+      else
+        ''
+          ${co}/install -m 0644 "$rt/client/id_ed25519.pub" "$rt/meta/authorized_keys"
+        ''
+    }
     printf 'sandbox-vm %s\n' "$(${co}/cut -d' ' -f1,2 "$rt/meta/ssh_host_ed25519_key.pub")" > "$rt/client/known_hosts"
+    # Root's key into the guest (`sudo sandbox-vm root`): root-only on the host.
+    ${co}/install -d -m 0700 "$rt/root"
+    ${pkgs.openssh}/bin/ssh-keygen -q -t ed25519 -N "" -C "root@${unit}" -f "$rt/root/id_ed25519"
+    ${co}/install -m 0644 "$rt/root/id_ed25519.pub" "$rt/meta/root_authorized_keys"
+    ${co}/cp "$rt/client/known_hosts" "$rt/root/known_hosts"
     if [ -n "$dir" ]; then printf '%s' "$dir" > "$rt/meta/cwd"; fi
     printf '%s' "$cid" > "$rt/meta/cid"
     ${co}/chown ${principal}:${principalGroup} "$rt/meta"/*
@@ -1144,7 +1308,12 @@ let
       up=0
       for _ in $(${co}/seq 1 240); do
         if ${ssh} "''${ssh_opts[@]}" -o ConnectTimeout=2 -T -- "vsock/$cid" ${
-          if guestReady != "" then lib.escapeShellArg guestReady else "true"
+          if restricted then
+            "ready"
+          else if guestReady != "" then
+            lib.escapeShellArg guestReady
+          else
+            "true"
         } 2>/dev/null; then
           up=1
           break
@@ -1180,17 +1349,7 @@ let
       # usual CLI tools) is on the guest PATH after the members themselves (so they
       # can run each other).
       hostsw="$(${co}/readlink -f /run/current-system/sw)"
-      genv=("PATH=${
-        lib.concatMapStrings (m: "${m.package}/bin:") (
-          [ member ] ++ lib.filter (m: m.appName != member.appName) members
-        )
-      }/run/current-system/sw/bin:$hostsw/bin")
-      ${lib.optionalString audio ''
-        genv+=("PULSE_SERVER=unix:${guestSockets.pulse}" "PULSE_CLIENTCONFIG=${pulseClientConf}")
-      ''}
-      ${lib.optionalString bus ''
-        genv+=("DBUS_SESSION_BUS_ADDRESS=unix:path=${guestSockets.dbus}")
-      ''}
+      genv=("PATH=${memberPath member}/run/current-system/sw/bin:$hostsw/bin")
       ${lib.optionalString gui ''
         # GUI session environment. Store paths are valid in the guest as-is; the
         # host's profile symlinks aren't, so they're resolved first.
@@ -1213,37 +1372,28 @@ let
           if [ -n "$val" ]; then genv+=("$v=$(rewrite "$val")"); fi
         done
         # gui.nix's defaults, for launches from outside the session environment.
-        for kv in NIXOS_OZONE_WL=1 ELECTRON_OZONE_PLATFORM_HINT=wayland MOZ_ENABLE_WAYLAND=1 \
-                  "QT_QPA_PLATFORM=wayland;xcb" QT_QPA_PLATFORMTHEME=qt6ct \
-                  XDG_CURRENT_DESKTOP=Hyprland XDG_SESSION_TYPE=wayland; do
+        for kv in ${lib.escapeShellArgs guiDefaults}; do
           case " ''${genv[*]} " in *" ''${kv%%=*}="*) ;; *) genv+=("$kv") ;; esac
         done
         fc="$(${co}/readlink -f /etc/fonts/fonts.conf 2>/dev/null || true)"
         if [ -n "$fc" ]; then genv+=("FONTCONFIG_FILE=$fc"); fi
-        genv+=(
-          "XDG_RUNTIME_DIR=${guestRuntimeDir}"
-          "WAYLAND_DISPLAY=${guestWaylandDisplay}"
-          ${lib.optionalString x11 ''"DISPLAY=:0"''}
-          ${
-            if nvgpu then
-              # Pin every loader to NVIDIA's files (as virtio-nvgpu's guest does), so
-              # a broken NVIDIA ICD fails loudly instead of falling back to Mesa.
-              ''
-                "VK_DRIVER_FILES=/run/opengl-driver/share/vulkan/icd.d/nvidia_icd.json"
-                "__EGL_VENDOR_LIBRARY_FILENAMES=/run/opengl-driver/share/glvnd/egl_vendor.d/10_nvidia.json"
-                "__GLX_VENDOR_LIBRARY_NAME=nvidia"
-                "GBM_BACKENDS_PATH=/run/opengl-driver/lib/gbm"
-              ''
-            else
-              # No host GPU behind cross-domain: render in software.
-              ''
-                "LIBGL_ALWAYS_SOFTWARE=1"
-                "GALLIUM_DRIVER=llvmpipe"
-              ''
-          }
-        )
       ''}
-      remote="cd $(printf '%q' "$workdir") && exec env $(printf '%q ' "''${genv[@]}" ${member.package}/bin/${member.bin} "$@")"
+      genv+=(${lib.escapeShellArgs fixedEnv})
+      ${
+        if restricted then
+          ''
+            # Restricted: the guest runs the member itself (forcedCommand), in ~,
+            # with no arguments, like the dedicated container backend.
+            if [ "$#" -gt 0 ]; then
+              echo "${member.bin}: arguments aren't passed to ${label} (it runs as its own user)" >&2
+            fi
+            remote="run ${member.bin}"
+          ''
+        else
+          ''
+            remote="cd $(printf '%q' "$workdir") && exec env $(printf '%q ' "''${genv[@]}" ${member.package}/bin/${member.bin} "$@")"
+          ''
+      }
       tty=-T
       if [ -t 0 ] && [ -t 1 ]; then tty=-t; fi
       set +e

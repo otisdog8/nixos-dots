@@ -53,6 +53,9 @@ let
 
   # `sandbox-vm list | stop NAME [PROJECT-DIR] | status NAME [PROJECT-DIR]`:
   # manage running sandbox VMs (units the user may start/stop via polkit).
+  # `sudo sandbox-vm root NAME [PROJECT-DIR] [-- COMMAND…]`: a root shell (or
+  # command) in a running VM, with the root key its prep made for this launch
+  # (lib/vm/instance.nix), which only root on the host can read.
   sandboxVmCli = pkgs.writeShellScriptBin "sandbox-vm" ''
     set -euo pipefail
     unit_for() {
@@ -79,7 +82,30 @@ let
           *) echo "usage: sandbox-vm camera NAME [attach|detach] [PROJECT-DIR]" >&2; exit 2 ;;
         esac ;;
       status) ${pkgs.systemd}/bin/systemctl status --no-pager "$(unit_for "$2" "''${3:-}")" ;;
-      *) echo "usage: sandbox-vm list | stop NAME [PROJECT-DIR] | status NAME [PROJECT-DIR] | camera NAME [attach|detach] [PROJECT-DIR]" >&2; exit 2 ;;
+      root)
+        if [ "$(${pkgs.coreutils}/bin/id -u)" != 0 ]; then
+          echo "sandbox-vm root: needs root (sudo sandbox-vm root NAME …)" >&2; exit 1
+        fi
+        name="''${2:?usage: sandbox-vm root NAME [PROJECT-DIR] [-- COMMAND...]}"; shift 2
+        id=main
+        if [ "$#" -gt 0 ] && [ "$1" != -- ]; then
+          dir="$(${pkgs.coreutils}/bin/realpath -- "$1")"; shift
+          id="$(printf '%s' "$dir" | ${pkgs.coreutils}/bin/sha256sum | ${pkgs.coreutils}/bin/cut -c1-16)"
+        fi
+        if [ "''${1:-}" = -- ]; then shift; fi
+        rt="/run/sandbox-vm/$name/$id"
+        if [ ! -f "$rt/root/id_ed25519" ] || [ ! -f "$rt/meta/cid" ]; then
+          echo "sandbox-vm root: $name isn't running (or was started before root logins existed: restart it)" >&2; exit 1
+        fi
+        tty=-T
+        if [ -t 0 ] && [ -t 1 ]; then tty=-t; fi
+        exec ${pkgs.openssh}/bin/ssh -F /dev/null \
+          -o "ProxyCommand=${pkgs.systemd}/lib/systemd/systemd-ssh-proxy %h %p" -o ProxyUseFdpass=yes \
+          -o User=root -o IdentityFile="$rt/root/id_ed25519" -o IdentitiesOnly=yes \
+          -o UserKnownHostsFile="$rt/root/known_hosts" -o GlobalKnownHostsFile=/dev/null \
+          -o HostKeyAlias=sandbox-vm -o StrictHostKeyChecking=yes -o CheckHostIP=no -o LogLevel=ERROR \
+          "$tty" -- "vsock/$(${pkgs.coreutils}/bin/cat "$rt/meta/cid")" "$@" ;;
+      *) echo "usage: sandbox-vm list | stop NAME [PROJECT-DIR] | status NAME [PROJECT-DIR] | camera NAME [attach|detach] [PROJECT-DIR] | root NAME [PROJECT-DIR] [-- COMMAND...] (as root)" >&2; exit 2 ;;
     esac
   '';
 

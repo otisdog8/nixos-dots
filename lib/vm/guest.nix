@@ -83,6 +83,13 @@ let
     install -d -m 0755 /run/sbx/ssh
     install -m 0600 /run/sbx/meta/ssh_host_ed25519_key /run/sbx/ssh/ssh_host_ed25519_key
     install -m 0644 /run/sbx/meta/authorized_keys /run/sbx/ssh/authorized_keys
+    if [ -f /run/sbx/meta/root_authorized_keys ]; then
+      install -m 0644 /run/sbx/meta/root_authorized_keys /run/sbx/ssh/root_authorized_keys
+    fi
+    # A restricted VM's app environment (instance.nix forcedCommand).
+    if [ -f /run/sbx/meta/launch.env ]; then
+      install -m 0644 /run/sbx/meta/launch.env /run/sbx/launch.env
+    fi
     cwd=""
     [ -f /run/sbx/meta/cwd ] && cwd="$(cat /run/sbx/meta/cwd)"
     cid="$(cat /run/sbx/meta/cid)"
@@ -267,15 +274,18 @@ in
 
   users = {
     mutableUsers = false;
-    # Only key-based SSH as the user; there is no password to lock anyone out with.
+    # Only key-based SSH (the user, and root with root's own key); there is no
+    # password to lock anyone out with.
     allowNoPasswordLogin = true;
-    users.root.hashedPassword = "!";
+    # "*", not "!": root logs in with its own key (`sudo sandbox-vm root` on the
+    # host), and sshd refuses key logins for locked accounts.
+    users.root.hashedPassword = "*";
     users.${user} = {
       isNormalUser = true;
       uid = sbxHost.uid;
       group = sbxHost.group;
       # SSH diagnostics need the guest service logs (capture, D-Bus, graphics),
-      # and the user is the only account SSH admits. This VM's journal only, but
+      # without root (whose key only root on the host has). This VM's journal only, but
       # all of it — the guest kernel's log and every guest service's, root's
       # too — and to the apps as well, which run as this user. Nothing logged
       # there may be secret from the apps (capture tokens are never logged).
@@ -477,8 +487,8 @@ in
   environment.etc."ssh/sshd_config".text = ''
     HostKey /run/sbx/ssh/ssh_host_ed25519_key
     AuthorizedKeysFile /run/sbx/ssh/authorized_keys
-    AllowUsers ${user}
-    PermitRootLogin no
+    AllowUsers ${user} root
+    PermitRootLogin prohibit-password
     PasswordAuthentication no
     KbdInteractiveAuthentication no
     UsePAM no
@@ -491,6 +501,10 @@ in
     PermitTunnel no
     PrintMotd no
     AcceptEnv LANG LC_* COLORTERM
+    # Root's key lives only in root's directory on the host; the user's key (in
+    # the file above) never admits root.
+    Match User root
+      AuthorizedKeysFile /run/sbx/ssh/root_authorized_keys
   '';
   systemd.sockets.sbx-sshd = {
     description = "SSH over vsock";
