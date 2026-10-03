@@ -56,6 +56,13 @@ platforms:
       - secrets
       - administration
       - organization_secrets
+    # New repos (capability "create", resource "uorux/<name>") only in this
+    # org. The broker creates them itself with an Administration token it
+    # never hands out — the App needs Administration: write on the uorux
+    # installation. Public repos always reach a human. Ignored by brokers that
+    # predate the capability.
+    create_owners:
+      - "uorux"
   homelab:
     # LLDAP groups the broker may join an agent into. Authelia rules per group
     # do the actual enforcement. Deliberately excluded: `admin`, plus
