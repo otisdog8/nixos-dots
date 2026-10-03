@@ -91,6 +91,7 @@
 let
   paths = import ../paths.nix { inherit lib; };
   netpolicy = import ../netpolicy.nix { inherit lib; };
+  core = import ./core { inherit lib pkgs; };
   vmHost = config.modules.sandbox.vm;
   # This VM's shared-window size and per-process share as backend flags
   # (sandbox.vm.gpuMemoryMiB / gpuMemoryProcessPercent, a group's vm.* for a
@@ -147,19 +148,6 @@ let
   crossDomain = gui && !nvgpu;
   gpuDevice = nvgpu || crossDomain;
   crosvmPkg = if nvgpu then vmHost.nvgpu.crosvm else pkgs.crosvm;
-  # passt 2026_07_16 asserts on an exactly full receive iovec array: the
-  # result is a COUNT, so equality with remaining capacity is valid. Permit
-  # negative results to reach the existing error handler before unsigned
-  # conversion. Keep the bound check, rather than disabling assertions.
-  # The earlier brk exception only exposed this assertion (glibc allocates
-  # while reporting it); it was not a fix for the network failure.
-  passtPkg = pkgs.passt.overrideAttrs (old: {
-    postPatch = (old.postPatch or "") + ''
-      substituteInPlace tcp_vu.c --replace-fail \
-        'assert(cnt < ARRAY_SIZE(iov_msg) - j);' \
-        'assert(cnt < 0 || (size_t)cnt <= ARRAY_SIZE(iov_msg) - j);'
-    '';
-  });
   # The virtio-nvgpu backend runs as a user of this VM's own (virtio-nvgpu's
   # DEPLOY.md, "Per-VM users"), never the desktop user or the VMM's: a
   # compromised backend is then neither a step from the session nor the VMM.
@@ -205,7 +193,6 @@ let
   # With allowNames the guest resolves through the host's resolved (passt
   # forwards its DNS there), which is where sbx-dnsallow sees the answers.
   dnsNames = (network.allowNames or [ ]) != [ ] && config.services.resolved.enable;
-  dnsForward = "192.0.2.53"; # TEST-NET-1: never a real host
   netPolicy = netpolicy.lower {
     policy = network;
     backendDefault = "internet";
@@ -316,8 +303,8 @@ let
       id=main
     fi
     rt="${base}/$id"
-    cid=$(( 3 + 16#$(printf '%s/%s' ${lib.escapeShellArg name} "$id" | ${co}/sha256sum | ${co}/cut -c1-7) ))
-  '';
+  ''
+  + core.cid.appShell name;
 
   # ── Storage and binds ────────────────────────────────────────────────────────
   # Parent-first across all members (a parent must be grafted before its child).
@@ -490,7 +477,7 @@ let
 
   # Principal: the VMM. crosvm keeps its own sandbox on (per-device minijail
   # processes with seccomp, user/pid/mount/net namespaces).
-  fsCommon = "type=fs:posix_acl=false:security_ctx=false";
+  inherit (core) fsCommon;
   guestKernelParams =
     guest.boot.kernelParams
     ++ [
@@ -538,7 +525,7 @@ let
       --serial type=stdout,hardware=serial,console=true
       --vsock "cid=$cid"
       -s "$rt/ctl/crosvm.sock"
-      --shared-dir "/nix/store:nixstore:${fsCommon}:cache=always:timeout=3600"
+      --shared-dir "${core.storeShare}"
       --shared-dir "$rt/meta:sbx-meta:${fsCommon}:cache=never"
     )
     ${lib.concatMapStrings (t: ''
@@ -651,20 +638,16 @@ let
 
   # Principal: user-mode networking for the guest (DHCP, DNS, NAT via host
   # sockets). No inbound forwarding, no route to the host's loopback.
-  netScript = pkgs.writeShellScript "${unit}-net" ''
-    set -euo pipefail
-    dir="''${1:-}"
-    ${idPrelude}
-    exec ${passtPkg}/bin/passt --foreground --quiet --vhost-user \
-      --socket "$rt/net/passt.sock" \
-      -t none -u none --no-map-gw \
-      ${
-        if dnsNames then
-          "--dns ${dnsForward} --dns-forward ${dnsForward} --dns-host 127.0.0.53"
-        else
-          lib.concatMapStringsSep " " (d: "--dns ${lib.escapeShellArg d}") vmHost.dns
-      }
-  '';
+  netScript = core.net.script {
+    name = "${unit}-net";
+    prelude = ''
+      dir="''${1:-}"
+    ''
+    + idPrelude;
+    socket = "$rt/net/passt.sock";
+    forwardToResolved = dnsNames;
+    inherit (vmHost) dns;
+  };
 
   # The user: a wp_security_context_v1 socket on the user's compositor for this
   # VM's windows (see wayland-security-context.py), held for the VM's lifetime.
@@ -1300,38 +1283,15 @@ let
 
       User = principal;
       Group = principalGroup;
-      SupplementaryGroups = [ "kvm" ];
-      NoNewPrivileges = true;
-      CapabilityBoundingSet = "";
-      AmbientCapabilities = "";
 
-      # crosvm's own sandbox builds user/pid/mount/net namespaces and pivots its
-      # device processes into empty roots, so those namespace types, the mount
-      # syscalls and seccomp itself must stay available. Never deny @privileged as
-      # a group: pivot_root is in it.
       # A compute VM's UVM semaphore pools (virtio-nvgpu's crosvm patch 0007,
       # RegisterUvmPool) are checked resident with mincore before they get a
       # KVM slot; mincore is not in @system-service, and EPERM refuses the pool.
-      RestrictNamespaces = "user pid mnt net";
-      SystemCallFilter = [
-        "@system-service"
-        "@mount"
-        "@sandbox"
-        "~@obsolete @raw-io @reboot @swap @module @cpu-emulation @debug @clock"
-      ]
-      ++ lib.optional (nvgpu && gpuCap) "mincore";
-      SystemCallArchitectures = "native";
-      SystemCallErrorNumber = "EPERM";
-      LockPersonality = true;
-      RestrictRealtime = true;
-      RestrictSUIDSGID = true;
-      MemoryDenyWriteExecute = true;
+      SystemCallFilter = core.hardening.jailedSyscallFilter ++ lib.optional (nvgpu && gpuCap) "mincore";
 
       # The host filesystem is read-only and the user's data invisible, apart from
       # the members' storage/binds (BindPaths, set up by systemd as root) and the
       # runtime dir.
-      ProtectSystem = "strict";
-      ProtectHome = "tmpfs";
       InaccessiblePaths = [
         "-/persist"
         "-/large"
@@ -1342,20 +1302,7 @@ let
       BindPaths = storageBinds ++ rwBinds ++ lib.optional perCwd (bindPair "%f" cwdMount);
       BindReadOnlyPaths = roBinds;
       ReadWritePaths = [ base ];
-      PrivateTmp = true;
-      PrivateIPC = true;
-      KeyringMode = "private";
-      UMask = "0077";
-      ProtectKernelTunables = true;
-      ProtectKernelModules = true;
-      ProtectKernelLogs = true;
-      ProtectControlGroups = true;
-      ProtectClock = true;
-      ProtectHostname = true;
-      # Not ProcSubset=pid: minijail reads /proc/sys/kernel/cap_last_cap.
-      ProtectProc = "invisible";
 
-      DevicePolicy = "closed";
       # A compute VM's pool check also asks whether this uid could open the
       # backend's UVM file for writing (mincore answers truthfully only then:
       # can_do_mincore), and the device cgroup is part of that answer. The node
@@ -1367,22 +1314,15 @@ let
         "/dev/vhost-vsock rw"
       ]
       ++ lib.optional (nvgpu && gpuCap) "/dev/nvidia-uvm w";
-      # No IP at all: the guest's network (if any) is passt, over a unix socket.
-      RestrictAddressFamilies = [
-        "AF_UNIX"
-        "AF_NETLINK"
-      ];
-      IPAddressDeny = "any";
 
-      LimitCORE = 0;
       # Guest RAM, plus virtio-nvgpu's window: under crosvm it is shared
       # memory a guest kernel could fault in and charge here, up to its size
       # (the fork's DEPLOY.md, "Sizing the window").
       MemoryMax = "${toString (memory + 512 + (if nvgpu then gpuMemoryMiB else 0))}M";
-      MemorySwapMax = 0;
-      TasksMax = 1024;
-      OOMPolicy = "stop";
-    };
+    }
+    # crosvm's own sandbox (namespaces, pivot_root, seccomp) and the rest of
+    # the VMM's confinement (lib/vm/core/hardening.nix).
+    // core.hardening.vmm;
   };
 
   # Helper units: started with the VM, stopped (and cleaned up) whenever it goes
@@ -1417,39 +1357,16 @@ let
     afterPrep [ ]
     // {
       description = "Sandbox VM network (passt): ${label}";
+      # The network policy (lib/netpolicy.nix; VMs default to "internet": not
+      # the host, the LAN, the tailnet or container/VM bridges).
       serviceConfig = {
         ExecStart = "${netScript}${instArg}";
-        User = principal;
-        Group = principalGroup;
-        # The network policy (lib/netpolicy.nix; VMs default to "internet": not
-        # the host, the LAN, the tailnet or container/VM bridges). passt makes
-        # every outbound connection from this unit, so the cgroup filter applies to
-        # all of the guest's traffic.
-        IPAddressAllow = netPolicy.ipAddressAllow;
-        IPAddressDeny = netPolicy.ipAddressDeny;
-        NoNewPrivileges = true;
-        CapabilityBoundingSet = "";
-        ProtectSystem = "strict";
-        ProtectHome = true;
-        ReadWritePaths = [ base ];
-        PrivateTmp = true;
-        PrivateDevices = true;
-        ProtectKernelTunables = true;
-        ProtectKernelModules = true;
-        ProtectKernelLogs = true;
-        ProtectControlGroups = true;
-        ProtectClock = true;
-        LockPersonality = true;
-        RestrictRealtime = true;
-        RestrictSUIDSGID = true;
-        RestrictAddressFamilies = [
-          "AF_UNIX"
-          "AF_INET"
-          "AF_INET6"
-          "AF_NETLINK"
-        ];
-        UMask = "0077";
-        LimitCORE = 0;
+      }
+      // core.net.serviceConfig {
+        user = principal;
+        group = principalGroup;
+        policy = netPolicy;
+        readWritePaths = [ base ];
       };
     }
   );
@@ -1724,12 +1641,7 @@ let
           "-/cache"
         ];
         RestrictNamespaces = "user pid mnt net";
-        SystemCallFilter = [
-          "@system-service"
-          "@mount"
-          "@sandbox"
-          "~@obsolete @raw-io @reboot @swap @module @cpu-emulation @debug @clock"
-        ];
+        SystemCallFilter = core.hardening.jailedSyscallFilter;
         SystemCallErrorNumber = "EPERM";
         PrivateTmp = true;
         PrivateIPC = true;
@@ -1807,12 +1719,7 @@ let
         BindPaths = [ hostRuntimeDir ];
         ReadWritePaths = [ base ];
         RestrictNamespaces = "user pid mnt net";
-        SystemCallFilter = [
-          "@system-service"
-          "@mount"
-          "@sandbox"
-          "~@obsolete @raw-io @reboot @swap @module @cpu-emulation @debug @clock"
-        ];
+        SystemCallFilter = core.hardening.jailedSyscallFilter;
         SystemCallErrorNumber = "EPERM";
         PrivateTmp = true;
         PrivateIPC = true;
