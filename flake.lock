@@ -1822,16 +1822,16 @@
       "locked": {
         "lastModified": 1790824178,
         "narHash": "sha256-fNkEY1FUBhRhOmjMKH+l2mYHcmmguTjiOxUQFbTKBRE=",
-        "ref": "display-passthrough",
+        "owner": "otisdog8",
+        "repo": "virtio-nvgpu",
         "rev": "f78961ba3414ed44222f732294ef9a1d9840d5a9",
-        "revCount": 713,
-        "type": "git",
-        "url": "file:///home/jrt/Documents/nixos-dots/virtio-nvgpu"
+        "type": "github"
       },
       "original": {
+        "owner": "otisdog8",
         "ref": "display-passthrough",
-        "type": "git",
-        "url": "file:///home/jrt/Documents/nixos-dots/virtio-nvgpu"
+        "repo": "virtio-nvgpu",
+        "type": "github"
       }
     },
     "vm-dbus-proxy": {
@@ -1839,16 +1839,15 @@
       "locked": {
         "lastModified": 1790645735,
         "narHash": "sha256-dAUmLJwXbBw6wc6RleiC767BL5cxsMGgRXCdNGQZAfU=",
-        "ref": "main",
+        "owner": "uorux",
+        "repo": "vm-dbus-proxy",
         "rev": "34da25a9d3792fa858735b5482ecbe50c4b271f0",
-        "revCount": 11,
-        "type": "git",
-        "url": "file:///home/jrt/Documents/nixos-dots/vm-dbus-proxy"
+        "type": "github"
       },
       "original": {
-        "ref": "main",
-        "type": "git",
-        "url": "file:///home/jrt/Documents/nixos-dots/vm-dbus-proxy"
+        "owner": "uorux",
+        "repo": "vm-dbus-proxy",
+        "type": "github"
       }
     },
     "xdph": {

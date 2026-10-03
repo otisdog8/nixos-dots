@@ -21,18 +21,16 @@
       inputs.nixpkgs.follows = "nixpkgs";
     };
     # virtio-nvgpu: GPU + Wayland display for the VM sandbox tier
-    # (lib/vm/nvgpu.nix). The local checkout's committed display-passthrough
-    # branch: github:otisdog8/virtio-nvgpu only has an older `dev`. Switch the
-    # url to the fork once that branch is pushed there. Update with
+    # (lib/vm/nvgpu.nix). The fork's display-passthrough branch. Update with
     # `nix flake update virtio-nvgpu`.
     virtio-nvgpu = {
-      url = "git+file:///home/jrt/Documents/nixos-dots/virtio-nvgpu?ref=display-passthrough";
+      url = "github:otisdog8/virtio-nvgpu/display-passthrough";
       flake = false;
     };
-    # Standalone guest D-Bus transport adapter. Pin the local repository until
-    # it is published; then this can become github:otisdog8/vm-dbus-proxy.
+    # Standalone guest D-Bus transport adapter (lib/vm). Update with
+    # `nix flake update vm-dbus-proxy`.
     vm-dbus-proxy = {
-      url = "git+file:///home/jrt/Documents/nixos-dots/vm-dbus-proxy?ref=main";
+      url = "github:uorux/vm-dbus-proxy";
       flake = false;
     };
     nixpkgs-older.url = "github:NixOS/nixpkgs?rev=3e042434c17eff8ed5528faa4c4503facc2bdf6c";
