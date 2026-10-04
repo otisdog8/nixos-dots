@@ -36,7 +36,7 @@
     modules/system/sandbox-broker.nix
     modules/system/sandbox-dnsallow.nix
     modules/system/agent-vm.nix
-    modules/system/agent-auth-hostd.nix
+    modules/system/agent-auth-daemons.nix
     modules/system/kernel.nix
     modules/system/locale.nix
     modules/system/networking.nix

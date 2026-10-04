@@ -19,7 +19,8 @@
 #                          image (created sparse and nodatacow on first start)
 #   agent-vm-net.service   passt, as sbx-agentvm-net: the network policy below
 #                          (cgroup IP filter + owner-matched port limits)
-# Operators (members of agent-vm-users) get `agent-vm ssh|status|log|restart`.
+# Operators (members of agent-vm-users) get `agent-vm ssh|status|log|restart`,
+# and `avm` for the agents inside (agent-auth's sandboxd).
 {
   config,
   inputs,
@@ -190,22 +191,49 @@ let
   # membership is root in the agent VM.
   cli = pkgs.writeShellScriptBin "agent-vm" ''
     set -euo pipefail
+    # $1: -t (a terminal) or -T (stdin passed through); then the remote
+    # command, each word quoted (ssh joins its arguments into one string).
     ssh_vm() {
-      exec ${pkgs.openssh}/bin/ssh \
+      local tty="$1"; shift
+      local remote=""
+      if [ $# -gt 0 ]; then remote="$(printf '%q ' "$@")"; fi
+      exec ${pkgs.openssh}/bin/ssh "$tty" \
         -i ${rt}/client/id_ed25519 \
         -o IdentitiesOnly=yes \
         -o UserKnownHostsFile=${rt}/client/known_hosts \
         -o HostKeyAlias=${unit} \
         -o StrictHostKeyChecking=yes \
+        -o LogLevel=ERROR \
         -o "ProxyCommand=${pkgs.systemd}/lib/systemd/systemd-ssh-proxy %h %p" \
-        "$@" root@vsock/${toString cid}
+        root@vsock/${toString cid} $remote
     }
     case "''${1:-}" in
       ssh) shift; ssh_vm -t "$@" ;;
+      exec) shift; ssh_vm -T "$@" ;;
       status) exec ${pkgs.systemd}/bin/systemctl status --no-pager ${unit} ${unit}-net ;;
       log) shift; exec ${pkgs.systemd}/bin/journalctl -u ${unit} "$@" ;;
       start|stop|restart) exec ${pkgs.systemd}/bin/systemctl "$1" ${unit} ;;
-      *) echo "usage: agent-vm ssh [CMD…] | status | log [-f] | start | stop | restart" >&2; exit 2 ;;
+      *) echo "usage: agent-vm ssh [CMD…] | exec CMD… (stdin, no tty) | status | log [-f] | start | stop | restart" >&2; exit 2 ;;
+    esac
+  '';
+
+  # The agents in the VM (agent-auth's sandboxd; its operator CLI runs in the
+  # guest). `avm claude <project>` / `avm codex <project>` open a new
+  # conversation in its TUI; `avm attach <id>` takes one over.
+  avm = pkgs.writeShellScriptBin "avm" ''
+    set -euo pipefail
+    vm=${cli}/bin/agent-vm
+    case "''${1:-}" in
+      ""|-h|--help)
+        echo "usage: avm ls [-p PROJECT] [-a] | claude PROJECT | codex PROJECT | attach ID [--now]" >&2
+        echo "           | logs ID [-f] | send ID TEXT | stop ID | close ID | shell PROJECT" >&2
+        echo "           | project-create NAME [--open] | mint PROJECT [-r claude|codex]" >&2
+        echo "           | agents | projects | status | secret-set NAME < FILE | pair" >&2
+        exit 2 ;;
+      pair) exec "$vm" ssh agent-auth-sandboxd pair ;;
+      secret-set) shift; exec "$vm" exec agent-auth-sandboxctl secret-set "$@" ;;
+      claude|codex) rt="$1"; shift; exec "$vm" ssh agent-auth-sandboxctl new "$@" --runtime "$rt" ;;
+      *) exec "$vm" ssh agent-auth-sandboxctl "$@" ;;
     esac
   '';
 in
@@ -357,7 +385,10 @@ in
       description = "agent VM network (passt)";
     };
 
-    environment.systemPackages = [ cli ];
+    environment.systemPackages = [
+      cli
+      avm
+    ];
 
     networking.firewall.extraCommands = portFilter.start;
     networking.firewall.extraStopCommands = portFilter.stop;
