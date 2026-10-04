@@ -12,11 +12,11 @@
 # unit, the VMM's sandbox, the shared-dir flags, the CID allocation.
 #
 # Host side:
-#   agent-vm.service       the VMM, as sbx-agentvm (group kvm); the disk image
-#                          is bound in from /large, nothing else of the host's
-#                          data is visible
+#   agent-vm.service       the VMM, as sbx-agentvm (group kvm); its disk (an
+#                          image bound in from /large, or a dedicated block
+#                          device) is all it sees of the host's data
 #   agent-vm-prep.service  root: per-boot runtime dir and SSH keys, the disk
-#                          image (created sparse on first start)
+#                          image (created sparse and nodatacow on first start)
 #   agent-vm-net.service   passt, as sbx-agentvm-net: the network policy below
 #                          (cgroup IP filter + owner-matched port limits)
 # Operators (members of agent-vm-users) get `agent-vm ssh|status|log|restart`.
@@ -40,10 +40,14 @@ let
   group = "sbx-agentvm";
   operators = "agent-vm-users";
   diskTarget = "${rt}/disk.img";
+  blockDisk = cfg.disk.type == "block";
+  # What crosvm opens: the image's bind mount point, or the device itself.
+  diskArg = if blockDisk then cfg.disk.path else diskTarget;
 
   guest = inputs.nixpkgs.lib.nixosSystem {
     specialArgs.agentVmHost = {
       inherit (cfg) substituters trustedPublicKeys;
+      hostName = config.networking.hostName;
       locale = config.i18n.defaultLocale;
       timeZone = config.time.timeZone;
       stateVersion = config.system.stateVersion;
@@ -102,16 +106,38 @@ let
     ${co}/chown root:${operators} ${rt}/client/*
     ${co}/chmod 0640 ${rt}/client/*
 
-    # The disk: sparse, created once, always owned by the VMM's uid (which may
-    # differ across rebuilds on a host that doesn't persist its uid map).
+    ${if blockDisk then blockPrep else imagePrep}
+  '';
+  disk = lib.escapeShellArg cfg.disk.path;
+  # The image: sparse, created once, always owned by the VMM's uid (which may
+  # differ across rebuilds on a host that doesn't persist its uid map). On a
+  # copy-on-write host filesystem (btrfs) it is nodatacow: random writes into a
+  # CoW file fragment it badly. +C only takes on files created empty, hence on
+  # the directory before the image exists; elsewhere chattr fails harmlessly.
+  # Compression and checksums come from the guest's own btrfs instead.
+  imagePrep = ''
     ${co}/install -d -m 0700 -o ${vmUser} -g ${group} ${lib.escapeShellArg (dirOf cfg.disk.path)}
-    if [ ! -e ${lib.escapeShellArg cfg.disk.path} ]; then
-      ${co}/truncate -s ${cfg.disk.size} ${lib.escapeShellArg cfg.disk.path}
+    if [ ! -e ${disk} ]; then
+      ${pkgs.e2fsprogs}/bin/chattr +C ${lib.escapeShellArg (dirOf cfg.disk.path)} 2>/dev/null || true
+      ${co}/truncate -s ${cfg.disk.size} ${disk}
     fi
-    ${co}/chown ${vmUser}:${group} ${lib.escapeShellArg cfg.disk.path}
-    ${co}/chmod 0600 ${lib.escapeShellArg cfg.disk.path}
+    ${co}/chown ${vmUser}:${group} ${disk}
+    ${co}/chmod 0600 ${disk}
     # Mount point for the unit's private bind of the image.
     ${co}/install -m 0600 -o ${vmUser} -g ${group} /dev/null ${diskTarget}
+  '';
+  # A dedicated device (an LV, a partition, a zvol): nothing to create; it must
+  # exist. The VMM gets it by ownership, re-applied on every start (udev may
+  # reset it when the device changes; crosvm opens it once, at start), and by
+  # DeviceAllow.
+  blockPrep = ''
+    dev="$(${co}/readlink -f ${disk})"
+    if [ ! -b "$dev" ]; then
+      echo "${unit}: ${cfg.disk.path} is not a block device" >&2
+      exit 1
+    fi
+    ${co}/chown ${vmUser}:${group} "$dev"
+    ${co}/chmod 0600 "$dev"
   '';
 
   netScript = core.net.script {
@@ -145,7 +171,7 @@ let
       -s ${rt}/ctl/crosvm.sock
       --shared-dir "${core.storeShare}"
       --shared-dir "${rt}/meta:sbx-meta:${core.fsCommon}:cache=never"
-      --block "path=${diskTarget}"
+      --block "path=${diskArg}"
       --vhost-user "type=net,socket=${rt}/net/passt.sock"
     )
     for p in ${lib.escapeShellArgs guestKernelParams}; do args+=(-p "$p"); done
@@ -154,7 +180,7 @@ let
       ${guest.config.boot.kernelPackages.kernel}/${guest.config.system.boot.loader.kernelFile}
   '';
 
-  # ACPI power button → orderly guest shutdown (ext4 flushed); systemd kills
+  # ACPI power button → orderly guest shutdown (/persist flushed); systemd kills
   # whatever remains after TimeoutStopSec.
   stopScript = pkgs.writeShellScript "${unit}-stop" ''
     exec ${crosvm} powerbtn ${rt}/ctl/crosvm.sock
@@ -198,15 +224,35 @@ in
     };
 
     disk = {
+      type = lib.mkOption {
+        type = lib.types.enum [
+          "file"
+          "block"
+        ];
+        default = "file";
+        description = ''
+          "file": a sparse image on the host's filesystem (created on first
+          start). "block": a dedicated block device — an LVM (thin) LV, a
+          partition or a zvol — with no host filesystem in between; better
+          where one is available.
+        '';
+      };
       path = lib.mkOption {
         type = lib.types.str;
         default = "/large/agent-vm/disk.img";
-        description = "The guest's persistent root disk (sparse image, created on first start; /large is persisted but not backed up).";
+        example = "/dev/vg0/agent-vm";
+        description = ''
+          The guest's data disk (/persist in the guest: projects, homes, the
+          store's writable layer, the store database, logs). For a file, the
+          image path (/large is persisted but not backed up). For a block
+          device, a stable path (/dev/<vg>/<lv>, /dev/disk/by-id/…), never
+          /dev/dm-N.
+        '';
       };
       size = lib.mkOption {
         type = lib.types.str;
         default = "256G";
-        description = "Size the image is created with (sparse; only written blocks take space). Not applied to an existing image.";
+        description = "Size the image is created with (file only; sparse, so only written blocks take space). Not applied to an existing image.";
       };
     };
 
@@ -372,12 +418,13 @@ in
             "-/large"
             "-/cache"
           ];
-          BindPaths = [ ''"${cfg.disk.path}":"${diskTarget}"'' ];
+          BindPaths = lib.optional (!blockDisk) ''"${cfg.disk.path}":"${diskTarget}"'';
           ReadWritePaths = [ rt ];
           DeviceAllow = [
             "/dev/kvm rw"
             "/dev/vhost-vsock rw"
-          ];
+          ]
+          ++ lib.optional blockDisk "${cfg.disk.path} rw";
           MemoryMax = "${toString (cfg.memory + 512)}M";
         }
         // core.hardening.vmm;

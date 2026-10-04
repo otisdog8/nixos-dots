@@ -4,13 +4,21 @@
 # adds the agents; this file is the machine underneath.
 #
 # Unlike the app guest (guest.nix), which is disposable and mirrors one user:
-#   - / is a persistent ext4 disk (virtio-blk, formatted on first boot), so
-#     projects, agent homes and scratchpads survive VM restarts;
+#   - / is a tmpfs, rebuilt from this configuration on every boot (as on the
+#     hosts, impermanence-style); only what's listed under `persisted` below
+#     lives on the data disk, /persist: a btrfs filesystem on a virtio-blk
+#     disk (formatted on first boot). So projects, agent homes, scratchpads,
+#     the store database and logs survive VM restarts, and nothing else does —
+#     whatever a compromised guest root drops into /etc or /usr is gone at the
+#     next boot. (Not a complete answer to persistence: guest root can still
+#     write the store's upper layer.) btrfs rather than ext4: compression and
+#     checksums inside the image (the host keeps the image nodatacow), and
+#     subvolumes per project for cheap snapshots and reflink copies;
 #   - /nix/store is writable: the host's store (virtio-fs, read-only) under an
-#     overlay whose upper layer is on the disk, with a nix-daemon, so agents can
-#     `nix develop` and build. The guest system's own closure is registered in
-#     the store database at boot (its registration comes from the host on the
-#     kernel command line: the guest can't compute its own closure);
+#     overlay whose upper layer is on /persist, with a nix-daemon, so agents
+#     can `nix develop` and build. The guest system's own closure is registered
+#     in the store database at boot (its registration comes from the host on
+#     the kernel command line: the guest can't compute its own closure);
 #   - no display, audio, D-Bus relay or per-app wiring;
 #   - root logs in over vsock SSH with the per-boot key the host's prep unit
 #     generates (the only way in; operators on the host reach it through
@@ -19,10 +27,20 @@
   config,
   lib,
   pkgs,
+  utils,
   agentVmHost,
   ...
 }:
 let
+  # Directories kept on /persist, bound back in place in the initrd (so they're
+  # there before anything in stage 2 starts).
+  persisted = [
+    "/var/lib"
+    "/nix/var"
+    "/var/log"
+  ];
+  # Their initrd mount units (the system is mounted at /sysroot there).
+  persistedMounts = map (d: "${utils.escapeSystemdPath "/sysroot${d}"}.mount") persisted;
   # Kernel command line value of `key=`.
   cmdlineArg = key: ''
     for w in $(cat /proc/cmdline); do
@@ -45,7 +63,7 @@ in
       "virtiofs"
       "overlay"
     ];
-    initrd.supportedFilesystems = [ "ext4" ];
+    initrd.supportedFilesystems = [ "btrfs" ];
     kernelModules = [ "vmw_vsock_virtio_transport" ];
     kernelParams = [
       "console=ttyS0"
@@ -59,9 +77,24 @@ in
 
   fileSystems = {
     "/" = {
+      device = "none";
+      fsType = "tmpfs";
+      options = [
+        "mode=0755"
+        "size=25%"
+      ];
+    };
+    "/persist" = {
       device = "/dev/vda";
-      fsType = "ext4";
+      fsType = "btrfs";
       autoFormat = true;
+      # discard=async: freed blocks go back to the host (the image is sparse).
+      options = [
+        "compress=zstd"
+        "noatime"
+        "discard=async"
+      ];
+      neededForBoot = true;
     };
     "/nix/.ro-store" = {
       device = "nixstore";
@@ -72,11 +105,20 @@ in
     "/nix/store" = {
       overlay = {
         lowerdir = [ "/nix/.ro-store" ];
-        upperdir = "/nix/.rw-store/upper";
-        workdir = "/nix/.rw-store/work";
+        upperdir = "/persist/nix/store-upper";
+        workdir = "/persist/nix/store-work";
       };
       neededForBoot = true;
     };
+  }
+  // lib.genAttrs persisted (dir: {
+    device = "/persist${dir}";
+    fsType = "none";
+    options = [ "bind" ];
+    depends = [ "/persist" ];
+    neededForBoot = true;
+  })
+  // {
     # Per-boot files from the host: the SSH host key and the operators' key.
     "/run/agent-vm/meta" = {
       device = "sbx-meta";
@@ -87,6 +129,26 @@ in
       ];
     };
   };
+
+  # A fresh disk has no source directories for the binds above; make them in
+  # the initrd, between mounting /persist and binding.
+  boot.initrd.systemd.services.agent-vm-persist-dirs = {
+    description = "Create the persisted directories on /persist";
+    after = [ "sysroot-persist.mount" ];
+    requires = [ "sysroot-persist.mount" ];
+    before = persistedMounts;
+    requiredBy = persistedMounts;
+    unitConfig.DefaultDependencies = false;
+    serviceConfig.Type = "oneshot";
+    script = ''
+      mkdir -p ${lib.concatMapStringsSep " " (d: "/sysroot/persist${d}") persisted}
+    '';
+  };
+
+  # Stable across boots (the root is a tmpfs), so the persisted journal stays
+  # one machine's.
+  environment.etc.machine-id.text = "${builtins.substring 0 32 (builtins.hashString "sha256" "agent-vm-${agentVmHost.hostName}")}\n";
+  services.journald.storage = "persistent";
 
   nix = {
     enable = true;
@@ -138,7 +200,10 @@ in
     users.root.hashedPassword = "!";
   };
   security.sudo.enable = false;
-  # Project users are added at run time by sandboxd as userdb records.
+  # Project users are added at run time by sandboxd as userdb records, kept on
+  # the persisted /var/lib (/etc is rebuilt every boot).
+  environment.etc.userdb.source = "/var/lib/userdb";
+  systemd.tmpfiles.rules = [ "d /var/lib/userdb 0755 root root -" ];
   services.userdbd = {
     enable = true;
     # The nixbld users' uids are above 1000, so userdb lists them as regular

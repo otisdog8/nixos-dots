@@ -20,10 +20,13 @@ execution); this repo holds its NixOS side.
   every edit.)
 - `nixos/modules/system/agent-vm.nix` + `lib/vm/agent-guest.nix` — the agent VM:
   one always-on VM per host (system units, no desktop session), its own guest
-  (persistent ext4 root on `/large/agent-vm/disk.img`, writable store overlay +
-  nix-daemon, userdbd, root SSH over vsock via `agent-vm ssh`), its own uids
-  (`sbx-agentvm`, `sbx-agentvm-net`), network = internet + an allowlist with
-  port limits (nixos/default.nix). Enabled on excelsior only, for bring-up.
+  (tmpfs root; a btrfs data disk at /persist holding /var/lib, /nix/var,
+  /var/log and the writable store overlay's upper layer, bound in place in the
+  initrd; nix-daemon, userdbd, root SSH over vsock via `agent-vm ssh`). The
+  disk is a sparse nodatacow image at `/large/agent-vm/disk.img`, or a
+  dedicated block device (`modules.agentVm.disk.type = "block"`, e.g. an LV).
+  Its own uids (`sbx-agentvm`, `sbx-agentvm-net`), network = internet + an
+  allowlist with port limits (nixos/default.nix). Enabled on excelsior only, for bring-up.
   **Never run on hardware yet.** Built: guest system, units.
 
 ## Update 2026-09-29: Codex's capture bridge and gaming work, reviewed
