@@ -103,7 +103,7 @@ let
     x11Forward = cfg.sandbox.x11Forward;
     # May ask the ScreenCast portal (features/screen-capture.nix): its VM gets a
     # capture helper user and the backend's inject socket (lib/vm/instance.nix).
-    screenCast = lib.elem "ScreenCast" appCfg.portalInterfaces;
+    screenCast = lib.elem "ScreenCast" (appCfg.portalInterfaces or [ ]);
     inherit (cfg.sandbox.vm)
       relays
       guestBinds
