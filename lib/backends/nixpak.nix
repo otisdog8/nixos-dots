@@ -124,6 +124,7 @@ in
             sharedGroup.launcherFor {
               bin = binName;
               inherit (member) package fallback;
+              inherit (appCfg) environment;
               projects = map (
                 p: if lib.hasPrefix "/" p then p else "/home/${username}/${lib.removePrefix "~/" p}"
               ) groups.${group}.projects;

@@ -236,7 +236,7 @@ in
           )
           (
             lib.filterAttrs (
-              _: g: g.sharedContainer && g.projects != [ ] && containerMembersOf g != [ ]
+              _: g: g.sharedContainer && containerMembersOf g != [ ]
             ) cfg.groups
           );
       description = "Each group's shared container (lib/backends/nixpak-group.nix).";
@@ -269,7 +269,7 @@ in
             sharedContainer = lib.mkOption {
               type = lib.types.bool;
               default = true;
-              description = "Container mode: launches inside the group's projects share one container (the user service sbx-group-<name>). Needs projects; nixpak-backend members only.";
+              description = "Container mode: the members' launches share one container (the user service sbx-group-<name>): those started inside the group's projects, or every launch for a group without projects. nixpak-backend members only.";
             };
             projects = lib.mkOption {
               type = lib.types.listOf lib.types.str;
@@ -480,6 +480,17 @@ in
       lib.nameValuePair "group-${n}" {
         label = "${n} sandbox (container)";
         inherit (grp) audio;
+        # Folder grants and the camera into the running shared sandbox
+        # (lib/broker/attach.py); it runs as the user.
+        grantPaths = "${(import ../../../lib/broker/attach.nix pkgs).forSandbox "group-${n}"}";
+        camera = if grp.camera then "${(import ../../../lib/broker/attach.nix pkgs).forSandbox "group-${n}"}" else null;
+      }
+    ) cfg.containerGroups;
+    modules.sandbox.broker.attach = lib.mapAttrs' (
+      n: grp:
+      lib.nameValuePair "group-${n}" {
+        inherit (grp) appId camera;
+        paths = true;
       }
     ) cfg.containerGroups;
 
