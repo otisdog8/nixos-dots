@@ -64,6 +64,19 @@
       description = "org.freedesktop.Application D-Bus name (or prefix) for URL forwarding to a running instance.";
     };
 
+    # Environment the app runs with, in its container (bwrap --setenv) and its
+    # VM (the guest-side environment of its command, restricted VMs included).
+    # Fixed by the app module, never taken from the user's session. Not applied
+    # to the unsandboxed `none` backend.
+    environment = lib.mkOption {
+      type = lib.types.attrsOf lib.types.str;
+      default = { };
+      example = {
+        QT_QPA_PLATFORM = "xcb";
+      };
+      description = "Environment variables for the app, in its container and its VM.";
+    };
+
     # Layer-2 backend: nixpak (in-session bwrap), systemd (root-prepared stash
     # service, optionally a dedicated uid) or none (unsandboxed; storage at ~).
     # Set here in the app-spec so dispatch never forces the outer config; there is

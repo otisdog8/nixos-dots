@@ -132,6 +132,7 @@ let
       # (X11 forward: the socket is bound via the x11 capability above, DISPLAY comes
       # from gui.nix's envOr "DISPLAY" ":0", and auth from the launcher's xhost.)
       bubblewrap.network = lib.mkOverride 999 false;
+      bubblewrap.env = appCfg.environment;
 
       bubblewrap.uid = lib.mkIf (identity != null) identity.uid;
       bubblewrap.gid = lib.mkIf (identity != null) identity.gid;

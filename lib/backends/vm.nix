@@ -99,6 +99,7 @@ let
       appId
       ;
     package = if nested then nestedPkg else cfg.package;
+    inherit (appCfg) environment;
     entries = storage.entries;
     x11Forward = cfg.sandbox.x11Forward;
     # May ask the ScreenCast portal (features/screen-capture.nix): its VM gets a

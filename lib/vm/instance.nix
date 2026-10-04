@@ -464,7 +464,12 @@ let
     "QT_QPA_PLATFORMTHEME=qt6ct"
     "XDG_CURRENT_DESKTOP=Hyprland"
     "XDG_SESSION_TYPE=wayland"
+    # xdg-open (the host profile's xdg-utils, on the guest PATH) through the
+    # OpenURI portal on the VM's bus: links and URL schemes open on the host.
+    "NIXOS_XDG_OPEN_USE_PORTAL=1"
   ];
+  # A member's own environment (app.environment), after everything else.
+  memberEnv = member: lib.mapAttrsToList (n: v: "${n}=${v}") (member.environment or { });
   # Members first on PATH, so they can run each other.
   memberPath =
     member:
@@ -549,7 +554,7 @@ let
     case "''${SSH_ORIGINAL_COMMAND-}" in
       ready) exec ${pkgs.bash}/bin/bash -c ${lib.escapeShellArg (if guestReady != "" then guestReady else "true")} ;;
       ${lib.concatMapStrings (m: ''
-        ${lib.escapeShellArg "run ${m.bin}"}) path=${lib.escapeShellArg (memberPath m)}; exe=${m.package}/bin/${m.bin} ;;
+        ${lib.escapeShellArg "run ${m.bin}"}) path=${lib.escapeShellArg (memberPath m)}; exe=${m.package}/bin/${m.bin}; menv=(${lib.escapeShellArgs (memberEnv m)}) ;;
       '') members}
       *) echo "sandbox-vm: this VM only starts ${lib.concatMapStringsSep ", " (m: m.bin) members}" >&2; exit 1 ;;
     esac
@@ -564,7 +569,7 @@ let
     # Only LANG, LC_* and COLORTERM come through sshd (AcceptEnv); LANG is set below.
     for v in ''${!LC_@}; do unset "$v"; done
     cd "$HOME"
-    exec env "PATH=$path/run/current-system/sw/bin''${hostsw:+:$hostsw/bin}" "''${envs[@]}" "$exe"
+    exec env "PATH=$path/run/current-system/sw/bin''${hostsw:+:$hostsw/bin}" "''${envs[@]}" ''${menv[@]+"''${menv[@]}"} "$exe"
   '';
 
   # ── Scripts ──────────────────────────────────────────────────────────────────
@@ -1430,7 +1435,7 @@ let
         fc="$(${co}/readlink -f /etc/fonts/fonts.conf 2>/dev/null || true)"
         if [ -n "$fc" ]; then genv+=("FONTCONFIG_FILE=$fc"); fi
       ''}
-      genv+=(${lib.escapeShellArgs fixedEnv})
+      genv+=(${lib.escapeShellArgs (fixedEnv ++ memberEnv member)})
       ${
         if restricted then
           ''
