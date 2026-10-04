@@ -207,7 +207,11 @@ let
   # so the portals treat it as that sandboxed app.
   audio = anyCap "audio";
   dbusArgs = lib.unique (lib.concatMap (m: if m.dbusArgs == null then [ ] else m.dbusArgs) members);
-  flatpakInfoFile = lib.findFirst (i: i != null) null (map (m: m.flatpakInfoFile) members);
+  # The bus identity: the first member with a .flatpak-info, and its app id
+  # (the document portal's by-app/<id> view).
+  busMember = lib.findFirst (m: m.flatpakInfoFile != null) null members;
+  flatpakInfoFile = if busMember == null then null else busMember.flatpakInfoFile;
+  busAppId = if busMember == null then null else busMember.appId or null;
   bus = dbusArgs != [ ] && flatpakInfoFile != null;
   # sandbox.vm.hostKeyring: the host keyring (kwallet's Secret Service) too,
   # for this VM's proxy only. The container backends never get it.
@@ -225,7 +229,7 @@ let
   # Files the portals hand this app (FileChooser results, drag and drop): the
   # document portal's view for the VM's flatpak identity, shared like flatpak
   # binds it (by-app/<id> at $XDG_RUNTIME_DIR/doc), so only this app's documents.
-  docs = bus;
+  docs = bus && busAppId != null;
   # Security keys: a virtual FIDO device in the guest, relayed through the
   # broker to whichever key is plugged in (lib/vm/fido-guest.py).
   fido = anyCap "fido" && broker;
@@ -597,6 +601,11 @@ let
     ''}
     ${lib.optionalString bus ''
       ${co}/install -d -m 0700 -o ${username} -g ${hostUser.group} "$rt/bus"
+      ${lib.optionalString restricted ''
+        # The relay runs as ${principal}: traverse only. Each socket in here is
+        # granted to it once it exists (grantBusSocket).
+        ${pkgs.acl}/bin/setfacl -m "u:${principal}:--x" "$rt/bus"
+      ''}
     ''}
     ${lib.optionalString capture ''
       ${co}/install -d -m 0711 -o ${captureUserName} -g ${captureUserName} "$rt/capture"
@@ -908,9 +917,30 @@ let
     exec ${grantsPkg}/bin/sbx-grants hub --home ${home} --dir "$rt/grants"
   '';
 
-  # The user: the document portal's by-app view for this VM's flatpak identity,
-  # over virtio-fs (crosvm's jailed fs device; the portal's FUSE enforces the
-  # per-app view). The portal is D-Bus activated, so it's started first.
+  # Documents: the document portal's by-app view for this VM's flatpak identity,
+  # over virtio-fs. Two units, so the one that serves the guest holds nothing of
+  # the user's but that view:
+  #   -docs-portal (the user): activates the portal (D-Bus activated) and waits
+  #     for the view, with the session bus;
+  #   -docs (the user): crosvm's jailed fs device on that view alone, bound in by
+  #     systemd as root (the portal's FUSE is allow_other:
+  #     overlays/custom-packages.nix). No runtime dir, home, session bus or host
+  #     network namespace (abstract sockets), so escaping crosvm's jail reaches
+  #     none of them. It stays the user's uid: the portal reports its own uid as
+  #     every file's owner, and the guest kernel checks permissions against what
+  #     the device reports (virtio-fs default_permissions); a device in another
+  #     uid's user namespace could only show those files as nobody's.
+  docsView = "${base}/docs-view";
+  docsSource = "${hostRuntimeDir}/doc/by-app/${busAppId}";
+  docsPortalScript = pkgs.writeShellScript "${unit}-docs-portal" ''
+    set -euo pipefail
+    SYSTEMD_LOG_TARGET=console SYSTEMD_LOG_LEVEL=debug \
+      ${pkgs.systemd}/bin/busctl --user call org.freedesktop.portal.Documents \
+      /org/freedesktop/portal/documents org.freedesktop.portal.Documents GetMountPoint >/dev/null
+    for _ in $(${co}/seq 1 100); do [ -d ${lib.escapeShellArg docsSource} ] && exit 0; ${co}/sleep 0.05; done
+    echo "${unit}-docs-portal: document portal view missing after 5 s: ${docsSource}" >&2
+    exit 1
+  '';
   docsScript = pkgs.writeShellScript "${unit}-docs" ''
     set -Eeuo pipefail
     stage="initialization"
@@ -919,24 +949,12 @@ let
     ${idPrelude}
     eu="$(${co}/id -u)"
     eg="$(${co}/id -g)"
-    appid="$(${pkgs.gnused}/bin/sed -n 's/^name=//p' ${busFlatpakInfo} | ${co}/head -n1)"
-    stage="activating the document portal"
-    SYSTEMD_LOG_TARGET=console SYSTEMD_LOG_LEVEL=debug \
-      ${pkgs.systemd}/bin/busctl --user call org.freedesktop.portal.Documents \
-      /org/freedesktop/portal/documents org.freedesktop.portal.Documents GetMountPoint >/dev/null
-    src="${hostRuntimeDir}/doc/by-app/$appid"
-    stage="waiting for the document portal view $src"
-    for _ in $(${co}/seq 1 100); do [ -d "$src" ] && break; ${co}/sleep 0.05; done
-    if [ ! -d "$src" ]; then
-      echo "${unit}-docs: document portal view missing after 5 s: $src" >&2
-      exit 1
-    fi
     stage="starting the document virtio-fs backend"
     ${co}/rm -f "$rt/docs/fs.sock"
     ${pkgs.crosvm}/bin/crosvm device fs \
       --socket-path "$rt/docs/fs.sock" \
       --tag sbx-docs \
-      --shared-dir "$src" \
+      --shared-dir ${docsView} \
       --cfg cache=never,posix_acl=false,security_ctx=false \
       --uid "$eu" --gid "$eg" \
       --uid-map "$eu $eu 1" --gid-map "$eg $eg 1" &
@@ -1115,8 +1133,44 @@ let
     ]
     ++ lib.optional gpuCap "/dev/nvidia-uvm rw";
 
-  # The user: this VM's end of the vsock relay, on port = its CID, answering only
-  # that CID, and only for the services it was given.
+  # Restricted VMs: give the relay's uid (the principal) one of the user's
+  # proxy sockets in $rt/bus, once the proxy has made it. ExecStartPost of the
+  # proxy's unit, as the user who owns the socket; the relay starts after it.
+  # (Restricted VMs are never per-project, so there's no instance path.)
+  grantBusSocket = pkgs.writeShellScript "${unit}-grant-bus-socket" ''
+    set -euo pipefail
+    dir=""
+    ${idPrelude}
+    sock="$rt/bus/$1"
+    for _ in $(${co}/seq 1 200); do [ -S "$sock" ] && break; ${co}/sleep 0.05; done
+    if [ ! -S "$sock" ] || [ -L "$sock" ]; then
+      echo "${unit}: no socket $sock to grant" >&2
+      exit 1
+    fi
+    ${pkgs.acl}/bin/setfacl -m "u:${principal}:rw" -- "$sock"
+  '';
+
+  # Where the relay finds the broker's sockets for this VM. A relay running as
+  # the user reaches them in the user's runtime dir; one running as the
+  # principal (restricted) can't traverse that, so systemd binds the two sockets
+  # into its unit (relayService), and the broker ACLs them for the principal
+  # (brokerEntry.uid).
+  relayBrokerSocks =
+    if restricted then
+      {
+        pulse = "${base}/relay/pulse";
+        broker = "${base}/relay/broker";
+      }
+    else
+      {
+        pulse = "${hostRuntimeDir}/sbx-broker/${brokerName}.pulse";
+        broker = "${hostRuntimeDir}/sbx-broker/${brokerName}.sock";
+      };
+
+  # This VM's end of the vsock relay, on port = its CID, answering only that
+  # CID, and only for the services it was given. Runs as the user, or as the
+  # principal in a restricted VM (so nothing that parses the guest's traffic
+  # runs as the user there).
   relayScript = pkgs.writeShellScript "${unit}-relay" ''
     set -euo pipefail
     dir="''${1:-}"
@@ -1124,14 +1178,11 @@ let
     exec ${vsockRelay}/bin/vsock-relay host --cid "$cid" ${
       lib.concatStringsSep " " (
         lib.optional audio "pulse=${
-          if broker then
-            "${hostRuntimeDir}/sbx-broker/${brokerName}.pulse"
-          else
-            "${hostRuntimeDir}/pulse/native"
+          if broker then relayBrokerSocks.pulse else "${hostRuntimeDir}/pulse/native"
         }"
         ++ lib.optional (bus && !capture) ''dbus="$rt/bus/bus.sock"''
         ++ lib.optional (bus && capture) ''capture-dbus="$rt/bus/capture.sock"''
-        ++ lib.optional broker "broker=${hostRuntimeDir}/sbx-broker/${brokerName}.sock"
+        ++ lib.optional broker "broker=${relayBrokerSocks.broker}"
         ++ lib.optional grants ''grants="$rt/grants/guest.sock"''
         ++ lib.mapAttrsToList (n: r: lib.escapeShellArg "${n}=${r.host}") extraRelays
       )
@@ -1626,8 +1677,16 @@ let
         Type = "notify";
         NotifyAccess = "main";
         ExecStart = "${relayScript}${instArg}";
-        User = username;
-        Group = hostUser.group;
+        User = if restricted then principal else username;
+        Group = if restricted then principalGroup else hostUser.group;
+        # Restricted: the broker's sockets for this VM, bound in by systemd (as
+        # root) from the user's runtime dir, which the principal can't traverse.
+        # Soft: absent while the broker isn't running. A bind pins the socket, so
+        # a broker restart needs a VM restart (as for containers).
+        BindPaths = lib.optionals (restricted && broker) (
+          lib.optional audio "-${hostRuntimeDir}/sbx-broker/${brokerName}.pulse:${relayBrokerSocks.pulse}"
+          ++ [ "-${hostRuntimeDir}/sbx-broker/${brokerName}.sock:${relayBrokerSocks.broker}" ]
+        );
         NoNewPrivileges = true;
         CapabilityBoundingSet = "";
         ProtectSystem = "strict";
@@ -1663,6 +1722,7 @@ let
       };
       serviceConfig = {
         ExecStart = "${busScript}${instArg}";
+        ExecStartPost = lib.optional restricted "${grantBusSocket} bus.sock";
         User = username;
         Group = hostUser.group;
         NoNewPrivileges = true;
@@ -1728,6 +1788,7 @@ let
       description = "Sandbox VM D-Bus capture adapter: ${label}";
       serviceConfig = {
         ExecStart = "${captureBusScript}${instArg}";
+        ExecStartPost = lib.optional restricted "${grantBusSocket} capture.sock";
         User = username;
         Group = hostUser.group;
         NoNewPrivileges = true;
@@ -1837,14 +1898,56 @@ let
     };
   };
 
-  docsService = helper (
+  docsPortalService = helper (
     afterPrep [ ]
     // {
-      description = "Sandbox VM documents (portal files, virtio-fs): ${label}";
+      description = "Sandbox VM documents (portal activation): ${label}";
       environment = {
         XDG_RUNTIME_DIR = hostRuntimeDir;
         DBUS_SESSION_BUS_ADDRESS = "unix:path=${hostRuntimeDir}/bus";
       };
+      serviceConfig = {
+        Type = "oneshot";
+        RemainAfterExit = true;
+        ExecStart = "${docsPortalScript}";
+        User = username;
+        Group = hostUser.group;
+        NoNewPrivileges = true;
+        CapabilityBoundingSet = "";
+        AmbientCapabilities = "";
+        ProtectSystem = "strict";
+        ProtectHome = "tmpfs";
+        # ProtectHome also hides /run/user: the session bus and the portal's
+        # FUSE mount (which may appear only once GetMountPoint has activated
+        # the portal) are in this user's runtime dir. Nothing here reads the
+        # guest's input; the device that does is -docs.
+        BindPaths = [ hostRuntimeDir ];
+        PrivateTmp = true;
+        PrivateIPC = true;
+        PrivateDevices = true;
+        ProtectKernelTunables = true;
+        ProtectKernelModules = true;
+        ProtectKernelLogs = true;
+        ProtectControlGroups = true;
+        ProtectClock = true;
+        ProtectHostname = true;
+        RestrictNamespaces = true;
+        LockPersonality = true;
+        RestrictRealtime = true;
+        RestrictSUIDSGID = true;
+        RestrictAddressFamilies = [ "AF_UNIX" ];
+        SystemCallArchitectures = "native";
+        SystemCallFilter = [ "@system-service" ];
+        SystemCallErrorNumber = "EPERM";
+        LimitCORE = 0;
+      };
+    }
+  );
+
+  docsService = helper (
+    afterPrep [ (ref "${unit}-docs-portal") ]
+    // {
+      description = "Sandbox VM documents (portal files, virtio-fs): ${label}";
       serviceConfig = {
         ExecStart = "${docsScript}${instArg}";
         User = username;
@@ -1853,21 +1956,14 @@ let
         CapabilityBoundingSet = "";
         AmbientCapabilities = "";
         ProtectSystem = "strict";
-        ProtectHome = "tmpfs";
-        # ProtectHome also hides /run/user. Restore this user's runtime tree
-        # for the session bus and the document portal's FUSE mount, which may
-        # appear only after GetMountPoint activates the portal. Keep /home,
-        # /root and other users' runtime directories hidden. The guest still
-        # receives only doc/by-app/$appid, never this runtime tree or bus:
-        # crosvm's fs device pivots into that view before serving it. What
-        # this bind adds (the unfiltered session bus, compositor, PipeWire and
-        # broker sockets) is reachable by this script, and by crosvm only
-        # before it jails itself or after escaping that jail. Not narrower:
-        # systemd sets binds up as root, and root can't stat the user's FUSE
-        # mount (no allow_other), so binding doc/ itself fails the unit; the
-        # whole tree carries the mount along without looking inside.
-        BindPaths = [ hostRuntimeDir ];
+        # Nothing of /home or /run/user: only this app's document view, bound by
+        # systemd (as root, from the host root) at docsView.
+        ProtectHome = true;
+        BindPaths = [ "${docsSource}:${docsView}" ];
         ReadWritePaths = [ base ];
+        # Own network namespace: no abstract unix sockets of the host's (the
+        # fs device talks to the VMM over the vhost-user socket in base).
+        PrivateNetwork = true;
         RestrictNamespaces = "user pid mnt net";
         SystemCallFilter = core.hardening.jailedSyscallFilter;
         SystemCallErrorNumber = "EPERM";
@@ -1880,6 +1976,7 @@ let
         ProtectControlGroups = true;
         ProtectClock = true;
         ProtectHostname = true;
+        ProtectProc = "invisible";
         LockPersonality = true;
         RestrictRealtime = true;
         RestrictSUIDSGID = true;
@@ -1951,7 +2048,10 @@ in
     "${unit}-capture-broker${tmpl}" = captureBrokerService;
     "${unit}-capture-bus${tmpl}" = captureBusService;
   }
-  // lib.optionalAttrs docs { "${unit}-docs${tmpl}" = docsService; }
+  // lib.optionalAttrs docs {
+    "${unit}-docs-portal${tmpl}" = docsPortalService;
+    "${unit}-docs${tmpl}" = docsService;
+  }
   // lib.optionalAttrs camera { "${unit}-camera${tmpl}" = cameraService; }
   // lib.optionalAttrs grants {
     "${unit}-grantsfs${tmpl}" = grantsFsService;
@@ -1962,6 +2062,9 @@ in
   inherit brokerName;
   brokerEntry = {
     label = "${label} (VM)";
+    # A restricted VM's relay connects as the principal: the broker ACLs this
+    # VM's sockets for it.
+    uid = if restricted then principal else null;
     netUnits = lib.optional network' netUnitPattern;
     grantPaths = if grants then "${grantPathsScript}" else null;
     camera = if camera then "${cameraCtl}" else null;

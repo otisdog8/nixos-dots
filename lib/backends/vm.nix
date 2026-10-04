@@ -41,6 +41,8 @@
   # app is unsandboxed): the VM's D-Bus proxy applies the same policy.
   dbusArgs ? null,
   flatpakInfoFile ? null,
+  # Its flatpak app id (the document portal's by-app/<appId> view).
+  appId ? null,
 }:
 let
   paths = import ../paths.nix { inherit lib; };
@@ -94,6 +96,7 @@ let
       caps
       dbusArgs
       flatpakInfoFile
+      appId
       ;
     package = if nested then nestedPkg else cfg.package;
     entries = storage.entries;

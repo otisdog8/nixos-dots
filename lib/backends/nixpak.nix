@@ -97,7 +97,7 @@ in
 {
   # The app's session-bus filter (--talk/--own/… args) and nixpak's .flatpak-info,
   # reused by the VM implementation's D-Bus proxy (lib/backends/vm.nix).
-  inherit (inner) dbusArgs flatpakInfoFile;
+  inherit (inner) dbusArgs flatpakInfoFile appId;
   package =
     if sharedGroup == null then
       perAppPackage

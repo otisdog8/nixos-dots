@@ -689,7 +689,7 @@ let
 in
 {
   # Reused by the VM implementation's D-Bus proxy (lib/backends/vm.nix).
-  inherit (innerNix) dbusArgs flatpakInfoFile;
+  inherit (innerNix) dbusArgs flatpakInfoFile appId;
   package = finalPkg;
   systemConfig = {
     systemd.tmpfiles.rules =

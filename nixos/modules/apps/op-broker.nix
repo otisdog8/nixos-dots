@@ -108,17 +108,17 @@ let
   # The VM's client (and socket, /run/op-broker/clients/<app>-vm/sock).
   vmClient = b: "${b}-vm";
 
+  # Who connects for a sandboxed app: its dedicated uid if it has one, else the
+  # user. Container: the app itself. VM: the per-VM relay, a system unit the
+  # user can't move processes into, which runs as that same uid
+  # (lib/vm/instance.nix relayService).
+  appUid = a: if apps.${a}.sandbox.dedicatedUser then "app-${a}" else user;
+  # The 1Password VM's relay (uplink mode).
+  uplinkUser = if onepw != null then appUid "onepassword" else user;
+
   browserClient = vm: b: {
     label = (cfg.labels.${b} or defaultLabels.${b}) + lib.optionalString vm " (VM)";
-    # VM: the per-VM relay runs as the user in a system unit the user can't
-    # move processes into. Container: the dedicated app uid, else the user.
-    users =
-      if vm then
-        [ user ]
-      else if apps.${b}.sandbox.dedicatedUser then
-        [ "app-${b}" ]
-      else
-        [ user ];
+    users = [ (appUid b) ];
     cgroup =
       if vm then "/system\\.slice/sandbox-vm-${lib.escapeRegex b}-relay(@[^/]*)?\\.service" else null;
   };
@@ -252,7 +252,7 @@ let
       }) clients;
       uplink = {
         socket = "${uplinkDir}/sock";
-        users = [ user ];
+        users = [ uplinkUser ];
         cgroup = "/system\\.slice/sandbox-vm-onepassword-relay\\.service";
         wait = 5;
       };
@@ -357,7 +357,7 @@ let
   )
   ++ lib.optionals opInVm [
     "d ${uplinkDir} 0710 op-broker-bridge op-broker-bridge -"
-    "a+ ${uplinkDir} - - - - u:${user}:--x"
+    "a+ ${uplinkDir} - - - - u:${uplinkUser}:--x"
   ]
   ++ lib.optional ownDisplay "d ${displayDir} 0750 ${user} op-broker -";
 

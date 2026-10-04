@@ -375,7 +375,7 @@
             principal = if dedicated then "app-${appName}" else username;
             principalGroup = if dedicated then "app-${appName}" else config.users.users.${username}.group;
             desktopSource = backendResult.package;
-            inherit (backendResult) dbusArgs flatpakInfoFile;
+            inherit (backendResult) dbusArgs flatpakInfoFile appId;
           };
 
           variants = import ./variants.nix { inherit lib pkgs; };
