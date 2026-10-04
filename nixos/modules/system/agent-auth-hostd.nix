@@ -9,8 +9,9 @@
 #     `agent-auth admin broker-key` once BROKER_SIGNING_KEY is in recusant's
 #     agent-auth/env secret. Pinned here, in an audited commit, so no network
 #     path can substitute another broker.
-# Then, per host: `agent-auth admin daemon-pair <host>` on the admin side and
-# `sudo agent-auth-hostd pair <code>` on the host.
+# Then, per host: `agent-auth admin daemon-pair <host>` on the admin side, and
+# on the host `sudo agent-auth-hostd pair`, entering the code at the prompt
+# (never as an argument: it would land in shell history).
 {
   config,
   inputs,
@@ -32,10 +33,14 @@ in
       brokerUrl = "https://agent-auth.recusant.rooty.dev";
       inherit brokerPublicKey;
     };
-    # The host's identity key: lose it and the host must pair again.
+    # The host's identity key: lose it and the host must pair again. Owned by
+    # the service's user (agent-auth's hostd module), as its tmpfiles rules and
+    # StateDirectory expect; declared root-owned here, the two would disagree.
     environment.persistence."/persist".directories = [
       {
         directory = "/var/lib/agent-auth-hostd";
+        user = "agent-auth-hostd";
+        group = "agent-auth-hostd";
         mode = "0700";
       }
     ];
