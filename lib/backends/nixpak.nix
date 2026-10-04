@@ -32,6 +32,18 @@ let
   audioMode = import ../audio-mode.nix;
   wlSecure = import ./wayland-security-context.nix pkgs;
   username = builtins.head appCfg.defaultUsernames;
+  # Folder grants and the camera while it runs (lib/broker/attach.py).
+  attachProg = (import ../broker/attach.nix pkgs).forSandbox appName;
+  camera = appCfg.capabilities.camera;
+  # Ask for the camera as the app starts (in the background, so it starts
+  # meanwhile); the broker prompts, the attach helper waits for the sandbox.
+  cameraRequest = lib.optionalString (camera && brokerOn && cfg.sandbox.vm.cameraOnLaunch) ''
+    SBX_BROKER="''${XDG_RUNTIME_DIR:-/run/user/$(${pkgs.coreutils}/bin/id -u)}/sbx-broker/${appName}.sock" \
+      ${sbxRequest}/bin/sbx-request camera --reason "${appName} was started" >/dev/null 2>&1 &
+  '';
+  sbxRequest = pkgs.writeScriptBin "sbx-request" (
+    "#!${pkgs.python3}/bin/python3 -IS\n" + builtins.readFile ../broker/request.py
+  );
 
   # A group's shared container (nixpak-group.nix): this app's command runs in it
   # when launched inside the group's projects.
@@ -62,6 +74,7 @@ let
   launcher = pkgs.writeShellScript "${appName}-wayland-secure" ''
     __wd="''${WAYLAND_DISPLAY:-}"; __rt="''${XDG_RUNTIME_DIR:-}"
     case "$__wd" in /*) __up="$__wd" ;; *) __up="$__rt/$__wd" ;; esac
+    ${cameraRequest}
     if [ -z "$__wd" ] || [ -z "$__rt" ] || [ ! -S "$__up" ]; then
       WAYLAND_DISPLAY=sandbox-${appName}-no-display exec ${inner.package}/bin/${binName} "$@"
     fi
@@ -128,6 +141,13 @@ in
     modules.sandbox.broker.sandboxes.${appName} = {
       label = "${appName} (container)";
       audio = audioMode appCfg.capabilities;
+      grantPaths = "${attachProg}";
+      camera = if camera then "${attachProg}" else null;
+    };
+    modules.sandbox.broker.attach.${appName} = lib.mkIf brokerOn {
+      inherit (inner) appId;
+      paths = true;
+      inherit camera;
     };
     # nixpak runs in the user's session, where systemd can't attach the cgroup IP
     # filter the other backends use, so only "open" is enforceable here.

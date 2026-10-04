@@ -58,6 +58,14 @@ let
   # permission check is still against that uid. (A VM shows the app the same
   # identity: lib/vm/guest.nix.)
   identity = dedicated && cfg.sandbox.appearAsUser;
+  # Folder grants (sandboxes that run as the user) and the camera while it
+  # runs (lib/broker/attach.py).
+  attachProg = (import ../broker/attach.nix pkgs).forSandbox appName;
+  camera = appCfg.capabilities.camera;
+  brokerOn = config.modules.sandbox.broker.enable;
+  sbxRequest = pkgs.writeScriptBin "sbx-request" (
+    "#!${pkgs.python3}/bin/python3 -IS\n" + builtins.readFile ../broker/request.py
+  );
   stageHome = "/run/sandbox-user-home/${appName}";
 
   co = "${pkgs.coreutils}/bin";
@@ -400,6 +408,13 @@ let
       ${acl}/setfacl -R -P -x "u:${appUser}" "$__s" 2>/dev/null || true
     done
     ${acl}/setfacl -x "u:${appUser}" "${bridgeSock}" 2>/dev/null || true
+    ${lib.optionalString camera ''
+      # Camera nodes the attach helper granted this uid (only root can undo it:
+      # the ExecStopPost run).
+      for __n in /dev/video*; do
+        [ -c "$__n" ] && ${acl}/setfacl -x "u:${appUser}" "$__n" 2>/dev/null || true
+      done
+    ''}
     ${acl}/setfacl -x "u:${appUser}" "${wlSock}" 2>/dev/null || true
     ${lib.concatMapStringsSep "\n" (p: ''
       ${acl}/setfacl -R -P -x "u:${appUser}" "${sharedHome}/${p}" 2>/dev/null || true
@@ -613,6 +628,12 @@ let
       # jrt's X — see nixos/modules/apps/xwayland-forward.md for the caveats.
       ${xhost} +SI:localuser:${appUser} >/dev/null 2>&1 || true
     ''}
+    ${lib.optionalString (camera && brokerOn && cfg.sandbox.vm.cameraOnLaunch) ''
+      # Ask for the camera as the app starts (in the background); the broker
+      # prompts, and the attach helper waits for the sandbox to be up.
+      SBX_BROKER="${jrtRuntime}/sbx-broker/${appName}.sock" \
+        ${sbxRequest}/bin/sbx-request camera --reason "${appName} was started" >/dev/null 2>&1 &
+    ''}
     __rc=0
     __started=1
     ${pkgs.systemd}/bin/systemctl start --wait ${unitName}.service || __rc=$?
@@ -713,6 +734,16 @@ in
       uid = if dedicated then appUser else null;
       netUnits = [ "${unitName}.service" ];
       audio = import ../audio-mode.nix appCfg.capabilities;
+      # A dedicated uid's sandbox takes no folders of the user's while running
+      # (as with its VM); the camera, yes.
+      grantPaths = if dedicated then null else "${attachProg}";
+      camera = if camera then "${attachProg}" else null;
+    };
+    modules.sandbox.broker.attach.${appName} = lib.mkIf brokerOn {
+      inherit appId camera;
+      appUser = if dedicated then appUser else null;
+      unit = "${unitName}.service";
+      paths = !dedicated;
     };
     modules.sandbox.dnsAllow = lib.optional (netPolicy.names != [ ]) {
       units = [ "${unitName}.service" ];

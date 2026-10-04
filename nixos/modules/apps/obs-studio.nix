@@ -33,8 +33,9 @@
       # Dedicated-uid, persistent: scenes + settings AND stream keys (.config/
       # obs-studio) run as app-obs-studio, hidden from a compromised jrt, kept across
       # reboots. Screen capture rides the PipeWire portal (cross-uid, like screenshare
-      # elsewhere); the virtual camera writes /dev/video* (bound by camera.nix, video
-      # group below). v4l2loopback itself is set up system-wide by enableVirtualCamera.
+      # elsewhere). Real cameras come on request (camera.nix); the virtual camera's
+      # output, the v4l2loopback node (/dev/video1: enableVirtualCamera's video_nr=1),
+      # is bound from the start below (video group below).
       defaultBackend = "systemd";
       storage = [
         {
@@ -50,6 +51,7 @@
           { ... }:
           {
             bubblewrap.env.QT_QPA_PLATFORM = "wayland";
+            bubblewrap.bind.dev = [ "/dev/video1" ];
           }
         )
       ];

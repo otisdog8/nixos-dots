@@ -1,9 +1,11 @@
-# Webcam/camera access via the Camera portal and direct V4L2 device nodes.
+# Webcam/camera access via the Camera portal and V4L2 device nodes, on request.
 #
-# Device nodes are bound individually (bind-try: absent ones are skipped): the
-# first two cameras (each exposes a capture + a metadata node). Kept small so
-# IR cameras, capture cards and v4l2loopback devices aren't exposed wholesale.
-# Only cameras present at app start are visible.
+# No camera at start. When the app starts (sandbox.vm.cameraOnLaunch) or asks
+# (`sbx-request camera` inside), sbx-broker asks you, and on approval the host's
+# UVC cameras are attached to the running sandbox: bound in as device nodes for
+# a container (lib/broker/attach.py; a dedicated uid also gets an ACL on them
+# until it stops), passed through over USB for a VM. Never IR cameras' other
+# nodes, capture cards or v4l2loopback devices: UVC (uvcvideo) only.
 { config, lib, ... }:
 {
   imports = [ ./xdg.nix ];
@@ -11,11 +13,5 @@
   config.app = {
     capabilities.camera = true;
     portalInterfaces = [ "Camera" ];
-
-    nixpakModules = [
-      (_: {
-        bubblewrap.bind.dev = map (n: "/dev/video${toString n}") (lib.range 0 3);
-      })
-    ];
   };
 }

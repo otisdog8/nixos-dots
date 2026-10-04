@@ -109,6 +109,23 @@ let
     "#!${python}\n" + builtins.readFile ../../../lib/broker/request.py
   );
 
+  # The root side of container grants and camera attach (lib/broker/attach.py).
+  attach = import ../../../lib/broker/attach.nix pkgs;
+  hostUser = config.users.users.${user};
+  attachConfig = pkgs.writeText "sbx-attach.json" (
+    builtins.toJSON {
+      user = {
+        name = user;
+        uid = hostUser.uid;
+        gid = config.users.groups.${hostUser.group}.gid;
+        home = hostUser.home;
+        runtimeDir = "/run/user/${toString hostUser.uid}";
+      };
+      setfacl = "${pkgs.acl}/bin/setfacl";
+      sandboxes = cfg.attach;
+    }
+  );
+
   brokerConfig = pkgs.writeText "sbx-broker.json" (
     builtins.toJSON {
       prompt = "${prompt}/bin/sbx-prompt";
@@ -156,6 +173,44 @@ in
       type = lib.types.listOf ruleType;
       default = [ ];
       description = "Rules for every sandbox, after its own.";
+    };
+
+    attach = lib.mkOption {
+      default = { };
+      description = ''
+        Containers the root attach helper (lib/broker/attach.py) may bind into
+        while they run: a granted folder (`paths`, only for sandboxes that run
+        as the user) and the host's UVC cameras (`camera`). Filled in by the
+        container backends; their broker entries point grantPaths/camera at it.
+      '';
+      type = lib.types.attrsOf (
+        lib.types.submodule {
+          options = {
+            appId = lib.mkOption {
+              type = lib.types.str;
+              description = "The sandbox's flatpak app id (its /.flatpak-info), how its instances are recognised.";
+            };
+            appUser = lib.mkOption {
+              type = lib.types.nullOr lib.types.str;
+              default = null;
+              description = "A dedicated uid the sandbox runs as (its runtime dir is /run/<appUser>); null: the user.";
+            };
+            unit = lib.mkOption {
+              type = lib.types.nullOr lib.types.str;
+              default = null;
+              description = "The system unit its processes must be in (systemd backend).";
+            };
+            paths = lib.mkOption {
+              type = lib.types.bool;
+              default = false;
+            };
+            camera = lib.mkOption {
+              type = lib.types.bool;
+              default = false;
+            };
+          };
+        }
+      );
     };
 
     sandboxes = lib.mkOption {
@@ -261,6 +316,56 @@ in
         ExecStart = "${brokerPkg}/bin/sbx-broker ${brokerConfig}";
         Restart = "on-failure";
         RestartSec = 2;
+      };
+    };
+
+    # The attach helper: root, one process per request, on a socket only the
+    # user can connect to. Root because cloning a host mount into another
+    # namespace needs it; what it agrees to do is in attach.py's header.
+    systemd.sockets.sbx-attach = lib.mkIf (cfg.attach != { }) {
+      description = "Sandbox attach helper (folders and cameras into running containers)";
+      wantedBy = [ "sockets.target" ];
+      listenStreams = [ "/run/sbx-attach.sock" ];
+      socketConfig = {
+        Accept = true;
+        SocketUser = user;
+        SocketMode = "0600";
+        MaxConnections = 16;
+      };
+    };
+    systemd.services."sbx-attach@" = lib.mkIf (cfg.attach != { }) {
+      description = "Sandbox attach request";
+      serviceConfig = {
+        ExecStart = "${attach.daemon}/bin/sbx-attach ${attachConfig}";
+        StandardInput = "socket";
+        StandardOutput = "journal";
+        StandardError = "journal";
+        TimeoutSec = 30;
+        # open_tree/setns/move_mount, setns's chroot check, dropping to the user
+        # to open the source, reading other uids' /proc entries and runtime
+        # dirs, pidfd signal 0, the device ACL, chown of new mount points.
+        CapabilityBoundingSet = [
+          "CAP_SYS_ADMIN"
+          "CAP_SYS_CHROOT"
+          "CAP_SETUID"
+          "CAP_SETGID"
+          "CAP_DAC_READ_SEARCH"
+          "CAP_DAC_OVERRIDE"
+          "CAP_SYS_PTRACE"
+          "CAP_KILL"
+          "CAP_FOWNER"
+          "CAP_CHOWN"
+        ];
+        NoNewPrivileges = true;
+        # Not ProtectSystem/ProtectHome/PrivateMounts: sources are cloned from
+        # this process's own mount namespace, which must be the host's as is
+        # (a read-only remount here would make every grant read-only), nor
+        # anything else that gives the unit its own mount namespace.
+        RestrictAddressFamilies = [ "AF_UNIX" ];
+        LockPersonality = true;
+        RestrictRealtime = true;
+        SystemCallArchitectures = "native";
+        LimitCORE = 0;
       };
     };
 
