@@ -152,7 +152,7 @@ let
       fi
     fi
 
-    # Folder grants (lib/vm/grants.py): the host's allowlisted view of the home,
+    # Folder grants (lib/vm/grants.py): the host's view of what was granted,
     # behind a root-only directory; granted folders are bound out of it by
     # sbx-grantd at their real paths.
     if [ "$(jq '.grants' "$spec")" = true ]; then

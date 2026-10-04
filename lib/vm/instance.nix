@@ -35,12 +35,12 @@
 #     filtered xdg-dbus-proxy with the (first) member's flatpak identity (portals,
 #     notifications, OpenURI), both over a vsock relay that answers only this
 #     VM's CID.
-#   - folder grants (VMs that run as the user): a second virtio-fs share of the
-#     whole home behind crosvm's dynamic path allowlist, which starts empty
-#     (lib/vm/grants.py). The broker's grant-path, and group launchers started in
-#     an undeclared folder of ~ (grantCwd), add a folder to the allowlist, and a
-#     root agent in the guest binds it at its real path. Grants last until the
-#     VM stops; "read-only" is the guest's bind only (the share allows writes).
+#   - folder grants (VMs that run as the user): a second virtio-fs share, of an
+#     empty view (lib/vm/grants.py). The broker's grant-path, and group launchers
+#     started in an undeclared folder of ~ (grantCwd), have the root attach
+#     helper (lib/broker/attach.py) mount the folder into that device's jail,
+#     and a root agent in the guest binds it at its real path. Grants last until
+#     the VM stops; "read-only" is a read-only mount on the host side.
 #   - documents → the document portal's by-app view for the VM's flatpak
 #     identity, shared at $XDG_RUNTIME_DIR/doc as flatpak binds it, so portal
 #     file-chooser results (and drag and drop) resolve inside the guest.
@@ -239,7 +239,8 @@ let
   camera = anyCap "camera";
   grantCwd' = grantCwd && grants;
   grantsPkg = import ./grants.nix pkgs;
-  crosvmFs = import ./crosvm-fs.nix pkgs;
+  # The root side of folder grants (lib/broker/attach.py, op vm-path).
+  attachClient = "${(import ../broker/attach.nix pkgs).client}/bin/sbx-attach-client";
   # Other modules' services (sandbox.vm.relays), merged across members.
   extraRelays = lib.foldl' (a: m: a // m.relays) { } members;
   builtinRelays = [
@@ -617,6 +618,8 @@ let
     ''}
     ${lib.optionalString grants ''
       ${co}/install -d -m 0700 -o ${username} -g ${hostUser.group} "$rt/grants"
+      # What the grants share serves: empty until a grant is mounted into it.
+      ${co}/install -d -m 0700 -o ${username} -g ${hostUser.group} "$rt/grants/view"
     ''}
     ${lib.optionalString docs ''
       ${co}/install -d -m 0711 -o ${username} -g ${hostUser.group} "$rt/docs"
@@ -892,35 +895,35 @@ let
     )
   );
 
-  # The user: the grants share, the user's whole home behind crosvm's dynamic
-  # path allowlist, which starts empty (the guest sees nothing through it until
-  # a folder is granted). Jailed like crosvm's other devices (user/pid/mount/net
-  # namespaces, pivot_root into the home, seccomp).
+  # The user: the grants share, an empty view ($rt/grants/view) that granted
+  # folders are mounted into, by root, inside this device's own jail (sbx-attach
+  # vm-path). The device never holds the rest of the user's home. Jailed like
+  # crosvm's other devices (user/pid/mount/net namespaces, pivot_root into the
+  # view, seccomp); that jail root is how sbx-attach finds it.
   grantsFsScript = pkgs.writeShellScript "${unit}-grantsfs" ''
     set -euo pipefail
     dir="''${1:-}"
     ${idPrelude}
     eu="$(${co}/id -u)"
     eg="$(${co}/id -g)"
-    ${co}/rm -f "$rt/grants/fs.sock" "$rt/grants/allow.sock"
-    exec ${crosvmFs}/bin/crosvm device fs \
+    ${co}/rm -f "$rt/grants/fs.sock"
+    exec ${pkgs.crosvm}/bin/crosvm device fs \
       --socket-path "$rt/grants/fs.sock" \
-      --allowlist-socket-path "$rt/grants/allow.sock" \
       --tag sbx-grants \
-      --shared-dir ${home} \
+      --shared-dir "$rt/grants/view" \
       --cfg cache=auto,timeout=1,negative_timeout=0,posix_acl=false,security_ctx=false \
       --uid "$eu" --gid "$eg" \
       --uid-map "$eu $eu 1" --gid-map "$eg $eg 1"
   '';
 
-  # The user: takes grant requests (from the launchers and the broker) and has
-  # the guest agent mount what the allowlist now lets through.
+  # The user: takes grant requests (from the launchers and the broker), has
+  # sbx-attach mount each folder into the share, and the guest agent bind it.
   grantsHubScript = pkgs.writeShellScript "${unit}-grants" ''
     set -euo pipefail
     dir="''${1:-}"
     ${idPrelude}
-    for _ in $(${co}/seq 1 200); do [ -S "$rt/grants/allow.sock" ] && break; ${co}/sleep 0.05; done
-    exec ${grantsPkg}/bin/sbx-grants hub --home ${home} --dir "$rt/grants"
+    exec ${grantsPkg}/bin/sbx-grants hub --home ${home} --dir "$rt/grants" \
+      --attach ${attachClient} --vm ${lib.escapeShellArg name}
   '';
 
   # Documents: the document portal's by-app view for this VM's flatpak identity,
@@ -1846,11 +1849,11 @@ let
         NoNewPrivileges = true;
         CapabilityBoundingSet = "";
         AmbientCapabilities = "";
-        # Only this user's home is visible (it's the share); the rest of the
-        # host is read-only and the other data trees hidden.
+        # Nothing of /home: the share is the view in base, and granted folders
+        # arrive inside the jail. The rest of the host is read-only and the
+        # other data trees hidden.
         ProtectSystem = "strict";
         ProtectHome = "tmpfs";
-        BindPaths = [ home ];
         ReadWritePaths = [ base ];
         InaccessiblePaths = [
           "-/persist"
@@ -2066,6 +2069,9 @@ in
 
   # The broker's view of this VM (modules.sandbox.broker.sandboxes.<brokerName>).
   inherit brokerName;
+  # For the attach helper (modules.sandbox.broker.attachVms): this VM takes
+  # folder grants.
+  grantsVm = if grants then name else null;
   brokerEntry = {
     label = "${label} (VM)";
     # A restricted VM's relay connects as the principal: the broker ACLs this

@@ -296,6 +296,9 @@ in
     modules.sandbox.broker.sandboxes = lib.mapAttrs' (
       _: i: lib.nameValuePair i.brokerName i.brokerEntry
     ) cfg.groupInstances;
+    modules.sandbox.broker.attachVms = lib.filter (n: n != null) (
+      map (i: i.grantsVm) (lib.attrValues cfg.groupInstances)
+    );
 
     environment.systemPackages = [ sandboxVmCli ];
 

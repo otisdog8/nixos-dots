@@ -107,5 +107,38 @@ class Mountpoint(unittest.TestCase):
         self.assertEqual(attach.flatpak_name("[Application]\nname=x\n[Instance]\nname=y\n"), "x")
 
 
+class VmPath(unittest.TestCase):
+    cfg = {"user": {"uid": os.getuid(), "home": "/home/u"}, "vms": ["blender"]}
+
+    def test_unknown_vm(self):
+        with self.assertRaises(attach.Refused):
+            attach.op_vm_path(self.cfg, {"op": "vm-path", "vm": "other", "rtdir": "/run/sandbox-vm/other/main", "path": "/home/u/x"})
+
+    def test_rtdir_outside_the_vm(self):
+        for rtdir in ("/run/sandbox-vm/other/main", "/run/sandbox-vm/blender/../other/main", "/tmp/x"):
+            with self.assertRaises(attach.Refused):
+                attach.vm_targets(self.cfg, "blender", rtdir, wait=0)
+
+
+class Hub(unittest.TestCase):
+    def test_share_asks_the_attach_helper(self):
+        spec = importlib.util.spec_from_file_location("grants", os.path.join(HERE, "..", "..", "vm", "grants.py"))
+        grants = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(grants)
+        with tempfile.TemporaryDirectory() as d:
+            log = os.path.join(d, "args")
+            fake = os.path.join(d, "attach")
+            with open(fake, "w") as f:
+                f.write(f"#!/bin/sh\nprintf '%s\\n' \"$@\" > {log}\n")
+            os.chmod(fake, 0o755)
+            hub = grants.Hub("/home/u", "/run/sandbox-vm/blender/main/grants", fake, "blender")
+            hub.share("/home/u/Documents/x", "ro")
+            with open(log) as f:
+                self.assertEqual(
+                    f.read().split("\n")[:-1],
+                    ["vm", "blender", "/run/sandbox-vm/blender/main", "/home/u/Documents/x", "ro"],
+                )
+
+
 if __name__ == "__main__":
     unittest.main()

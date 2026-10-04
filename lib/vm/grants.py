@@ -1,11 +1,12 @@
 """Give a running sandbox VM more of the user's folders (temporary grants).
 
-The VM has a virtio-fs share of the user's home served by `crosvm device fs`
-with a dynamic allowlist that starts EMPTY: the guest sees nothing through it
-until a path is added. A grant adds the path to that allowlist, then asks the
-guest to bind it at the same absolute path.
+The VM has a virtio-fs share served by `crosvm device fs`, of an EMPTY view
+(RTDIR/view): the device never holds the user's home. A grant has the root
+attach helper (lib/broker/attach.py, op vm-path) bind the folder into that
+device's jail at its path relative to the home, then asks the guest to bind it
+at the same absolute path.
 
-  sbx-grants hub --home DIR --dir RTDIR
+  sbx-grants hub --home DIR --dir RTDIR --attach CLIENT --vm NAME
       Host, as the user, one per VM. Holds the guest agent's connection
       (RTDIR/guest.sock, reached through the vsock relay as service "grants")
       and serves requests on RTDIR/ctl.sock.
@@ -16,9 +17,8 @@ guest to bind it at the same absolute path.
       Guest, as root: connect to the hub through the relay and perform the
       mounts it asks for (bind DIR/<relative> onto the real path).
 
-The allowlist is all-or-nothing (an allowed path is readable AND writable
-through the share); "ro" only makes the guest's bind read-only, which guest
-root could undo. Removing a grant is not supported: it lasts until the VM stops.
+"ro" makes the host-side mount read-only (and the guest's bind). Removing a
+grant is not supported: it lasts until the VM stops.
 """
 
 import argparse
@@ -49,9 +49,11 @@ def read_line(f):
 
 # ── Host: the hub ────────────────────────────────────────────────────────────
 class Hub:
-    def __init__(self, home, rtdir):
+    def __init__(self, home, rtdir, attach, vm):
         self.home = os.path.realpath(home)
         self.rtdir = rtdir
+        self.attach = attach
+        self.vm = vm
         self.guest = None  # (sock, file)
         self.guest_ready = threading.Condition()
         self.lock = threading.Lock()  # one grant at a time
@@ -68,14 +70,15 @@ class Hub:
                 self.guest_ready.notify_all()
             log("guest agent connected")
 
-    def allowlist_add(self, rel):
-        s = socket.socket(socket.AF_UNIX, socket.SOCK_SEQPACKET | socket.SOCK_CLOEXEC)
-        s.connect(os.path.join(self.rtdir, "allow.sock"))
-        s.send(json.dumps({"AddPaths": {"paths": [rel]}}).encode())
-        answer = json.loads(s.recv(65536))
-        s.close()
-        if answer != "Ok":
-            raise RuntimeError(f"allowlist: {answer}")
+    def share(self, real, mode):
+        # RTDIR is <launch runtime dir>/grants; the helper wants the launch's.
+        r = subprocess.run(
+            [self.attach, "vm", self.vm, os.path.dirname(self.rtdir), real, mode],
+            capture_output=True,
+            text=True,
+        )
+        if r.returncode != 0:
+            raise RuntimeError(r.stderr.strip() or "couldn't share the folder with the VM")
 
     def grant(self, path, mode):
         real = os.path.realpath(path)
@@ -85,7 +88,7 @@ class Hub:
         with self.lock:
             if (real, mode) in self.granted:
                 return
-            self.allowlist_add(rel)
+            self.share(real, mode)
             with self.guest_ready:
                 if not self.guest_ready.wait_for(lambda: self.guest is not None, timeout=30):
                     raise RuntimeError("the VM's grant agent isn't connected")
@@ -128,7 +131,7 @@ def listen(path):
 
 
 def run_hub(args):
-    hub = Hub(args.home, args.dir)
+    hub = Hub(args.home, args.dir, args.attach, args.vm)
     threading.Thread(target=hub.accept_guest, daemon=True).start()
     hub.serve_ctl()
 
@@ -204,6 +207,8 @@ def main():
     h = sub.add_parser("hub")
     h.add_argument("--home", required=True)
     h.add_argument("--dir", required=True)
+    h.add_argument("--attach", required=True, help="sbx-attach-client")
+    h.add_argument("--vm", required=True, help="the VM instance's name")
     r = sub.add_parser("request")
     r.add_argument("dir")
     r.add_argument("path")

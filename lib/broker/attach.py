@@ -11,6 +11,7 @@ Accept=yes, stdin = the connection). The socket is the user's alone (0600), and
 the peer is checked again here. One JSON request line, one JSON reply line:
   {"op": "path", "sandbox": NAME, "path": "/home/<user>/...", "write": bool}
   {"op": "camera", "sandbox": NAME}
+  {"op": "vm-path", "vm": NAME, "rtdir": "/run/sandbox-vm/NAME/ID", "path": ..., "write": bool}
   → {"ok": true, "attached": N} | {"ok": false, "error": "..."}
 
 What it will do, whoever asks (the user is the only one who can):
@@ -21,6 +22,12 @@ What it will do, whoever asks (the user is the only one who can):
     every such file anyway; this changes what one of their own sandboxes sees.
     Read-only is enforced on the mount (MOUNT_ATTR_RDONLY), but like a VM's
     read-only grant it's a guard, not a boundary: the sandbox runs as the user.
+  - vm-path: the same, for a sandbox VM's folder grants: into the VM's grants
+    virtio-fs device (`crosvm device fs`, run as the user), whose jail root is
+    the launch's empty grants view ($rtdir/grants/view). The folder is mounted
+    at its path relative to the user's home inside that view, which the guest
+    agent then binds at the real path (lib/vm/grants.py). So that device never
+    holds the user's home, only what was granted.
   - camera: the host's UVC capture devices (uvcvideo; never loopback or capture
     cards) as device nodes at their own paths, into any configured sandbox. A
     dedicated-uid sandbox also gets an ACL for its uid on those nodes, which its
@@ -364,6 +371,81 @@ def op_path(cfg, sb, name, req):
         os.close(tree)
 
 
+def vm_targets(cfg, vm, rtdir, wait=10.0):
+    """pidfds of the grants fs device of this VM launch: a process of the user,
+    in a user namespace the user owns, whose root IS the launch's grants view."""
+    user = cfg["user"]
+    base = f"/run/sandbox-vm/{vm}/"
+    if os.path.realpath(rtdir) + "/" != rtdir.rstrip("/") + "/" or not rtdir.startswith(base):
+        raise Refused("bad VM runtime dir")
+    view = os.path.join(rtdir, "grants", "view")
+    st = os.lstat(view)
+    if not stat.S_ISDIR(st.st_mode):
+        raise Refused("no grants view")
+    want = (st.st_dev, st.st_ino)
+    deadline = time.monotonic() + wait
+    while True:
+        out = []
+        for d in os.listdir("/proc"):
+            if not d.isdigit():
+                continue
+            pid = int(d)
+            try:
+                r = os.stat(f"/proc/{pid}/root")
+                if (r.st_dev, r.st_ino) != want:
+                    continue
+                pidfd = os.pidfd_open(pid)
+            except OSError:
+                continue
+            try:
+                if proc_uid(pid) != user["uid"] or userns_owner(pid) != user["uid"]:
+                    raise Refused("not the user's")
+                libc_pidfd_signal(pidfd)
+                out.append(pidfd)
+            except (Refused, OSError) as e:
+                log(f"{vm}: skipping pid {pid}: {e}")
+                os.close(pidfd)
+        if out or time.monotonic() >= deadline:
+            return out
+        time.sleep(0.25)
+
+
+def op_vm_path(cfg, req):
+    vm = req.get("vm")
+    rtdir = req.get("rtdir")
+    if vm not in cfg.get("vms", []) or not isinstance(rtdir, str):
+        raise Refused("unknown VM")
+    user = cfg["user"]
+    path = req.get("path")
+    if not isinstance(path, str) or not path.startswith("/") or "\0" in path:
+        raise Refused("path must be absolute")
+    fd = open_as_user(user, path)
+    try:
+        real = os.readlink(f"/proc/self/fd/{fd}")
+        if not real.startswith(user["home"] + "/"):
+            raise Refused("only folders inside your home can be granted")
+        tree = open_tree(fd, recursive=True)
+    finally:
+        os.close(fd)
+    try:
+        attr = MOUNT_ATTR_NOSUID | MOUNT_ATTR_NODEV
+        if not req.get("write"):
+            attr |= MOUNT_ATTR_RDONLY
+        mount_setattr(tree, attr)
+        pidfds = vm_targets(cfg, vm, rtdir)
+        if not pidfds:
+            raise Refused(f"{vm}'s grants share isn't running")
+        rel = real[len(user["home"]) :]
+        for pidfd in pidfds:
+            try:
+                attach(pidfd, tree, rel, True, user["uid"])
+            finally:
+                os.close(pidfd)
+        return len(pidfds)
+    finally:
+        os.close(tree)
+
+
 def uvc_nodes():
     nodes = []
     base = "/sys/class/video4linux"
@@ -444,6 +526,10 @@ def main():
     req = None
     try:
         req = json.loads(data)
+        if req.get("op") == "vm-path":
+            n = op_vm_path(cfg, req)
+            log(f"vm {req.get('vm')}: {req.get('path')} → {n} device(s)")
+            return reply({"ok": True, "attached": n})
         name = req.get("sandbox")
         sb = cfg["sandboxes"].get(name) if isinstance(name, str) else None
         if sb is None:
@@ -463,9 +549,12 @@ def main():
 
 
 def client():
-    """sbx-attach-client SANDBOX path PATH rw|ro | SANDBOX attach (camera)."""
+    """sbx-attach-client SANDBOX PATH rw|ro | SANDBOX attach (camera)
+    | vm NAME RTDIR PATH rw|ro (a VM's folder grant)."""
     a = sys.argv[1:]
-    if len(a) == 3 and a[2] in ("rw", "ro"):
+    if len(a) == 5 and a[0] == "vm" and a[4] in ("rw", "ro"):
+        req = {"op": "vm-path", "vm": a[1], "rtdir": a[2], "path": a[3], "write": a[4] == "rw"}
+    elif len(a) == 3 and a[2] in ("rw", "ro"):
         req = {"op": "path", "sandbox": a[0], "path": a[1], "write": a[2] == "rw"}
     elif len(a) == 2 and a[1] == "attach":
         req = {"op": "camera", "sandbox": a[0]}

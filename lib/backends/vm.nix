@@ -215,6 +215,9 @@ in
     modules.sandbox.broker.sandboxes = lib.optionalAttrs (group == null) {
       ${instance.brokerName} = instance.brokerEntry;
     };
+    modules.sandbox.broker.attachVms = lib.optional (
+      group == null && instance.grantsVm != null
+    ) instance.grantsVm;
 
     warnings =
       lib.optional (cfg.sandbox.mode == "vm" && unsupported != [ ])

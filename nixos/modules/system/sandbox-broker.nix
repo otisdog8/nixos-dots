@@ -123,6 +123,7 @@ let
       };
       setfacl = "${pkgs.acl}/bin/setfacl";
       sandboxes = cfg.attach;
+      vms = cfg.attachVms;
     }
   );
 
@@ -211,6 +212,12 @@ in
           };
         }
       );
+    };
+
+    attachVms = lib.mkOption {
+      type = lib.types.listOf lib.types.str;
+      default = [ ];
+      description = "Sandbox VM instances whose folder grants the attach helper mounts (into their grants share's jail).";
     };
 
     sandboxes = lib.mkOption {
@@ -322,7 +329,7 @@ in
     # The attach helper: root, one process per request, on a socket only the
     # user can connect to. Root because cloning a host mount into another
     # namespace needs it; what it agrees to do is in attach.py's header.
-    systemd.sockets.sbx-attach = lib.mkIf (cfg.attach != { }) {
+    systemd.sockets.sbx-attach = lib.mkIf (cfg.attach != { } || cfg.attachVms != [ ]) {
       description = "Sandbox attach helper (folders and cameras into running containers)";
       wantedBy = [ "sockets.target" ];
       listenStreams = [ "/run/sbx-attach.sock" ];
@@ -333,7 +340,7 @@ in
         MaxConnections = 16;
       };
     };
-    systemd.services."sbx-attach@" = lib.mkIf (cfg.attach != { }) {
+    systemd.services."sbx-attach@" = lib.mkIf (cfg.attach != { } || cfg.attachVms != [ ]) {
       description = "Sandbox attach request";
       serviceConfig = {
         ExecStart = "${attach.daemon}/bin/sbx-attach ${attachConfig}";
