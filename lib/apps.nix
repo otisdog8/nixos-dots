@@ -279,7 +279,8 @@
               systemd + dedicatedUser only: bind jrt's ~/Downloads/${appName} in AS the
               app's ~/Downloads, so saved files land in a host-visible per-app subdir of
               jrt's real Downloads (on /large, persisted) instead of the app's hidden
-              home. The launcher ACL-grants the app uid on that subdir.
+              home (or, in its VM, the guest's tmpfs). The launcher ACL-grants the app
+              uid on that subdir. Container and VM mode.
             '';
           };
 

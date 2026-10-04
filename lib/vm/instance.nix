@@ -357,11 +357,23 @@ let
   bindSources = lib.unique (
     map (b: sourceOf b.path) (lib.filter (b: !(paths.isPwdRelative b.path)) bindReqs)
   );
-  binds = lib.imap0 (i: source: {
-    index = i;
-    inherit source;
-    ro = lib.all (b: !(paths.isPwdRelative b.path) -> sourceOf b.path != source || b.ro) bindReqs;
-  }) bindSources;
+  # A dedicated app's shared downloads (sandbox.sharedDownloads, as in its
+  # container): the user's ~/Downloads/<app>, at ~/Downloads in the guest. The
+  # launcher grants the VM's uid on it (ACLs, like the container launcher's).
+  downloadsMembers = lib.filter (m: (m.downloads or null) != null) members;
+  downloadsDir = if downloadsMembers == [ ] then null else "${home}/Downloads/${(lib.head downloadsMembers).downloads}";
+  bindItems =
+    map (source: {
+      inherit source;
+      target = source;
+      ro = lib.all (b: !(paths.isPwdRelative b.path) -> sourceOf b.path != source || b.ro) bindReqs;
+    }) bindSources
+    ++ lib.optional (downloadsDir != null) {
+      source = downloadsDir;
+      target = "${home}/Downloads";
+      ro = false;
+    };
+  binds = lib.imap0 (i: b: b // { index = i; }) bindItems;
   projectDirs = map (p: sourceOf (expandHome p)) projects;
 
   # One BindPaths= entry: "SRC":"DST". systemd splits source and destination on
@@ -383,10 +395,7 @@ let
       instance = name;
       inherit tiers x11;
       entries = map (e: { inherit (e) tier path; }) entries;
-      binds = map (b: {
-        inherit (b) index;
-        target = b.source;
-      }) binds;
+      binds = map (b: { inherit (b) index target; }) binds;
       cwd = perCwd;
       inherit grants fido docs;
       # Which GPU/display stack the guest brings up (guest-graphics.nix).
@@ -1333,6 +1342,15 @@ let
         }
       }
 
+      ${lib.optionalString (downloadsDir != null && principal != username) ''
+        # Shared downloads: the VM's uid (${principal}) reads and writes the
+        # folder, and what it saves stays usable (default ACL), as for the
+        # container (lib/backends/systemd.nix). Set as the user, who owns it.
+        if [ -d ${lib.escapeShellArg downloadsDir} ] && [ ! -L ${lib.escapeShellArg downloadsDir} ]; then
+          ${pkgs.acl}/bin/setfacl -R -m "u:${principal}:rwX" ${lib.escapeShellArg downloadsDir} 2>/dev/null || true
+          ${pkgs.acl}/bin/setfacl -d -m "u:${principal}:rwX" ${lib.escapeShellArg downloadsDir} 2>/dev/null || true
+        fi
+      ''}
       if ! ${systemctl} start "$unit"; then
         echo "${member.bin}: could not start $unit (see: journalctl -u '$unit')" >&2
         finish 1
@@ -2154,6 +2172,10 @@ in
     {
       assertion = projects == [ ] || principal == username;
       message = "sandbox VM '${name}': sharing projects needs the VM to run as ${username}.";
+    }
+    {
+      assertion = lib.length downloadsMembers <= 1;
+      message = "sandbox VM '${name}': only one member can have sandbox.sharedDownloads (it becomes the guest's ~/Downloads): ${lib.concatMapStringsSep ", " (m: m.appName) downloadsMembers}.";
     }
     {
       assertion = lib.length entryPaths == lib.length (lib.unique entryPaths);

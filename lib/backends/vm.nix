@@ -100,6 +100,9 @@ let
       ;
     package = if nested then nestedPkg else cfg.package;
     inherit (appCfg) environment;
+    # Shared downloads (sandbox.sharedDownloads; dedicated uids, as for the
+    # container): the subfolder of the user's ~/Downloads that is its ~/Downloads.
+    downloads = if cfg.sandbox.sharedDownloads && principal != username then appName else null;
     entries = storage.entries;
     x11Forward = cfg.sandbox.x11Forward;
     # May ask the ScreenCast portal (features/screen-capture.nix): its VM gets a
