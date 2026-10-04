@@ -127,6 +127,7 @@ let
   ];
   runScript = pkgs.writeShellScript "${unit}-run" ''
     set -euo pipefail
+    ${core.hardening.vsockNsCheck}
     for _ in $(${co}/seq 1 200); do [ -S ${rt}/net/passt.sock ] && break; ${co}/sleep 0.05; done
     if [ ! -S ${rt}/net/passt.sock ]; then
       echo "${unit}: passt never created its socket; see the journal of ${unit}-net" >&2

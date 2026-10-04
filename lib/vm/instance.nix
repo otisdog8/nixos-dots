@@ -681,6 +681,7 @@ let
   );
   runScript = pkgs.writeShellScript "${unit}-run" ''
     set -euo pipefail
+    ${core.hardening.vsockNsCheck}
     dir="''${1:-}"
     ${idPrelude}
     eu="$(${co}/id -u)"
