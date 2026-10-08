@@ -197,7 +197,17 @@ in
   users = {
     mutableUsers = false;
     allowNoPasswordLogin = true;
-    users.root.hashedPassword = "!";
+    # "*", not "!": the only way in is root's key over vsock SSH, and sshd
+    # refuses key logins for locked accounts.
+    users.root.hashedPassword = "*";
+    # sshd is run by hand (agent-vm-sshd@), not services.openssh, so nothing
+    # else creates its privilege separation user.
+    users.sshd = {
+      isSystemUser = true;
+      group = "sshd";
+      description = "SSH privilege separation user";
+    };
+    groups.sshd = { };
   };
   security.sudo.enable = false;
   # Project users are added at run time by sandboxd as userdb records, kept on
