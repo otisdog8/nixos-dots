@@ -1838,11 +1838,11 @@
     "virtio-nvgpu": {
       "flake": false,
       "locked": {
-        "lastModified": 1790824178,
-        "narHash": "sha256-fNkEY1FUBhRhOmjMKH+l2mYHcmmguTjiOxUQFbTKBRE=",
+        "lastModified": 1791463563,
+        "narHash": "sha256-eWJCCosjNMN5bnnSRMs2xEcHp0Ep+V8MbV+sGnrZttw=",
         "owner": "otisdog8",
         "repo": "virtio-nvgpu",
-        "rev": "f78961ba3414ed44222f732294ef9a1d9840d5a9",
+        "rev": "521063131922c085c7a8b960cfcc05bee8b78d58",
         "type": "github"
       },
       "original": {
