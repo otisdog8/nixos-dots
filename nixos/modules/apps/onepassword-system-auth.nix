@@ -82,6 +82,10 @@ in
               unlock
               "--action"
               cli
+              # Straight to the host relay, from a privileged port: the guest
+              # relay's /run/sbx/broker.sock is the guest user's to replace.
+              "--broker"
+              "vsock"
             ];
             root = true;
           };

@@ -12,8 +12,12 @@ root in the guest, fills that gap by asking the HOST user instead:
     connection per registration, so polkitd drops exactly that registration
     when it closes. Processes are found by scanning /proc; dead ones are dropped.
   - polkitd calls BeginAuthentication on it for those processes only. For an
-    action in --action, it asks the host through the sandbox broker's socket
-    ({"op": "authenticate", "action": ...} on /run/sbx/broker.sock). The host
+    action in --action, it asks the host through the sandbox broker
+    ({"op": "authenticate", "action": ...}). With --broker vsock (the VMs) it
+    dials the host's vsock relay itself, from a privileged port, rather than
+    the guest relay's /run/sbx/broker.sock: that socket and the relay are the
+    guest user's, who could otherwise stand in for the host and answer
+    "granted". The host
     broker has the user authenticate with THEIR polkit agent (password,
     fingerprint: whatever the host's PAM polkit-1 stack asks) for a host action
     the host config maps this one to, and answers granted/denied.
@@ -28,10 +32,13 @@ decides, and only for the actions its config maps for this VM.
 """
 
 import argparse
+import errno
+import fcntl
 import json
 import os
 import queue
 import socket
+import struct
 import sys
 import threading
 import time
@@ -58,6 +65,8 @@ ERR_FAILED = "org.freedesktop.PolicyKit1.Error.Failed"
 ERR_CANCELLED = "org.freedesktop.PolicyKit1.Error.Cancelled"
 MAX_AGENTS = 64
 BROKER_TIMEOUT = 330
+HOST_CID = 2
+IOCTL_VM_SOCKETS_GET_LOCAL_CID = 0x7B9
 
 
 def log(msg):
@@ -101,14 +110,47 @@ def scan(uid, names):
 # ── Host side ────────────────────────────────────────────────────────────────
 
 
+def local_cid():
+    with open("/dev/vsock", "rb") as f:
+        return struct.unpack("I", fcntl.ioctl(f, IOCTL_VM_SOCKETS_GET_LOCAL_CID, b"\0" * 4))[0]
+
+
+def connect_broker(broker):
+    """A connection to the host broker: "vsock" dials the host relay directly
+    (port = this VM's CID, as the guest relay does) from a port below 1024,
+    which only the guest's root can bind; anything else is a unix socket."""
+    if broker != "vsock":
+        s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM | socket.SOCK_CLOEXEC)
+        s.settimeout(1.0)
+        s.connect(broker)
+        return s
+    s = socket.socket(socket.AF_VSOCK, socket.SOCK_STREAM | socket.SOCK_CLOEXEC)
+    try:
+        for port in range(1023, 511, -1):
+            try:
+                s.bind((socket.VMADDR_CID_ANY, port))
+                break
+            except OSError as e:
+                if e.errno != errno.EADDRINUSE:
+                    raise
+        else:
+            raise OSError(errno.EADDRINUSE, "no free privileged vsock port")
+        s.settimeout(1.0)
+        s.connect((HOST_CID, local_cid()))
+        s.sendall(b"broker\n")
+    except BaseException:
+        s.close()
+        raise
+    return s
+
+
 def ask_host(broker, action, cancelled):
     """Have the host user authenticate for `action`. True when granted. The
     connection is closed early when polkit cancels (the host broker then
     cancels the user's dialog)."""
-    s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM | socket.SOCK_CLOEXEC)
-    s.settimeout(1.0)
+    s = None
     try:
-        s.connect(broker)
+        s = connect_broker(broker)
         s.sendall(json.dumps({"op": "authenticate", "action": action}).encode() + b"\n")
         buf = b""
         deadline = time.monotonic() + BROKER_TIMEOUT
@@ -138,7 +180,8 @@ def ask_host(broker, action, cancelled):
     except OSError as e:
         return False, f"host broker unreachable: {e.strerror or e}"
     finally:
-        s.close()
+        if s is not None:
+            s.close()
 
 
 # ── The agent ────────────────────────────────────────────────────────────────
@@ -314,7 +357,11 @@ def main(argv=None):
     ap.add_argument("--user", required=True, help="the guest user whose processes are served")
     ap.add_argument("--exe", action="append", required=True, help="executable basename to serve (repeatable)")
     ap.add_argument("--action", action="append", required=True, help="polkit action to handle (repeatable)")
-    ap.add_argument("--broker", default="/run/sbx/broker.sock")
+    ap.add_argument(
+        "--broker",
+        default="/run/sbx/broker.sock",
+        help='the broker\'s unix socket, or "vsock" for the host relay directly (VMs)',
+    )
     ap.add_argument("--interval", type=float, default=0.5)
     a = ap.parse_args(argv)
     if os.geteuid() != 0:
