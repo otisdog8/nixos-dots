@@ -171,6 +171,12 @@ in
 
   # Paths present in the lower (host) store but not in this guest's database
   # would be treated as invalid and fetched again; register the system's own.
+  # And the other way round: the host's GC removes paths an older guest system
+  # registered (or a build here found in the lower store), which the database
+  # would keep calling valid, so nix would neither fetch nor build them again.
+  # `nix-store --verify` (no content check) drops every registered path that is
+  # gone; one a path built here still refers to stays (reported) until
+  # `nix-store --verify --repair` fetches it again.
   systemd.services.agent-vm-register-store = {
     description = "Register the guest system's closure in the nix store database";
     wantedBy = [ "multi-user.target" ];
@@ -181,16 +187,15 @@ in
     };
     script = ''
       reg="$(${cmdlineArg "agentvm.registration"})"
+      stamp=/nix/var/nix/agent-vm-registered
       if [ -z "$reg" ] || [ ! -f "$reg" ]; then
         echo "no agentvm.registration on the kernel command line; skipping" >&2
-        exit 0
+      elif [ "$(cat "$stamp" 2>/dev/null)" != "$reg" ]; then
+        ${config.nix.package}/bin/nix-store --load-db < "$reg"
+        printf '%s' "$reg" > "$stamp"
       fi
-      stamp=/nix/var/nix/agent-vm-registered
-      if [ "$(cat "$stamp" 2>/dev/null)" = "$reg" ]; then
-        exit 0
-      fi
-      ${config.nix.package}/bin/nix-store --load-db < "$reg"
-      printf '%s' "$reg" > "$stamp"
+      ${config.nix.package}/bin/nix-store --verify ||
+        echo "some registered paths are gone but still referenced; nix-store --verify --repair fetches them" >&2
     '';
   };
 

@@ -19,6 +19,67 @@ rec {
   # The host's store, read-only by the guest's own mount (tag "nixstore").
   storeShare = "/nix/store:nixstore:${fsCommon}:cache=always:timeout=3600";
 
+  # The host filesystems a VM's host unit never sees: every one mounted outside
+  # the system's own trees (a btrfs top level holds every subvolume, the
+  # user's home included), and the data tiers. `fileSystems`: the host's
+  # config.fileSystems.
+  hiddenMounts =
+    fileSystems:
+    let
+      keep =
+        p:
+        p == "/"
+        || lib.any (k: p == k || lib.hasPrefix "${k}/" p) [
+          "/nix"
+          "/etc"
+          "/var"
+          "/run"
+          "/tmp"
+          "/usr"
+          "/proc"
+          "/sys"
+          "/dev"
+          "/home"
+          "/root"
+        ];
+    in
+    lib.unique (
+      [
+        "/persist"
+        "/large"
+        "/cache"
+      ]
+      ++ lib.filter (p: !keep p) (lib.attrNames fileSystems)
+    );
+
+  # World-connectable sockets under /run that resolve names for whoever asks
+  # (resolved's varlink API, nscd's hosts cache, avahi's mDNS): through them a
+  # unit with no network of its own, or passt under an allowNames policy,
+  # could make the host send DNS queries of its choosing. Only the sockets:
+  # passt reads /etc/resolv.conf, resolved's stub file in the same folder.
+  hostResolvers = [
+    "/run/systemd/resolve/io.systemd.Resolve"
+    "/run/systemd/resolve/io.systemd.Resolve.Monitor"
+    "/run/nscd"
+    "/run/avahi-daemon"
+  ];
+
+  # InaccessiblePaths for a VM's host unit: `hiddenMounts`, the system bus
+  # (where polkit lets users start and stop units), `hostResolvers`, the root
+  # attach helper's socket, and `hide` (more paths, "-" prefixed as needed).
+  # ProtectHome= (the unit's) hides /home and /run/user. (lib/vm/instance.nix
+  # `view` builds the app VMs' from the same parts.)
+  hostView =
+    {
+      fileSystems,
+      hide ? [ ],
+    }:
+    {
+      InaccessiblePaths =
+        map (p: "-${p}") (hiddenMounts fileSystems ++ [ "/run/dbus" ] ++ hostResolvers ++ [ "/run/sbx-attach.sock" ])
+        ++ hide;
+    };
+
   # An app VM's own host uid (and group), which its VMM and guest-facing host
   # services run as instead of the desktop user (lib/vm/instance.nix
   # `vmUser`); others (op-broker) name it to let that VM's relay in.

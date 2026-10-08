@@ -41,8 +41,9 @@ rec {
         ${dnsArgs { inherit forwardToResolved dns; }}
     '';
 
-  # serviceConfig for the passt unit, minus ExecStart. `policy`: the result of
-  # netpolicy.lower.
+  # serviceConfig for the passt unit, minus ExecStart and the paths it may see
+  # (the unit adds core `hostView`, or instance.nix `view`). `policy`: the
+  # result of netpolicy.lower.
   serviceConfig =
     {
       user,
@@ -58,11 +59,18 @@ rec {
       IPAddressDeny = policy.ipAddressDeny;
       NoNewPrivileges = true;
       CapabilityBoundingSet = "";
+      AmbientCapabilities = "";
       ProtectSystem = "strict";
-      ProtectHome = true;
+      ProtectHome = "tmpfs";
       ReadWritePaths = readWritePaths;
       PrivateTmp = true;
+      PrivateIPC = true;
       PrivateDevices = true;
+      # No other process to see or signal (passt reads /proc/sys: no
+      # ProcSubset). As PID 1 of its pid namespace it ignores SIGTERM.
+      PrivatePIDs = true;
+      ProtectProc = "invisible";
+      KillSignal = "SIGKILL";
       ProtectKernelTunables = true;
       ProtectKernelModules = true;
       ProtectKernelLogs = true;
@@ -71,6 +79,9 @@ rec {
       LockPersonality = true;
       RestrictRealtime = true;
       RestrictSUIDSGID = true;
+      MemoryDenyWriteExecute = true;
+      SystemCallArchitectures = "native";
+      KeyringMode = "private";
       RestrictAddressFamilies = [
         "AF_UNIX"
         "AF_INET"

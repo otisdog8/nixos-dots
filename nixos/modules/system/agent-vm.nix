@@ -12,14 +12,21 @@
 # unit, the VMM's sandbox, the shared-dir flags, the CID allocation.
 #
 # Host side:
-#   agent-vm.service       the VMM, as sbx-agentvm (group kvm); its disk (an
-#                          image bound in from /large, or a dedicated block
-#                          device) is all it sees of the host's data
+#   agent-vm.service       the VMM, as sbx-agentvm (group kvm). Of the host it
+#                          sees the store, its disk (an image bound in from
+#                          /large, or a dedicated block device) and its
+#                          runtime dir (meta/ read-only), and the rest of the
+#                          system read-only; never /home, the data tiers or
+#                          any other filesystem the host mounts, the system
+#                          bus, or the app VMs' runtime dirs (core.hostView)
 #   agent-vm-prep.service  root (confined): per-boot runtime dir and SSH keys,
 #                          the disk image (created sparse and nodatacow on
 #                          first start, in a root-only directory)
 #   agent-vm-net.service   passt, as sbx-agentvm-net: the network policy below
-#                          (cgroup IP filter + owner-matched port limits)
+#                          (cgroup IP filter + owner-matched port limits);
+#                          the same view, writing only its socket's dir. If
+#                          it fails while the VM runs (crosvm doesn't
+#                          reconnect), the VM is restarted (-net-failed)
 # Operators (members of agent-vm-users) get `agent-vm ssh|status|log|restart`,
 # and `avm` for the agents inside (agent-auth's sandboxd).
 {
@@ -86,6 +93,14 @@ let
     chain = "agent-vm-egress";
     uid = netUser;
     rules = cfg.network.allowPorts;
+  };
+
+  # What the VMM and passt see of the host, beyond the read-only system and
+  # their runtime dir: as an app VM's units (core.hostView), and not the app
+  # VMs' runtime dirs either.
+  view = core.hostView {
+    inherit (config) fileSystems;
+    hide = [ "-/run/sandbox-vm" ];
   };
 
   co = "${pkgs.coreutils}/bin";
@@ -463,7 +478,7 @@ in
 
     modules.sandbox.dnsAllow = lib.optional (netPolicy.names != [ ]) {
       units = [ "${unit}-net.service" ];
-      inherit (netPolicy) names;
+      inherit (netPolicy) names deny;
     };
 
     # Operators may start, stop and restart the VM (not reconfigure it).
@@ -514,16 +529,20 @@ in
           User = vmUser;
           Group = group;
           SystemCallFilter = core.hardening.jailedSyscallFilter;
-          # Nothing of the host's data is visible: the disk image is bound to
-          # a mount point in the runtime dir (from root's directory, so the
-          # source systemd resolves passes through nothing another uid owns).
-          InaccessiblePaths = [
-            "-/persist"
-            "-/large"
-            "-/cache"
-          ];
+          # Nothing of the host's data is visible (hostView, below): the disk
+          # image is bound to a mount point in the runtime dir (from root's
+          # directory, so the source systemd resolves passes through nothing
+          # another uid owns).
           BindPaths = lib.optional (!blockDisk) ''"${cfg.disk.path}":"${diskTarget}"'';
           ReadWritePaths = [ rt ];
+          # The meta share's files are this uid's (prep hands them over), but
+          # nothing writes there: read-only, so the guest can't fill the
+          # host's /run through it.
+          BindReadOnlyPaths = [ "${rt}/meta" ];
+          # Its own pid namespace, as the app VMs' VMMs: no other process to
+          # signal, trace or read /proc/<pid>/root of. crosvm (PID 1 there)
+          # ignores SIGTERM: ExecStop's power button and TimeoutStopSec stop it.
+          PrivatePIDs = true;
           DeviceAllow = [
             "/dev/kvm rw"
             "/dev/vhost-vsock rw"
@@ -531,7 +550,8 @@ in
           ++ lib.optional blockDisk "${cfg.disk.path} rw";
           MemoryMax = "${toString (cfg.memory + 512)}M";
         }
-        // core.hardening.vmm;
+        // core.hardening.vmm
+        // view;
       };
 
       "${unit}-prep" = {
@@ -586,6 +606,7 @@ in
         bindsTo = [ "${unit}.service" ];
         requires = [ "${unit}-prep.service" ];
         after = [ "${unit}-prep.service" ];
+        onFailure = [ "${unit}-net-failed.service" ];
         restartIfChanged = false;
         stopIfChanged = false;
         serviceConfig =
@@ -593,13 +614,31 @@ in
             user = netUser;
             inherit group;
             policy = netPolicy;
-            readWritePaths = [ rt ];
+            readWritePaths = [ "${rt}/net" ];
           }
+          // view
           // {
             ExecStart = netScript;
             # The socket must be connectable by the VMM (same group).
             UMask = "0007";
           };
+      };
+
+      # passt gone while the VM runs: crosvm's vhost-user net doesn't
+      # reconnect, so the VM would stay up without a network. Restart it
+      # (passt with it); not while it is stopping (passt's stop, SIGKILL in its
+      # pid namespace, counts as a failure too), nor after a failed start.
+      "${unit}-net-failed" = {
+        description = "Restart the agent VM after its network failed";
+        serviceConfig = core.hardening.rootStep "" // {
+          Type = "oneshot";
+          ExecStart = pkgs.writeShellScript "${unit}-net-failed" ''
+            if ${pkgs.systemd}/bin/systemctl is-active --quiet ${unit}.service; then
+              echo "${unit}: its network (passt) failed; restarting the VM" >&2
+              exec ${pkgs.systemd}/bin/systemctl restart --no-block ${unit}.service
+            fi
+          '';
+        };
       };
     };
   };

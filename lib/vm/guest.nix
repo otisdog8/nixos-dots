@@ -30,6 +30,9 @@ let
   vsockRelay = import ./vsock-relay.nix pkgs;
   dbusProxy = sbxHost.dbusProxy;
   grantsPkg = import ./grants.nix pkgs;
+  graft = pkgs.writeScriptBin "sbx-graft" (
+    "#!${pkgs.python3}/bin/python3 -IS\n" + builtins.readFile ./graft.py
+  );
   fidoGuest = pkgs.writeScriptBin "sbx-fido-guest" (
     "#!${pkgs.python3}/bin/python3 -IS\n" + builtins.readFile ./fido-guest.py
   );
@@ -48,33 +51,10 @@ let
       done
     }
 
-    # Create every missing ancestor of $1 (absolute). Under $home they belong to the
-    # user (so the app can create siblings); elsewhere to root.
-    mkparents() {
-      local dir
-      dir="$(dirname -- "$1")"
-      [ -d "$dir" ] && return 0
-      mkparents "$dir"
-      case "$dir" in
-        "$home"/*) install -d -m 0755 -o "$user" -g "$group" -- "$dir" ;;
-        *) install -d -m 0755 -- "$dir" ;;
-      esac
-    }
-
-    # Bind $1 (a file or directory from a share) onto $2, creating the mount point
-    # with the matching type.
-    graft() {
-      local src="$1" dst="$2" owner=root
-      [ -e "$src" ] || { echo "sbx-setup: missing share entry $src, skipped" >&2; return 0; }
-      case "$dst" in "$home"/*) owner="$user" ;; esac
-      mkparents "$dst"
-      if [ -d "$src" ]; then
-        [ -d "$dst" ] || install -d -m 0700 -o "$owner" -g "$group" -- "$dst"
-      else
-        [ -e "$dst" ] || install -m 0600 -o "$owner" -g "$group" /dev/null "$dst"
-      fi
-      mount --bind -- "$src" "$dst"
-    }
+    # Bind sources onto targets, one "MODE<TAB>SOURCE<TAB>TARGET" line each on
+    # stdin (lib/vm/graft.py): the paths are walked without following the app's
+    # symlinks, missing targets and parents made (the user's under $home).
+    graft() { ${graft}/bin/sbx-graft "$home" "$user" "$group"; }
 
     vfs() { install -d -m 0755 "$2"; mount -t virtiofs -o "nosuid,nodev''${3:+,$3}" "$1" "$2"; }
 
@@ -103,26 +83,25 @@ let
     for t in $(jq -r '.tiers[]' "$spec"); do vfs "sbx-$t" "/run/sbx/tier/$t"; done
     jq -r '.entries[] | [.tier, .path] | @tsv' "$spec" |
       while IFS=$'\t' read -r tier path; do
-        graft "/run/sbx/tier/$tier/$path" "$home/$path"
-      done
+        printf 'rw\t%s\t%s\n' "/run/sbx/tier/$tier/$path" "$home/$path"
+      done | graft
 
     # Static binds (git config, capabilities.binds, extraBinds) at their target paths.
     if [ "$(jq '.binds | length' "$spec")" -gt 0 ]; then
       vfs sbx-binds /run/sbx/binds
       jq -r '.binds[] | [.index, .target] | @tsv' "$spec" |
         while IFS=$'\t' read -r index target; do
-          graft "/run/sbx/binds/$index" "$target"
-        done
+          printf 'rw\t%s\t%s\n' "/run/sbx/binds/$index" "$target"
+        done | graft
     fi
 
-    # The project directory, at the same absolute path as on the host.
+    # The project directory, at the same absolute path as on the host: mounted
+    # in a root-only place first, then grafted (its path may lead through the
+    # app's storage).
     if [ "$(jq '.cwd' "$spec")" = true ] && [ -n "$cwd" ]; then
-      mkparents "$cwd"
-      case "$cwd" in
-        "$home"/*) install -d -m 0755 -o "$user" -g "$group" -- "$cwd" ;;
-        *) install -d -m 0755 -- "$cwd" ;;
-      esac
-      mount -t virtiofs -o nosuid,nodev sbx-cwd "$cwd"
+      install -d -m 0700 /run/sbx/stage
+      vfs sbx-cwd /run/sbx/stage/cwd
+      printf 'rw\t%s\t%s\n' /run/sbx/stage/cwd "$cwd" | graft
     fi
 
     # Host services (audio, the filtered session bus) over the vsock relay: one
@@ -179,17 +158,8 @@ let
 
     # Other modules' read-only files (sandbox.vm.guestBinds), e.g. native-messaging
     # manifests: an empty mount point of the source's type, then a bind.
-    jq -r '.guestBinds[] | [.target, .source] | @tsv' "$spec" |
-      while IFS=$'\t' read -r target source; do
-        mkparents "$target"
-        if [ -d "$source" ]; then
-          [ -d "$target" ] || install -d -m 0755 -- "$target"
-        elif [ ! -e "$target" ]; then
-          install -m 0644 /dev/null "$target"
-        fi
-        mount --bind -- "$source" "$target" && mount -o remount,bind,ro -- "$target" ||
-          echo "sbx-setup: could not bind $source at $target" >&2
-      done
+    jq -r '.guestBinds[] | ["ro", .source, .target] | @tsv' "$spec" | graft ||
+      echo "sbx-setup: could not bind every guestBinds entry" >&2
 
     # Other modules' long-running helpers (sandbox.vm.guestServices), as the user
     # (or as root, for the ones that ask).
