@@ -253,6 +253,8 @@ let
         cgroup = "/system\\.slice/sandbox-vm-onepassword-relay\\.service";
         wait = 5;
       };
+      # The bridge enforces the same per-client connection cap as the guest.
+      inherit (cfg) limits;
       audit.file = null;
     }
   );
@@ -520,12 +522,14 @@ in
         listCacheTtl = 60;
         sessionIdle = 300;
         sessionMax = 28800;
+        connsPerClient = 8;
       };
       description = ''
         Per requester: token bucket (burst, perMinute) and hourly cap on fill
         requests; cooldown (seconds) after denyLimit denials in a row; how long
         the item list (metadata only) is cached; how long a session grant
-        outlives the browser's last connection, and its hard maximum.
+        outlives the browser's last connection, and its hard maximum; how many
+        connections one browser may hold open (connsPerClient).
       '';
     };
 

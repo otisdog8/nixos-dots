@@ -7,8 +7,13 @@
 #
 # Every string comes from the broker (requester label, cleaned item titles), but
 # item titles are the vault's, so they are shown as plain text: zenity's list
-# text is markup, hence the escaping.
+# text is markup, hence the escaping. Rows are positional arguments that zenity's
+# option parser still reads, so a title starting with "-" ("--text=...") would
+# be taken as an option: such titles get a leading space.
 set -u
+# bash >= 5.2: "&" in a ${s//pat/rep} replacement would mean the matched text,
+# which turns esc() below into a no-op ("<" -> "<lt;").
+shopt -u patsub_replacement 2>/dev/null || true
 timeout=60
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -33,6 +38,7 @@ shift 2
 rows=()
 i=0
 for opt in "$@"; do
+  case "$opt" in -*) opt=" $opt" ;; esac
   rows+=("$i" "$(esc "$opt")")
   i=$((i + 1))
 done

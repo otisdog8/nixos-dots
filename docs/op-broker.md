@@ -173,7 +173,9 @@ only with `match.allowHttp`), lowercase ASCII host (punycode, never raw Unicode,
 so homographs show as `xn--…`), valid DNS labels or an IP literal, no default
 port, no path/userinfo/trailing dot/whitespace. The broker refuses rather than
 normalizes, so the dialog shows exactly what was sent. (`null` origins from
-sandboxed iframes and `file:` pages are refused.)
+sandboxed iframes and `file:` pages are refused.) `top` follows the same rules
+except that it may always be `http://`: it is only shown (and scopes session
+grants), never matched.
 
 ### Broker ↔ op
 
@@ -194,7 +196,11 @@ Only the requested fields are returned; notes and other fields are dropped.
 ### Matching
 
 Items match on their saved URLs, parsed leniently (`github.com` means
-`https://github.com`; paths are ignored; IDNs become punycode):
+`https://github.com`; paths are ignored; IDNs become punycode, but only when
+Python's IDNA2003 conversion maps nothing: where it differs from the browsers'
+UTS #46 (`faß.de` → `fass.de`, final sigma, ZWJ/ZWNJ, fullwidth forms) the saved
+URL is ignored rather than matched against someone else's domain; save such
+sites by their `xn--` form):
 
 - scheme: an https item never goes to an http page; an http item may go to https;
 - port: equal (both default, or the same explicit port);
@@ -249,11 +255,14 @@ length-bounded); zenity shows them without markup. Buttons: **Allow once**,
 
 ### Sessions ("Allow until it stops")
 
-A grant is keyed by (requester, item, origin) and covers the approved fields. It
-lives while the requester has a broker connection open (the extension keeps its
-native port open; Chromium keeps the service worker alive while a native port is
-open), plus `sessionIdle` (300 s) after its last connection closes (Firefox's
-event page can be suspended), and never longer than `sessionMax` (8 h). A broker
+A grant is keyed by (requester, item, origin, embedding page) and covers the
+approved fields: the same login framed by another site asks again, with its
+"embedded in" line. It lives while the requester has a broker connection open
+(the extension keeps its native port open; Chromium keeps the service worker
+alive while a native port is open), plus `sessionIdle` (300 s) after its last
+connection closes (Firefox's event page can be suspended), and never longer than
+`sessionMax` (8 h). A requester reconnecting after the grace period starts a new
+session without the old grants. A broker
 restart (which happens with every 1Password restart) drops all grants. With a
 grant for exactly one of several candidates, that one is filled without the
 chooser.
@@ -264,7 +273,9 @@ Per requester: token bucket (`burst` 5, `perMinute` 10), `perHour` 120; hits,
 misses and session fills all cost a token. One in-flight fill per requester
 (`busy`), one dialog on screen overall (a second requester waits up to 5 s, then
 `busy`). After `denyLimit` (3) denials or timeouts in a row: `cooldown` for
-`denyCooldown` (300 s). All in `modules.apps.op-broker.limits`.
+`denyCooldown` (300 s). Per client socket, at most `connsPerClient` (8)
+connections at once (the broker's, and the bridge's in VM mode); more are
+refused. All in `modules.apps.op-broker.limits`.
 
 ### Probing notice
 
@@ -376,8 +387,9 @@ browser (container or VM) ─► /run/op-broker/clients/<app>/sock ─► op-bro
 ```
 
 - `op-broker uplink` keeps a pool of idle connections to the bridge (default 4,
-  replacing each as soon as it's paired, up to 64), reads the header naming the
-  client, then serves that connection exactly like `serve` does, including
+  topped up whenever one is paired or a session ends; at most `connsPerClient`
+  sessions per client, so pool + that per client in all), reads the header
+  naming the client, then serves that connection exactly like `serve` does, including
   prompts and grants, inside the guest. A client its own config doesn't list
   (added on the host after 1Password's VM started: a rebuild doesn't restart
   the VM) is taken from the header with the bridge's label, sanitised, up to 64

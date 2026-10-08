@@ -6,6 +6,7 @@
 
 import json
 import os
+import shutil
 import socket
 import struct
 import subprocess
@@ -241,8 +242,21 @@ class TestItemUrl(unittest.TestCase):
             "https://exa mple.com",
             "https://x.com:99999",
             "https://",
+            # IDNA2003 would map these (browsers don't): "fass.de", a σ form,
+            # ZWJ dropped, fullwidth folded. Each is a different domain.
+            "https://faß.de/login",
+            "https://καλός.gr",
+            "https://a\u200db.com",
+            "https://ｆass.de",
         ]:
             self.assertIsNone(ob.parse_item_url(href), repr(href))
+
+    def test_idn_matches_browser_punycode(self):
+        o = lambda s: ob.parse_origin(s, False)  # noqa: E731
+        # What the browser sends for bücher.example and faß.de (UTS #46).
+        self.assertTrue(ob.url_matches(o("https://xn--bcher-kva.example"), ob.parse_item_url("bücher.example"), "exact"))
+        self.assertTrue(ob.url_matches(o("https://xn--fa-hia.de"), ob.parse_item_url("https://xn--fa-hia.de"), "exact"))
+        self.assertFalse(ob.url_matches(o("https://fass.de"), ob.parse_item_url("https://xn--fa-hia.de"), "exact"))
 
     def test_match(self):
         o = lambda s: ob.parse_origin(s, True)  # noqa: E731
@@ -304,6 +318,13 @@ class TestRequest(unittest.TestCase):
         ]:
             with self.assertRaises(ob.BadRequest, msg=raw):
                 ob.parse_request(raw)
+
+    def test_http_top(self):
+        # The embedding page is only shown: http is fine there, never for the frame.
+        r = ob.parse_request('{"v":1,"op":"fill","origin":"https://a.com","top":"http://b.com","want":["password"]}')
+        self.assertEqual(str(r["top"]), "http://b.com")
+        with self.assertRaises(ob.BadRequest):
+            ob.parse_request('{"v":1,"op":"fill","origin":"http://a.com","top":"https://b.com","want":["password"]}')
 
     def test_clean(self):
         self.assertEqual(ob.clean("a‮b\nc\x00d"), "a?b c?d")
@@ -386,6 +407,36 @@ class TestBroker(unittest.TestCase):
         # ...and gone after it.
         time.sleep(0.4)
         self.assertEqual(fill(self.b, "firefox", "https://login.example.com")["error"], "denied")
+
+    def test_session_grant_is_per_embedding_page(self):
+        os.environ["FAKE_PROMPT_ANSWER"] = "session"
+        self.b.sessions.opened("firefox")
+        self.assertTrue(fill(self.b, "firefox", "https://login.example.com")["ok"])
+        os.environ["FAKE_PROMPT_ANSWER"] = "deny"
+        # The same login framed by another site asks again, saying so.
+        self.assertEqual(fill(self.b, "firefox", "https://login.example.com", top="https://evil.test")["error"], "denied")
+        self.assertEqual(len(self.env.prompts()), 2)
+        self.assertIn("embedded in a page from https://evil.test", self.env.prompts()[1][-1])
+        # A grant made inside one embedding page covers only that page.
+        os.environ["FAKE_PROMPT_ANSWER"] = "session"
+        self.assertTrue(fill(self.b, "firefox", "https://login.example.com", top="https://news.test")["ok"])
+        os.environ["FAKE_PROMPT_ANSWER"] = "deny"
+        self.assertTrue(fill(self.b, "firefox", "https://login.example.com", top="https://news.test")["ok"])
+        self.assertEqual(fill(self.b, "firefox", "https://login.example.com", top="https://other.test")["error"], "denied")
+        self.assertEqual(len(self.env.prompts()), 4)
+
+    def test_session_does_not_revive_on_reconnect(self):
+        self.b.sessions.idle = 0.2
+        os.environ["FAKE_PROMPT_ANSWER"] = "session"
+        self.b.sessions.opened("firefox")
+        self.assertTrue(fill(self.b, "firefox", "https://login.example.com")["ok"])
+        self.b.sessions.closed("firefox")
+        time.sleep(0.3)
+        # The browser comes back after the grace period: a new session.
+        self.b.sessions.opened("firefox")
+        os.environ["FAKE_PROMPT_ANSWER"] = "deny"
+        self.assertEqual(fill(self.b, "firefox", "https://login.example.com")["error"], "denied")
+        self.assertEqual(len(self.env.prompts()), 2)
 
     def test_session_max(self):
         self.b.sessions.max = 0.2
@@ -699,6 +750,87 @@ class TestSockets(unittest.TestCase):
         self.assertEqual(s2.recv(10), b"")
         s.close()
         s2.close()
+
+    def test_per_client_connection_cap(self):
+        env = Env(limits={"connsPerClient": 2})
+        ob.run_serve(env.broker(), block=False)
+        ff = env.cfg["clients"]["firefox"]["socket"]
+        held = [connect(ff), connect(ff)]
+        for s in held:
+            self.assertEqual(rpc(s, {"v": 1, "op": "hello"})["requester"], "Firefox (test)")
+        extra = connect(ff)
+        try:
+            self.assertIsNone(rpc(extra, {"v": 1, "op": "hello"}))
+        except ConnectionError:  # refused: closed before or after the request
+            pass
+        extra.close()
+        # Other clients are unaffected, and a slot frees when one closes.
+        c = connect(env.cfg["clients"]["chromium"]["socket"])
+        self.assertEqual(rpc(c, {"v": 1, "op": "hello"})["requester"], "Chromium (test)")
+        held.pop().close()
+        time.sleep(0.2)
+        again = connect(ff)
+        self.assertEqual(rpc(again, {"v": 1, "op": "hello"})["requester"], "Firefox (test)")
+        for s in held + [c, again]:
+            s.close()
+        refused = [l for l in lines(env.audit) if l.get("reason") == "too many connections"]
+        self.assertEqual(len(refused), 1)
+
+    def test_uplink_pool_refills_after_sessions_end(self):
+        # One session per client: the guest holds at most pool + 1 per client
+        # uplinks, so sessions ending must refill the idle pool, or autofill
+        # stops for good once that many have been used at once.
+        env = Env(limits={"connsPerClient": 1})
+        d = env.dir
+        for sub in ("uplink", "firefox", "chromium"):
+            os.makedirs(os.path.join(d, "br", sub))
+        bridge_cfg = {
+            "clients": {
+                n: {"socket": os.path.join(d, "br", n, "sock"), "users": [os.getuid()]}
+                for n in ("firefox", "chromium")
+            },
+            "uplink": {"socket": os.path.join(d, "br", "uplink", "sock"), "users": [os.getuid()], "wait": 3},
+            "limits": {"connsPerClient": 1},
+        }
+        ob.run_bridge(bridge_cfg, block=False)
+        ob.run_uplink(env.broker(), bridge_cfg["uplink"]["socket"], pool=1, block=False)
+        time.sleep(0.3)
+        for i in range(4):
+            socks = [connect(bridge_cfg["clients"][n]["socket"]) for n in ("firefox", "chromium")]
+            for s in socks:
+                r = rpc(s, {"v": 1, "op": "hello"})
+                self.assertIsNotNone(r, i)
+                self.assertTrue(r["ok"], (i, r))
+            for s in socks:
+                s.close()
+            time.sleep(0.3)
+
+    def test_chooser_rows_are_not_options(self):
+        bash = shutil.which("bash")
+        if not bash:
+            self.skipTest("no bash")
+        d = tempfile.mkdtemp(prefix="op-broker-choose-")
+        argv_log = os.path.join(d, "argv.json")
+        fake = os.path.join(d, "zenity")
+        with open(fake, "w") as f:
+            f.write(
+                f"#!{sys.executable}\nimport json, sys\n"
+                f"json.dump(sys.argv[1:], open({argv_log!r}, 'w'))\nprint('1')\n"
+            )
+        os.chmod(fake, 0o755)
+        with open(os.path.join(SRC, "choose.sh")) as f:
+            script = f.read().replace("@zenity@", fake)
+        p = subprocess.run(
+            [bash, "-c", script, "op-broker-choose", "--", "Firefox", "Pick", "--text=gotcha", "-x <b>", "Plain"],
+            stdout=subprocess.PIPE,
+            timeout=10,
+        )
+        self.assertEqual((p.returncode, p.stdout), (0, b"1\n"))
+        with open(argv_log) as f:
+            args = json.load(f)
+        rows = args[args.index("520") + 3 :]  # after --width 520 --height 360
+        self.assertEqual(rows, ["0", " --text=gotcha", "1", " -x &lt;b&gt;", "2", "Plain"])
+        self.assertNotIn("--text=gotcha", args)
 
     def test_peer_check_refuses(self):
         env = Env()

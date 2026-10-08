@@ -24,7 +24,7 @@ line per request, requests served in order.
 
 Every fill needs an approval from the user (sbx-prompt) naming the requester,
 the item and the origin, unless the user answered "allow until it stops" for
-that item and origin earlier in the requester's session.
+that item, origin and embedding page earlier in the requester's session.
 """
 
 import argparse
@@ -192,10 +192,18 @@ def parse_item_url(href):
     if ":" in host:
         host = f"[{host}]"
     if not host.isascii():
+        # Python's codec is IDNA2003, browsers use UTS #46: they differ where
+        # IDNA2003 maps a character to another ("faß" -> "fass", final sigma,
+        # ZWJ/ZWNJ, fullwidth forms), and "fass.de" is someone else's domain.
+        # So only a host that converts without any mapping (round-trips) is
+        # used; the punycode is then the same either way.
         try:
-            host = host.encode("idna").decode("ascii")
+            ace = host.encode("idna").decode("ascii")
+            if ace.encode("ascii").decode("idna") != host:
+                return None
         except UnicodeError:
             return None
+        host = ace
     host = host.lower()
     if not valid_host(host):
         return None
@@ -291,7 +299,9 @@ def parse_request(line, allow_http=False):
     if op == "fill":
         out["origin"] = parse_origin(req.get("origin"), allow_http)
         top = req.get("top")
-        out["top"] = None if top is None else parse_origin(top, allow_http)
+        # The embedding page is only shown (and keys a session grant), never
+        # matched, so an http one is fine: an https login frame in an http page.
+        out["top"] = None if top is None else parse_origin(top, allow_http=True)
         if out["top"] == out["origin"]:
             out["top"] = None
         want = req.get("want")
@@ -587,7 +597,9 @@ class Sessions:
     """"Allow until it stops" answers. A requester's session lasts while it has a
     connection open, plus a grace period after its last one closes (the browser's
     native-messaging port comes and goes with its background page), and never
-    longer than sessionMax."""
+    longer than sessionMax. A grant is for one item on one origin inside one
+    embedding page (`top`, None for a top-level form): the same login framed by
+    another site asks again, with its "embedded in" line."""
 
     def __init__(self, cfg):
         self.idle = float(cfg.get("sessionIdle", 300))
@@ -595,10 +607,15 @@ class Sessions:
         self.lock = threading.Lock()
         self.conns = collections.Counter()
         self.last_close = {}
-        self.grants = {}  # (who, item, origin) -> (fields, granted_at)
+        self.grants = {}  # (who, item, origin, top) -> (fields, granted_at)
 
-    def opened(self, who):
+    def opened(self, who, now=None):
+        now = time.monotonic() if now is None else now
         with self.lock:
+            # A session that ended (past its grace period) stays ended: a
+            # reconnect starts a new one, without the old grants.
+            if not self._alive(who, now):
+                self._end(who)
             self.conns[who] += 1
 
     def closed(self, who, now=None):
@@ -615,27 +632,36 @@ class Sessions:
         last = self.last_close.get(who)
         return last is not None and now - last < self.idle
 
-    def grant(self, who, item_id, origin, fields, now=None):
+    def _end(self, who):
+        for k in [k for k in self.grants if k[0] == who]:
+            del self.grants[k]
+        self.last_close.pop(who, None)
+
+    @staticmethod
+    def _key(who, item_id, origin, top):
+        return (who, item_id, str(origin), None if top is None else str(top))
+
+    def grant(self, who, item_id, origin, top, fields, now=None):
         now = time.monotonic() if now is None else now
         with self.lock:
-            key = (who, item_id, str(origin))
+            key = self._key(who, item_id, origin, top)
             prev = self.grants.get(key)
             if prev and now - prev[1] < self.max:
                 fields = prev[0] | fields
             self.grants[key] = (frozenset(fields), now)
 
-    def covers(self, who, item_id, origin, fields, now=None):
+    def covers(self, who, item_id, origin, top, fields, now=None):
         now = time.monotonic() if now is None else now
         with self.lock:
             if not self._alive(who, now):
-                for k in [k for k in self.grants if k[0] == who]:
-                    del self.grants[k]
+                self._end(who)
                 return False
-            g = self.grants.get((who, item_id, str(origin)))
+            key = self._key(who, item_id, origin, top)
+            g = self.grants.get(key)
             if not g:
                 return False
             if now - g[1] >= self.max:
-                del self.grants[(who, item_id, str(origin))]
+                del self.grants[key]
                 return False
             return fields <= g[0]
 
@@ -667,6 +693,7 @@ class Broker:
         limits = cfg.get("limits") or {}
         self.limiter = Limiter(limits)
         self.sessions = Sessions(limits)
+        self.conns_per_client = conns_per_client(cfg)
         probe = cfg.get("probe") or {}
         self.probes = ProbeWatch(probe)
         self.probe_block = float(probe.get("block", 3600))
@@ -832,7 +859,7 @@ class Broker:
 
         # A standing "until it stops" grant for exactly one candidate fills
         # without asking again.
-        granted = [c for c in cands if self.sessions.covers(who, c[0][0], origin, want)]
+        granted = [c for c in cands if self.sessions.covers(who, c[0][0], origin, top, want)]
         if len(granted) == 1:
             return self._deliver(who, granted[0], origin, want, "session-cached", base)
 
@@ -855,7 +882,7 @@ class Broker:
                     audit("fill", decision="deny", stage="choose", candidates=len(cands), **base)
                     return {"ok": False, "error": "denied"}
                 chosen = shown[idx]
-            if self.sessions.covers(who, chosen[0][0], origin, want):
+            if self.sessions.covers(who, chosen[0][0], origin, top, want):
                 answer = "session-cached"
             else:
                 answer = self._prompt(who, *self._prompt_text(chosen, origin, top, want))
@@ -867,7 +894,7 @@ class Broker:
             return {"ok": False, "error": "denied"}
         self.limiter.allowed(who)
         if answer == "session":
-            self.sessions.grant(who, chosen[0][0], origin, want)
+            self.sessions.grant(who, chosen[0][0], origin, top, want)
         return self._deliver(who, chosen, origin, want, answer, base)
 
     def _denied(self, who):
@@ -1052,7 +1079,26 @@ def listen_unix(path, mode=0o666):
     return s
 
 
-def accept_loop(sock, check, on_conn, what):
+def conns_per_client(cfg):
+    """How many connections one client socket may have open at once
+    (`limits.connsPerClient`, default 8; a browser uses one or two)."""
+    return max(1, int((cfg.get("limits") or {}).get("connsPerClient", 8)))
+
+
+def accept_loop(sock, check, on_conn, what, limit=None):
+    """Accept, check the peer, serve each connection on its own thread. With
+    `limit`, at most that many of this socket's connections are served at once
+    and more are refused: one client can't hold every thread or uplink."""
+    lock = threading.Lock()
+    active = [0]
+
+    def run(conn, info):
+        try:
+            on_conn(conn, info)
+        finally:
+            with lock:
+                active[0] -= 1
+
     while True:
         try:
             conn, _ = sock.accept()
@@ -1068,7 +1114,15 @@ def accept_loop(sock, check, on_conn, what):
             audit("refused", socket=what, **info)
             conn.close()
             continue
-        threading.Thread(target=on_conn, args=(conn, info), daemon=True).start()
+        with lock:
+            full = limit is not None and active[0] >= limit
+            if not full:
+                active[0] += 1
+        if full:
+            audit("refused", socket=what, reason="too many connections", **info)
+            conn.close()
+            continue
+        threading.Thread(target=run, args=(conn, info), daemon=True).start()
 
 
 def notify_ready():
@@ -1107,7 +1161,11 @@ def run_serve(broker, block=True):
             audit("connect", requester=name, **info)
             broker.serve_conn(conn, name, info)
 
-        t = threading.Thread(target=accept_loop, args=(sock, check, on_conn, name), daemon=True)
+        t = threading.Thread(
+            target=accept_loop,
+            args=(sock, check, on_conn, name, broker.conns_per_client),
+            daemon=True,
+        )
         t.start()
         threads.append(t)
     audit("ready", mode="serve", clients=sorted(broker.clients))
@@ -1116,24 +1174,37 @@ def run_serve(broker, block=True):
         t.join()
 
 
-def run_uplink(broker, path, pool, max_conns=64, block=True):
+def run_uplink(broker, path, pool, block=True):
     """Inside the 1Password VM: keep `pool` idle connections open to the host
     bridge; each waits for a header naming its client, then is that client's
     session (and a fresh idle one replaces it). The header comes from the host
-    bridge, never from a browser: the bridge knows which socket the client used."""
+    bridge, never from a browser: the bridge knows which socket the client used.
+
+    At most `connsPerClient` sessions per client (the bridge enforces the same
+    on its sockets), so the total is bounded by pool + that per client, and one
+    client can't take the slots the others need. Whenever an uplink is paired
+    or a session ends, the idle pool is topped up again."""
     lock = threading.Lock()
+    per_client = broker.conns_per_client
     total = [0]
+    idle = [0]
+    active = collections.Counter()  # client -> sessions being served
     added = [0]  # clients learned from the bridge (MAX_ADDED_CLIENTS)
 
-    def spawn():
+    def top_up():
         with lock:
-            if total[0] >= max_conns:
-                return
-            total[0] += 1
-        threading.Thread(target=worker, daemon=True).start()
+            cap = pool + per_client * len(broker.clients)
+            n = 0
+            while idle[0] < pool and total[0] < cap:
+                idle[0] += 1
+                total[0] += 1
+                n += 1
+        for _ in range(n):
+            threading.Thread(target=worker, daemon=True).start()
 
     def worker():
         backoff = 0.5
+        serving = None
         try:
             while True:
                 s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM | socket.SOCK_CLOEXEC)
@@ -1166,6 +1237,12 @@ def run_uplink(broker, path, pool, max_conns=64, block=True):
                                 added[0] += 1
                                 broker.clients = {**broker.clients, who: {"label": clean(label, 60)}}
                         audit("uplink", added=who)
+                    with lock:
+                        if active[who] >= per_client:
+                            raise ValueError(f"too many connections for {who}")
+                        active[who] += 1
+                        idle[0] -= 1
+                        serving = who
                 except (OSError, ValueError) as e:
                     s.close()
                     if isinstance(e, ValueError):
@@ -1173,16 +1250,22 @@ def run_uplink(broker, path, pool, max_conns=64, block=True):
                     time.sleep(backoff)
                     backoff = min(backoff * 2, 10)
                     continue
-                spawn()  # keep the idle pool full while this one serves
+                top_up()  # keep the idle pool full while this one serves
                 audit("connect", requester=who, via="uplink")
                 broker.serve_conn(s, who, {"via": "uplink"})
                 return
         finally:
             with lock:
                 total[0] -= 1
+                if serving is None:
+                    idle[0] -= 1
+                else:
+                    active[serving] -= 1
+                    if active[serving] <= 0:
+                        del active[serving]
+            top_up()
 
-    for _ in range(pool):
-        spawn()
+    top_up()
     audit("ready", mode="uplink", path=path, pool=pool)
     notify_ready()
     while block:
@@ -1285,7 +1368,9 @@ def run_bridge(cfg, block=True):
             splice(conn, s)
 
         t = threading.Thread(
-            target=accept_loop, args=(sock, PeerCheck(spec), on_conn, name), daemon=True
+            target=accept_loop,
+            args=(sock, PeerCheck(spec), on_conn, name, conns_per_client(cfg)),
+            daemon=True,
         )
         t.start()
         threads.append(t)
