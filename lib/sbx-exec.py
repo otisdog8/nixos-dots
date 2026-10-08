@@ -2,7 +2,7 @@
 
   sbx-exec agent --listen SOCK [--idle-exit SECONDS]
       Inside the sandbox (its entry point): accept requests on SOCK and run each
-      command as a child, on the caller's own stdin/stdout/stderr.
+      command as a child, its stdin/stdout/stderr relayed to the caller's.
   sbx-exec run --socket SOCK [--cwd DIR | --home] -- CMD ARGS...
       Outside, from a launcher: run CMD in the sandbox; exit with its status.
       It runs in DIR (default: the caller's directory), which has to be the
@@ -15,34 +15,77 @@
       attach helper's client) can mount it in, where that hides nothing of the
       sandbox's own; exit 4 if DIR isn't there in the end.
 
-Each request passes the caller's fds 0-2 (SCM_RIGHTS), so a terminal works as
-usual: the command reads and writes the caller's tty directly. It isn't the
-command's controlling terminal (that would take stealing it from the caller's
-session), so the client forwards what the terminal would have delivered:
-INT, QUIT, TERM, HUP and WINCH (window size changes, read back with TIOCGWINSZ
-on the fd). The caller's environment is overlaid on the sandbox's, except the
-variables that locate the sandbox's own services (display, bus, runtime dir),
-which stay the sandbox's.
+None of the caller's fds enter the sandbox: the sandbox outlives the command,
+and a process the command leaves behind would keep them (the caller's terminal
+above all, which its shell reads the user's typing from next). The client
+relays bytes instead, over the connection, the way ssh does:
+  - stdin and stdout both terminals: the agent opens a pty in the sandbox, the
+    command's controlling terminal (its own session), set up with the caller's
+    terminal settings and size; the client puts its terminal in raw mode and
+    relays (Ctrl-C and the like go through as bytes; the pty's line
+    discipline turns them into signals). Its stderr is the pty too, unless the
+    caller's isn't a terminal (then a pipe, relayed separately).
+  - otherwise (a pipe or a file on either end): pipes for all three, relayed
+    with stdin's end of file passed on. (So the command doesn't see a terminal
+    even on the end that is one.)
+When the command exits (or the client goes), the agent closes its end of the
+pty or pipes: anything still holding the other end gets EIO or end of file,
+not the caller's terminal. The client forwards TERM and HUP (and INT and QUIT
+when they reach it rather than the pty) and window size changes.
+The caller's environment is overlaid on the sandbox's, except the variables
+that locate the sandbox's own services (display, bus, runtime dir), which stay
+the sandbox's.
+
+`run`'s wire protocol: the request as a JSON line; the agent's JSON line back
+({"ok": true} once the command runs, or {"error": ...}); then frames both ways,
+a type byte and a big-endian u32 length before the payload. From the client:
+"d" stdin bytes (empty: end of file), "w" a struct winsize, "s" a signal
+number byte. From the agent: "o" stdout, "e" stderr, "x" {"exit": code} (JSON,
+last).
 """
 
 import argparse
-import array
+import fcntl
 import json
 import os
 import re
+import select
+import shutil
 import signal
 import socket
 import stat
+import struct
 import subprocess
 import sys
+import termios
 import threading
 import time
+import tty
 
 MAX_REQUEST = 1 << 20
 # probe's exit statuses (the launcher falls back on them).
 NO_SANDBOX = 3
 NO_DIR = 4
-FORWARDED = [signal.SIGINT, signal.SIGQUIT, signal.SIGTERM, signal.SIGHUP, signal.SIGWINCH]
+# The relay: the request's version (a launcher from before it passed its fds),
+# frame header, the largest frame accepted, and how much either side buffers
+# for a slow reader before it stops reading what feeds that buffer.
+RELAY = 1
+HEADER = struct.Struct(">cI")
+MAX_FRAME = 1 << 20
+CHUNK = 1 << 16
+HIGH_WATER = 1 << 20
+FORWARDED = [signal.SIGINT, signal.SIGQUIT, signal.SIGTERM, signal.SIGHUP]
+# The command's own session and controlling terminal (the pty on its stdin),
+# then the command. The agent is threaded, so this isn't a preexec_fn.
+CTTY = """\
+import fcntl, os, sys, termios
+fcntl.ioctl(0, termios.TIOCSCTTY, 0)
+try:
+    os.execvp(sys.argv[1], sys.argv[1:])
+except OSError as e:
+    print(f"sbx-exec: {sys.argv[1]}: {e.strerror}", file=sys.stderr)
+    sys.exit(127)
+"""
 # Kept from the sandbox, never taken from the caller.
 SANDBOX_ENV = {
     "DBUS_SESSION_BUS_ADDRESS",
@@ -162,95 +205,353 @@ class Agent:
     def handle(self, conn):
         with self.lock:
             self.active += 1
-        fds = []
         try:
-            fds_arr = array.array("i")
-            msg, anc, _, _ = conn.recvmsg(MAX_REQUEST, socket.CMSG_SPACE(3 * fds_arr.itemsize))
-            for level, kind, data in anc:
-                if level == socket.SOL_SOCKET and kind == socket.SCM_RIGHTS:
-                    fds_arr.frombytes(data[: len(data) - (len(data) % fds_arr.itemsize)])
-            fds = list(fds_arr)
-            req = json.loads(msg.split(b"\n", 1)[0])
+            self.serve_one(conn)
+        except Exception as e:
+            log(f"request failed: {e}")
+        finally:
+            conn.close()
+            with self.lock:
+                self.active -= 1
+                self.last = time.monotonic()
+
+    def serve_one(self, conn):
+        try:
+            req, rest = read_request(conn)
             if req.get("op") == "probe":
                 reply = {"ok": True}
                 if "cwd" in req:
                     reply.update(dir_state(req["cwd"], req.get("id")))
-                try:
-                    conn.sendall((json.dumps(reply) + "\n").encode())
-                except OSError:
-                    pass
-                self.done(conn, fds)
+                send_line(conn, reply)
                 return
-            if len(fds) != 3:
-                raise ValueError("expected stdin, stdout and stderr")
-            argv = req["argv"]
-            if not isinstance(argv, list) or not argv or not all(isinstance(a, str) for a in argv):
-                raise ValueError("bad argv")
-            env = dict(os.environ)
-            for k, v in (req.get("env") or {}).items():
-                if isinstance(k, str) and isinstance(v, str) and k not in SANDBOX_ENV:
-                    env[k] = v
-            # No cwd: the sandbox's home. Otherwise exactly the caller's folder,
-            # never a stand-in (a command started elsewhere than asked works on
-            # the wrong files).
-            cwd = req.get("cwd")
-            if cwd is None:
-                cwd = env.get("HOME", "/")
-            elif dir_state(cwd, req.get("id"))["cwd"] != "same":
-                raise ValueError(f"{cwd} isn't shared with this sandbox")
-            p = subprocess.Popen(
-                argv,
-                stdin=fds[0],
-                stdout=fds[1],
-                stderr=fds[2],
-                cwd=cwd,
-                env=env,
-                start_new_session=True,
-            )
+            session = Session(req)
         except Exception as e:
             try:
-                conn.sendall((json.dumps({"error": str(e)}) + "\n").encode())
+                send_line(conn, {"error": str(e)})
             except OSError:
                 pass
-            self.done(conn, fds)
             return
-        for fd in fds:
-            os.close(fd)
-        fds = []
-
-        def signals():
-            f = conn.makefile("rb")
-            for line in f:
-                try:
-                    sig = int(line)
-                    if sig in FORWARDED:
-                        os.killpg(p.pid, sig)
-                except (ValueError, ProcessLookupError, PermissionError):
-                    pass
-            # The client went away (its terminal closed): hang up the command.
-            try:
-                os.killpg(p.pid, signal.SIGHUP)
-            except (ProcessLookupError, PermissionError):
-                pass
-
-        threading.Thread(target=signals, daemon=True).start()
-        code = p.wait()
         try:
-            conn.sendall((json.dumps({"exit": code}) + "\n").encode())
+            send_line(conn, {"ok": True})
         except OSError:
-            pass
-        self.done(conn, fds)
+            session.hang_up()
+            return
+        session.relay(conn, rest)
 
-    def done(self, conn, fds):
-        for fd in fds:
+
+def read_request(conn):
+    """The request's JSON line, and whatever came after it (the first frames)."""
+    buf = bytearray()
+    while b"\n" not in buf:
+        if len(buf) > MAX_REQUEST:
+            raise ValueError("request too large")
+        chunk = conn.recv(CHUNK)
+        if not chunk:
+            raise ValueError("no request")
+        buf += chunk
+    line, _, rest = bytes(buf).partition(b"\n")
+    req = json.loads(line)
+    if not isinstance(req, dict):
+        raise ValueError("bad request")
+    return req, rest
+
+
+def send_line(conn, obj):
+    conn.sendall((json.dumps(obj) + "\n").encode())
+
+
+def frame(kind, payload=b""):
+    return HEADER.pack(kind, len(payload)) + payload
+
+
+def frames(buf):
+    """Complete (type, payload) frames off the front of `buf` (a bytearray)."""
+    while len(buf) >= HEADER.size:
+        kind, n = HEADER.unpack_from(buf)
+        if n > MAX_FRAME:
+            raise ValueError("frame too large")
+        if len(buf) < HEADER.size + n:
+            return
+        payload = bytes(buf[HEADER.size : HEADER.size + n])
+        del buf[: HEADER.size + n]
+        yield kind, payload
+
+
+def nonblocking(fd):
+    fcntl.fcntl(fd, fcntl.F_SETFL, fcntl.fcntl(fd, fcntl.F_GETFL) | os.O_NONBLOCK)
+
+
+def termios_attrs(attrs, nccs):
+    """The caller's terminal settings (tcgetattr's list, control characters as
+    ints) checked for shape, for tcsetattr."""
+    if (
+        not isinstance(attrs, list)
+        or len(attrs) != 7
+        or not all(isinstance(a, int) and a >= 0 for a in attrs[:6])
+        or not isinstance(attrs[6], list)
+        or len(attrs[6]) != nccs
+        or not all(isinstance(c, int) and 0 <= c < 256 for c in attrs[6])
+    ):
+        raise ValueError("bad terminal settings")
+    return attrs
+
+
+class Session:
+    """One `run`: the command, on a pty or pipes the agent holds, and the relay
+    between those and the client's connection."""
+
+    def __init__(self, req):
+        if req.get("relay") != RELAY:
+            raise ValueError("this launcher's sbx-exec is older than the sandbox's; update it")
+        argv = req.get("argv")
+        if not isinstance(argv, list) or not argv or not all(isinstance(a, str) for a in argv):
+            raise ValueError("bad argv")
+        env = dict(os.environ)
+        for k, v in (req.get("env") or {}).items():
+            if isinstance(k, str) and isinstance(v, str) and k not in SANDBOX_ENV:
+                env[k] = v
+        # No cwd: the sandbox's home. Otherwise exactly the caller's folder,
+        # never a stand-in (a command started elsewhere than asked works on
+        # the wrong files).
+        cwd = req.get("cwd")
+        if cwd is None:
+            cwd = env.get("HOME", "/")
+        elif dir_state(cwd, req.get("id"))["cwd"] != "same":
+            raise ValueError(f"{cwd} isn't shared with this sandbox")
+        if "/" not in argv[0] and shutil.which(argv[0], path=env.get("PATH", os.defpath)) is None:
+            raise ValueError(f"{argv[0]}: command not found")
+        term = req.get("tty")
+        self.master = None
+        slave = None
+        try:
+            if term is not None:
+                if not isinstance(term, dict):
+                    raise ValueError("bad tty")
+                self.master, slave = os.openpty()
+                termios.tcsetattr(
+                    slave, termios.TCSANOW, termios_attrs(term.get("attrs"), len(termios.tcgetattr(slave)[6]))
+                )
+                size = term.get("size")
+                if isinstance(size, list) and len(size) == 4 and all(isinstance(x, int) and 0 <= x < 65536 for x in size):
+                    fcntl.ioctl(self.master, termios.TIOCSWINSZ, struct.pack("4H", *size))
+                err = slave if term.get("stderr") else subprocess.PIPE
+                self.p = subprocess.Popen(
+                    [sys.executable, "-IS", "-c", CTTY, *argv],
+                    stdin=slave,
+                    stdout=slave,
+                    stderr=err,
+                    cwd=cwd,
+                    env=env,
+                    start_new_session=True,
+                )
+            else:
+                self.p = subprocess.Popen(
+                    argv,
+                    stdin=subprocess.PIPE,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    cwd=cwd,
+                    env=env,
+                    start_new_session=True,
+                )
+        except BaseException:
+            if self.master is not None:
+                os.close(self.master)
+            raise
+        finally:
+            if slave is not None:
+                os.close(slave)
+        # What the agent reads (fd → frame type) and the command's stdin.
+        self.sources = {}
+        if self.master is not None:
+            self.sources[self.master] = b"o"
+            self.stdin = self.master
+        else:
+            self.sources[self.p.stdout.fileno()] = b"o"
+            self.stdin = self.p.stdin.fileno()
+        if self.p.stderr is not None:
+            self.sources[self.p.stderr.fileno()] = b"e"
+        for fd in {*self.sources, self.stdin}:
+            nonblocking(fd)
+
+    def close(self, fd):
+        """Stop reading or writing `fd` and close it (the pipes are the Popen's
+        file objects; the pty master is ours)."""
+        self.sources.pop(fd, None)
+        if fd == self.stdin:
+            self.stdin = None
+        if fd in self.sources or fd == self.stdin:
+            return
+        for f in (self.p.stdin, self.p.stdout, self.p.stderr):
+            if f is not None and not f.closed and f.fileno() == fd:
+                f.close()
+                return
+        if fd == self.master:
+            self.master = None
+        os.close(fd)
+
+    def close_all(self):
+        for fd in {*self.sources, *([self.stdin] if self.stdin is not None else [])}:
+            self.close(fd)
+        if self.master is not None:
+            os.close(self.master)
+            self.master = None
+
+    def hang_up(self):
+        """The client is gone: close our ends (whatever holds the others gets EIO
+        or end of file), hang up the command and wait for it."""
+        self.close_all()
+        try:
+            os.killpg(self.p.pid, signal.SIGHUP)
+        except (ProcessLookupError, PermissionError):
+            pass
+        self.p.wait()
+
+    def signal(self, sig):
+        if sig not in FORWARDED:
+            return
+        # INT and QUIT go where the terminal would send them: the pty's
+        # foreground process group. TERM and HUP to the command's.
+        pgrp = self.p.pid
+        if self.master is not None and sig in (signal.SIGINT, signal.SIGQUIT):
             try:
-                os.close(fd)
+                pgrp = os.tcgetpgrp(self.master)
             except OSError:
                 pass
-        conn.close()
-        with self.lock:
-            self.active -= 1
-            self.last = time.monotonic()
+        try:
+            os.killpg(pgrp, sig)
+        except (ProcessLookupError, PermissionError):
+            pass
+
+    def drain(self, out):
+        """After the command exits: what it wrote and the agent hasn't read yet.
+        A pty's output can lag the writer's exit a little, so it waits briefly
+        for more; not for long (and not for much), as whatever the command
+        left behind may still be writing."""
+        deadline = time.monotonic() + 1.0
+        for fd, kind in list(self.sources.items()):
+            total = 0
+            while total < 4 * HIGH_WATER and time.monotonic() < deadline:
+                if fd == self.master:
+                    r, _, _ = select.select([fd], [], [], 0.05)
+                    if not r:
+                        break
+                try:
+                    data = os.read(fd, CHUNK)
+                except BlockingIOError:
+                    break
+                except OSError:
+                    data = b""
+                if not data:
+                    break
+                total += len(data)
+                out += frame(kind, data)
+
+    def relay(self, conn, rest):
+        conn.setblocking(False)
+        cfd = conn.fileno()
+        pidfd = os.pidfd_open(self.p.pid)
+        inbuf = bytearray(rest)
+        out = bytearray()  # to the client
+        tocmd = bytearray()  # to the command's stdin
+        stdin_eof = False
+        try:
+            while True:
+                for kind, payload in frames(inbuf):
+                    if kind == b"d":
+                        if payload:
+                            if self.stdin is not None:
+                                tocmd += payload
+                        elif self.master is None:
+                            # A pty's end of file is the terminal's (^D, in
+                            # raw mode a byte); a pipe's is the caller's.
+                            stdin_eof = True
+                    elif kind == b"w" and self.master is not None and len(payload) == 8:
+                        fcntl.ioctl(self.master, termios.TIOCSWINSZ, payload)
+                    elif kind == b"s" and len(payload) == 1:
+                        self.signal(payload[0])
+                if stdin_eof and not tocmd and self.stdin is not None:
+                    self.close(self.stdin)
+                want = {pidfd: select.POLLIN}
+                if len(out) < HIGH_WATER:
+                    for fd in self.sources:
+                        want[fd] = want.get(fd, 0) | select.POLLIN
+                if out:
+                    want[cfd] = select.POLLOUT
+                if len(tocmd) < HIGH_WATER:
+                    want[cfd] = want.get(cfd, 0) | select.POLLIN
+                if tocmd and self.stdin is not None:
+                    want[self.stdin] = want.get(self.stdin, 0) | select.POLLOUT
+                poll = select.poll()
+                for fd, ev in want.items():
+                    poll.register(fd, ev)
+                for fd, ev in poll.poll():
+                    if fd == pidfd:
+                        code = self.p.wait()
+                        self.drain(out)
+                        self.close_all()
+                        try:
+                            os.killpg(self.p.pid, signal.SIGHUP)
+                        except (ProcessLookupError, PermissionError):
+                            pass
+                        out += frame(b"x", json.dumps({"exit": code}).encode())
+                        conn.setblocking(True)
+                        conn.settimeout(30)
+                        try:
+                            conn.sendall(out)
+                        except OSError:
+                            pass
+                        return
+                    if fd == cfd:
+                        if ev & select.POLLOUT and out:
+                            try:
+                                del out[: conn.send(out)]
+                            except BlockingIOError:
+                                pass
+                            except OSError:
+                                return self.hang_up()
+                        if ev & (select.POLLIN | select.POLLHUP | select.POLLERR):
+                            try:
+                                data = conn.recv(CHUNK)
+                            except BlockingIOError:
+                                continue
+                            except OSError:
+                                data = b""
+                            if not data:
+                                return self.hang_up()
+                            inbuf += data
+                        continue
+                    if fd == self.stdin and ev & (select.POLLOUT | select.POLLERR) and tocmd:
+                        try:
+                            del tocmd[: os.write(fd, tocmd)]
+                        except BlockingIOError:
+                            pass
+                        except OSError:
+                            # The command closed its stdin (or the pty is gone).
+                            tocmd.clear()
+                            if fd != self.master:
+                                self.close(fd)
+                    if fd in self.sources and ev & (select.POLLIN | select.POLLHUP | select.POLLERR):
+                        try:
+                            data = os.read(fd, CHUNK)
+                        except BlockingIOError:
+                            continue
+                        except OSError:
+                            data = b""  # EIO: a pty with no slave left
+                        if data:
+                            out += frame(self.sources[fd], data)
+                        else:
+                            self.sources.pop(fd)
+                            if fd != self.master:
+                                self.close(fd)
+                    elif fd == self.stdin and fd != self.master and ev & (select.POLLHUP | select.POLLERR):
+                        self.close(fd)
+        finally:
+            os.close(pidfd)
+            if self.p.returncode is None:
+                self.hang_up()
+            else:
+                self.close_all()
 
 
 # ── Client (the launcher, outside) ───────────────────────────────────────────
@@ -332,47 +633,150 @@ def probe(args):
     return 0
 
 
+def winsize(fd):
+    return list(struct.unpack("4H", fcntl.ioctl(fd, termios.TIOCGWINSZ, b"\0" * 8)))
+
+
+def write_all(fd, data):
+    """All of `data` to the caller's stdout or stderr. They're shared with
+    whatever started us, so they're never made non-blocking here (but may be
+    already)."""
+    view = memoryview(data)
+    while view:
+        try:
+            view = view[os.write(fd, view) :]
+        except BlockingIOError:
+            select.select([], [fd], [])
+
+
+def is_open(fd):
+    try:
+        os.fstat(fd)
+        return True
+    except OSError:
+        return False
+
+
 def run(args):
     try:
         s = connect(args.socket)
     except OSError as e:
         print(f"sbx-exec: {args.socket}: {e.strerror or e}", file=sys.stderr)
         return 125
-    req = {"argv": args.cmd, "env": dict(os.environ)}
+    req = {"argv": args.cmd, "env": dict(os.environ), "relay": RELAY}
     if not args.home:
         cwd = args.cwd or os.getcwd()
         req.update(cwd=cwd, id=ident(cwd))
-    s.sendmsg(
-        [(json.dumps(req) + "\n").encode()],
-        [(socket.SOL_SOCKET, socket.SCM_RIGHTS, array.array("i", [0, 1, 2]))],
-    )
-    lock = threading.Lock()
-
-    def forward(sig, _frame):
-        with lock:
-            try:
-                s.sendall(f"{int(sig)}\n".encode())
-            except OSError:
-                pass
-
-    for sig in FORWARDED:
-        signal.signal(sig, forward)
-    f = s.makefile("rb")
-    while True:
-        try:
-            line = f.readline()
-            break
-        except InterruptedError:
-            continue
-    if not line:
-        print("sbx-exec: the sandbox went away", file=sys.stderr)
-        return 125
+    interactive = os.isatty(0) and os.isatty(1)
+    if interactive:
+        attrs = termios.tcgetattr(0)
+        attrs[6] = [c[0] if isinstance(c, bytes) else c for c in attrs[6]]
+        req["tty"] = {"attrs": attrs, "size": winsize(1), "stderr": os.isatty(2)}
+    # Signals are queued and the loop woken; the loop forwards them.
+    pending = []
+    wake_r, wake_w = os.pipe2(os.O_NONBLOCK | os.O_CLOEXEC)
+    signal.set_wakeup_fd(wake_w)
+    for sig in [*FORWARDED, signal.SIGWINCH]:
+        signal.signal(sig, lambda sig, _frame: pending.append(sig))
+    s.sendall((json.dumps(req) + "\n").encode())
+    buf = bytearray()
+    while b"\n" not in buf:
+        chunk = s.recv(CHUNK)
+        if not chunk:
+            print("sbx-exec: the sandbox went away", file=sys.stderr)
+            return 125
+        buf += chunk
+    line, _, rest = bytes(buf).partition(b"\n")
     reply = json.loads(line)
     if "error" in reply:
-        print(f"sbx-exec: {reply['error']}", file=sys.stderr)
+        why = reply["error"]
+        if why == "expected stdin, stdout and stderr":
+            why = "the sandbox's sbx-exec is older than this launcher's; restart the sandbox"
+        print(f"sbx-exec: {why}", file=sys.stderr)
         return 126
-    code = reply.get("exit", 1)
-    return 128 - code if code < 0 else code
+    saved = None
+    if interactive:
+        saved = termios.tcgetattr(0)
+        tty.setraw(0, termios.TCSADRAIN)
+    try:
+        return pump(s, bytearray(rest), wake_r, pending, interactive)
+    finally:
+        if saved is not None:
+            termios.tcsetattr(0, termios.TCSADRAIN, saved)
+
+
+def pump(s, inbuf, wake_r, pending, interactive):
+    """The client's side of the relay; returns the command's exit status."""
+    s.setblocking(False)
+    sfd = s.fileno()
+    out = bytearray()  # to the agent
+    reading = is_open(0)
+    if not reading:
+        out += frame(b"d")
+    while True:
+        while pending:
+            sig = pending.pop(0)
+            if sig == signal.SIGWINCH:
+                if interactive:
+                    out += frame(b"w", struct.pack("4H", *winsize(1)))
+            else:
+                out += frame(b"s", bytes([sig]))
+        try:
+            for kind, payload in frames(inbuf):
+                if kind == b"o":
+                    write_all(1, payload)
+                elif kind == b"e":
+                    write_all(2, payload)
+                elif kind == b"x":
+                    code = json.loads(payload).get("exit", 1)
+                    return 128 - code if code < 0 else code
+        except BrokenPipeError:
+            # Our stdout's reader is gone: as the command would have, die of it.
+            return 128 + signal.SIGPIPE
+        want = {wake_r: select.POLLIN, sfd: select.POLLIN}
+        if out:
+            want[sfd] |= select.POLLOUT
+        if reading and len(out) < HIGH_WATER:
+            want[0] = select.POLLIN
+        poll = select.poll()
+        for fd, ev in want.items():
+            poll.register(fd, ev)
+        for fd, ev in poll.poll():
+            if fd == wake_r:
+                try:
+                    while os.read(wake_r, 256):
+                        pass
+                except BlockingIOError:
+                    pass
+            elif fd == 0:
+                try:
+                    data = os.read(0, CHUNK)
+                except BlockingIOError:
+                    continue
+                except OSError:
+                    data = b""  # EIO: the terminal hung up
+                out += frame(b"d", data)
+                if not data:
+                    reading = False
+            elif fd == sfd:
+                if ev & select.POLLOUT and out:
+                    try:
+                        del out[: s.send(out)]
+                    except BlockingIOError:
+                        pass
+                    except OSError:
+                        out.clear()
+                if ev & (select.POLLIN | select.POLLHUP | select.POLLERR):
+                    try:
+                        data = s.recv(CHUNK)
+                    except BlockingIOError:
+                        continue
+                    except OSError:
+                        data = b""
+                    if not data:
+                        print("sbx-exec: the sandbox went away", file=sys.stderr)
+                        return 125
+                    inbuf += data
 
 
 def main():
