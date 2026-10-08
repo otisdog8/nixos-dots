@@ -61,6 +61,7 @@ import unicodedata
 
 MAX_REQUEST = 64 * 1024
 MAX_ARGS = 256
+EXEC_LINES = 8  # dialog lines for a command, which must fit in them
 SESSION_TTL = 12 * 3600
 # One dialog per sandbox at a time; up to PROMPT_QUEUE more of its requests wait
 # their turn (an app asking for the microphone and then the camera), the rest
@@ -295,17 +296,28 @@ class Broker:
             return send({"type": "error", "message": "argv must be a non-empty list of strings"})
         if as_ not in ("user", "root"):
             return send({"type": "error", "message": "as must be user or root"})
+        # The folder is part of what the user approves, for root as for the
+        # user: it's shown, and pinning it wouldn't confine anything (the
+        # command itself could be `sh -c 'cd X && ...'`).
         cwd = req.get("cwd") or os.environ.get("HOME", "/")
         if not isinstance(cwd, str) or not os.path.isabs(cwd) or not os.path.isdir(cwd):
             cwd = os.environ.get("HOME", "/")
+        # Shown and remembered as what it is, not as a link to it.
+        cwd = os.path.realpath(cwd)
         cmd = show_argv(argv)
+        # The user approves exactly what they read: never a command (or
+        # folder) cut short for the dialog.
+        if len(cmd) > EXEC_LINES * FIELD_WIDTH or len(escape(cwd)) > 2 * FIELD_WIDTH:
+            return send({"type": "denied", "reason": "the command is too long to show in full in a dialog"})
         who = "ROOT" if as_ == "root" else "your user"
         summary = f"run a command outside its sandbox as {who}"
-        detail = self.with_reason(f"The command:\n{block(cmd, 8)}\nIn the folder:\n{untrusted(cwd, 2)}", req)
+        detail = self.with_reason(f"The command:\n{block(cmd, EXEC_LINES)}\nIn the folder:\n{untrusted(cwd, 2)}", req)
         ok, why = self.decide(
             sandbox,
             "exec",
-            ("exec", as_, tuple(argv)),
+            # The folder too: the same command elsewhere may run other code
+            # (a Makefile, a .git/config the sandbox wrote).
+            ("exec", as_, tuple(argv), cwd),
             summary,
             detail,
             as_=as_,
@@ -317,7 +329,7 @@ class Broker:
         log(f"{sandbox}: exec as {as_}: {cmd[:2000]} in {escape(cwd)[:500]}: {why}")
         if not ok:
             return send({"type": "denied", "reason": why})
-        full = argv if as_ == "user" else [self.run0, "--user=root", "--", *argv]
+        full = argv if as_ == "user" else [self.run0, "--user=root", f"--chdir={cwd}", "--", *argv]
         try:
             p = subprocess.Popen(
                 full, cwd=cwd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE
@@ -331,8 +343,9 @@ class Broker:
 
         t = threading.Thread(target=pump, args=(p.stderr, "stderr"), daemon=True)
         t.start()
-        pump(p.stdout, "stdout")
-        t.join()
+        with p:
+            pump(p.stdout, "stdout")
+            t.join()
         send({"type": "exit", "code": p.wait()})
 
     def op_grant_net(self, sandbox, req, send):
@@ -341,6 +354,10 @@ class Broker:
             net = ipaddress.ip_network(str(addr), strict=False)
         except ValueError:
             return send({"type": "error", "message": "addr must be an IP address or prefix"})
+        # An IPv6 scope id ("fe80::1%...") is free text the dialog would show
+        # as the broker's own words, and no unit filter takes one.
+        if getattr(net.network_address, "scope_id", None):
+            return send({"type": "error", "message": "addr must not have a scope id"})
         units = self.sandboxes[sandbox].get("netUnits", [])
         if not units:
             return send({"type": "denied", "reason": "this sandbox's network isn't filtered per sandbox"})
@@ -907,7 +924,7 @@ class PulseFilter:
         self.version = None  # negotiated in AUTH
         self.mic = broker.sandboxes[sandbox].get("audio") == "microphone"
         self.state = threading.Lock()
-        self.pending = {}  # tag of a CREATE_*_STREAM -> stream kind
+        self.pending = {}  # tag of a CREATE_*_STREAM (records from arrival) -> stream kind
         self.streams = {}  # (kind, channel) -> server-wide index
         self.recording = 0  # record requests awaiting a decision
         self.client_routes = False  # the client's proplist picked a target
@@ -975,7 +992,10 @@ class PulseFilter:
             with self.state:
                 kind = self.pending.pop(tag, None)
                 channel, index = pa_u32(payload, 10), pa_u32(payload, 15)
-                if kind and command == PA_REPLY and channel is not None and index is not None:
+                # A playback stream's reply goes on with `missing` (an upload
+                # stream's, say, ends after channel and length).
+                shaped = kind != "sink-input" or pa_u32(payload, 20) is not None
+                if kind and command == PA_REPLY and channel is not None and index is not None and shaped:
                     self.streams[(kind, channel)] = index
         elif command in (PA_PLAYBACK_STREAM_KILLED, PA_RECORD_STREAM_KILLED):
             self.forget(PA_STREAM_KIND[command], pa_u32(payload, 10))
@@ -997,7 +1017,12 @@ class PulseFilter:
                 if cmd is None:
                     break
                 command, tag = cmd
-                refused = self.refuse(command, payload)
+                with self.state:
+                    # A reply is matched to a stream by its tag: another
+                    # command can't share one still waiting (its reply could
+                    # pass for the stream's, with another client's index).
+                    reused = tag in self.pending
+                refused = "a tag still in use" if reused else self.refuse(command, payload)
                 if refused:
                     log(f"{self.sandbox}: audio: refused {refused}")
                     self.send_client(pa_error(tag))
@@ -1012,6 +1037,7 @@ class PulseFilter:
                         busy = self.recording >= PA_MAX_PENDING_RECORDS
                         if not busy:
                             self.recording += 1
+                            self.pending[tag] = "source-output"
                     if busy:
                         log(f"{self.sandbox}: audio: refused a record stream (too many waiting)")
                         self.send_client(pa_error(tag))
@@ -1050,7 +1076,19 @@ class PulseFilter:
             except ValueError:
                 routes = command == PA_UPDATE_CLIENT_PROPLIST or payload[10:11] == b"P"
             if routes:
-                self.client_routes = True
+                with self.state:
+                    # Not while a recording is asked about or open: it was
+                    # classified (and the user asked) without them, and the
+                    # server would see them before the record request.
+                    recording = (
+                        self.recording
+                        or "source-output" in self.pending.values()
+                        or any(k == "source-output" for k, _ in self.streams)
+                    )
+                    if not recording:
+                        self.client_routes = True
+                if recording:
+                    return "client properties that pick a source while recording"
             return None
         if command == PA_UPDATE_RECORD_STREAM_PROPLIST:
             r = PaTags(payload)
@@ -1089,10 +1127,10 @@ class PulseFilter:
                 )
             log(f"{self.sandbox}: audio: record {kind} {escape(source or '(default source)')[:300]}: {why}")
             if ok:
-                with self.state:
-                    self.pending[tag] = "source-output"
                 self.send_server(pa_packet(payload))
             else:
+                with self.state:
+                    self.pending.pop(tag, None)
                 self.send_client(pa_error(tag))
         except OSError:
             pass
@@ -1139,13 +1177,15 @@ def find_fido_token():
 
 
 def recv_exact(conn, n):
-    buf = b""
+    # A bytearray grows in place: a payload trickled in small pieces costs
+    # linear time, not a copy of all of it per piece.
+    buf = bytearray()
     while len(buf) < n:
-        chunk = conn.recv(n - len(buf))
+        chunk = conn.recv(min(n - len(buf), 1 << 20))
         if not chunk:
             return None
         buf += chunk
-    return buf
+    return bytes(buf)
 
 
 class CtapRelay:

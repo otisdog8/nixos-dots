@@ -155,6 +155,48 @@ class Dialogs(unittest.TestCase):
         self.check_dialog(args)
         self.assertIn("FAKE\\u202e\\u200bdir\\tx", args[-1])
 
+    def test_exec_too_long_to_show(self):
+        """A command that doesn't fit the dialog is refused, not shown cut
+        short for the user to approve unseen."""
+        b, log = make_broker(self.tmp.name)
+        sent = []
+        b.op_exec("sb", {"argv": ["sh", "-c", "true " + "x" * 1000]}, sent.append)
+        self.assertEqual(sent[0]["type"], "denied")
+        self.assertIn("too long", sent[0]["reason"])
+        self.assertFalse(os.path.exists(log))
+
+    def test_root_exec_shows_its_folder(self):
+        b, log = make_broker(self.tmp.name)
+        b.op_exec("sb", {"argv": ["true"], "as": "root", "cwd": self.tmp.name}, [].append)
+        (args,) = dialogs(log)
+        here = os.path.realpath(self.tmp.name)
+        self.assertIn("In the folder:\n" + broker.GUTTER + here + "\n", args[-1])
+
+    def test_grant_net_scope_id(self):
+        b, log = make_broker(self.tmp.name, sandboxes={"sb": {"label": "Test sandbox", "netUnits": ["x.service"]}})
+        sent = []
+        b.op_grant_net("sb", {"addr": "fe80::1%your password manager"}, sent.append)
+        self.assertEqual(sent[0]["type"], "error")
+        self.assertFalse(os.path.exists(log))
+
+
+class ExecSession(unittest.TestCase):
+    def test_session_answer_is_for_that_folder(self):
+        """"Allow for this session" covers the command in the folder it was
+        asked for: elsewhere the same command may run other code."""
+        with tempfile.TemporaryDirectory() as tmp:
+            here, there = os.path.join(tmp, "here"), os.path.join(tmp, "there")
+            os.mkdir(here)
+            os.mkdir(there)
+            os.symlink(here, os.path.join(tmp, "link"))
+            b, log = make_broker(tmp, prompt_answer="session")
+            for cwd in (here, here, os.path.join(tmp, "link"), there):
+                sent = []
+                b.op_exec("sb", {"argv": ["true"], "cwd": cwd}, sent.append)
+                self.assertEqual(sent[-1], {"type": "exit", "code": 0})
+            # here once (the link is the same folder), there once.
+            self.assertEqual(len(dialogs(log)), 2)
+
 
 class Queue(unittest.TestCase):
     def test_one_dialog_per_sandbox(self):
@@ -318,12 +360,15 @@ class FilterTest(unittest.TestCase):
         self.listener.listen(1)
         self.client, theirs = socket.socketpair()
         self.answers = []
+        self.gate = None  # an Event decide waits for, if set
 
         class FakeBroker:
             sandboxes = {"sb": {"audio": "microphone", "label": "sb"}}
 
             def decide(fb, sandbox, op, key, summary, detail, allow_session=True, **kw):
                 self.answers.append((key, summary, allow_session))
+                if self.gate:
+                    self.gate.wait(5)
                 return True, "allowed once"
 
         self.filter = broker.PulseFilter(FakeBroker(), "sb", theirs, path)
@@ -406,6 +451,39 @@ class FilterTest(unittest.TestCase):
         self.client.sendall(pkt(record_payload(35, tag=2)))
         read_pkt(self.server)
         self.assertEqual(self.answers[0][0][1], "monitor")
+
+    def test_client_proplist_routes_while_asking(self):
+        """The other order: properties that pick a source sent while the user
+        is asked about the default microphone (the server would get them
+        before the record request) are refused, and stay refused while the
+        recording is open."""
+        self.gate = threading.Event()
+        self.client.sendall(pkt(record_payload(35, tag=2)))
+        for _ in range(100):
+            if self.answers:
+                break
+            time.sleep(0.01)
+        self.assertEqual(self.answers[0][1], "use your microphone")
+        self.assertIsNone(self.command(broker.PA_UPDATE_CLIENT_PROPLIST, 3, L(1) + P({"target.object": "x"})))
+        self.assertIsNone(self.command(broker.PA_SET_CLIENT_NAME, 4, P({"node.target": "55"})))
+        self.gate.set()
+        self.assertEqual(broker.pa_command(read_pkt(self.server)), (broker.PA_CREATE_RECORD_STREAM, 2))
+        self.server.sendall(pkt(L(broker.PA_REPLY) + L(2) + L(0) + L(70)))
+        read_pkt(self.client)
+        self.assertIsNone(self.command(broker.PA_UPDATE_CLIENT_PROPLIST, 5, L(1) + P({"target.object": "x"})))
+        self.assertIsNotNone(self.command(broker.PA_UPDATE_CLIENT_PROPLIST, 6, L(1) + P({"application.name": "x"})))
+
+    def test_tag_reuse(self):
+        """A command can't share the tag of a stream still waiting for its
+        reply: that reply could pass for the stream's, with another client's
+        index in it."""
+        self.client.sendall(pkt(L(broker.PA_CREATE_PLAYBACK_STREAM) + L(5) + b"..."))
+        read_pkt(self.server)
+        self.assertIsNone(self.command(95, 5, T("x") + b"a" + bytes([3, 2]) + struct.pack("!I", 48000)))  # CREATE_UPLOAD_STREAM
+        # An upload stream's reply shape (channel, length) isn't a playback's.
+        self.server.sendall(pkt(L(broker.PA_REPLY) + L(5) + L(0) + L(41)))
+        read_pkt(self.client)
+        self.assertIsNone(self.command(37, 6, L(41) + b"v" + bytes([1]) + struct.pack("!I", 0)))
 
     def test_record_proplist_update(self):
         self.assertIsNone(self.command(80, 1, L(0) + L(1) + P({"target.object": "x"})))

@@ -6,6 +6,8 @@ import importlib.util
 import json
 import os
 import stat
+import subprocess
+import sys
 import tempfile
 import unittest
 
@@ -298,7 +300,7 @@ class VmPath(unittest.TestCase):
             with self.assertRaises(attach.Refused):
                 attach.vm_targets(self.cfg, "blender", rtdir, 1234, wait=0)
 
-    def flow(self, fail_idmap=False):
+    def flow(self, fail_idmap=False, targets=1):
         """op_vm_path with the privileged calls mocked: (attrs set, attach
         calls). The VM's uid is the user's + 1."""
         from unittest import mock
@@ -322,9 +324,11 @@ class VmPath(unittest.TestCase):
         ), mock.patch.object(attach, "mount_setattr", setattr_), mock.patch.object(
             attach, "idmap_userns", userns
         ), mock.patch.object(attach.pwd, "getpwnam", lambda n: vm_pw), mock.patch.object(
-            attach, "vm_targets", lambda cfg, vm, rtdir, owner: [os.open("/", os.O_RDONLY)] if owner == vm_pw.pw_uid else []
+            attach,
+            "vm_targets",
+            lambda cfg, vm, rtdir, owner: [os.open("/", os.O_RDONLY) for _ in range(targets)] if owner == vm_pw.pw_uid else [],
         ), mock.patch.object(
-            attach, "attach", lambda pidfd, tree, rel, is_dir, owner: attached.append((rel, owner))
+            attach, "attach", lambda pidfd, tree, rel, is_dir, owner, rdev=None: attached.append((tree, rel, owner)) or True
         ):
             n = attach.op_vm_path(
                 self.cfg, {"op": "vm-path", "vm": "blender", "rtdir": "/run/sandbox-vm/blender/main", "path": "/home/u/x", "write": True}
@@ -335,10 +339,20 @@ class VmPath(unittest.TestCase):
         n, attrs, attached, maps = self.flow()
         self.assertEqual(n, 1)
         me, mg = os.getuid(), os.getgid()
-        self.assertEqual(maps, [([(me, me + 1)], [(mg, mg + 1)])])
-        self.assertEqual([a[0] for a in attrs], [attach.MOUNT_ATTR_NOSUID | attach.MOUNT_ATTR_NODEV, attach.MOUNT_ATTR_IDMAP])
+        # Once to check it can be idmapped at all, once for the target.
+        self.assertEqual(maps, [([(me, me + 1)], [(mg, mg + 1)])] * 2)
+        self.assertEqual([a[0] for a in attrs], [attach.MOUNT_ATTR_NOSUID | attach.MOUNT_ATTR_NODEV, attach.MOUNT_ATTR_IDMAP] * 2)
         self.assertGreater(attrs[1][1], 0)
-        self.assertEqual(attached, [("/x", me + 1)])
+        self.assertEqual([a[1:] for a in attached], [("/x", me + 1)])
+
+    def test_a_clone_per_target(self):
+        """A detached tree can be mounted once: every running instance gets
+        its own clone, each set up (read-only, idmapped) the same."""
+        n, attrs, attached, maps = self.flow(targets=3)
+        self.assertEqual(n, 3)
+        self.assertEqual(len(attached), 3)
+        self.assertEqual(len(maps), 4)
+        self.assertEqual(len(attrs), 8)
 
     def test_not_idmappable_is_refused(self):
         with self.assertRaises(attach.Refused):
@@ -377,6 +391,67 @@ def load_grants():
     grants = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(grants)
     return grants
+
+
+class Sealed(unittest.TestCase):
+    """What runs as root inside a sandbox's mount namespace (after setns) is
+    sealed: it can't load code from a file, whose path would name the
+    sandbox's. Each case runs in a fresh `python3 -IS` (as the helper does),
+    so only attach.py's own imports are loaded."""
+
+    def run_sealed(self, body):
+        script = (
+            "import os, sys\n"
+            f"ns = {{'__name__': 'attach'}}\n"
+            f"exec(compile(open({os.path.join(HERE, '..', 'attach.py')!r}).read(), 'attach.py', 'exec'), ns)\n"
+            # attach.X reads and sets the module's globals.
+            "class A:\n"
+            "    __getattr__ = lambda self, k: ns[k]\n"
+            "    __setattr__ = lambda self, k, v: ns.__setitem__(k, v)\n"
+            "attach = A()\n"
+            + body
+        )
+        r = subprocess.run([sys.executable, "-I", "-S", "-c", script], capture_output=True, text=True, timeout=30)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        return r.stdout.split()
+
+    def test_nothing_loads(self):
+        out = self.run_sealed(
+            "attach.seal()\n"
+            "def tried(f):\n"
+            "    try:\n"
+            "        f()\n"
+            "    except (ImportError, PermissionError):\n"
+            "        return 'refused'\n"
+            "    return 'loaded'\n"
+            "import importlib\n"
+            "print(tried(lambda: importlib.import_module('decimal')))\n"  # a .py module
+            "print(tried(lambda: importlib.import_module('_csv')))\n"  # an extension module
+            "print(tried(lambda: attach.ctypes.CDLL('libm.so.6')))\n"
+            "print(tried(lambda: attach.subprocess.run(['true'])))\n"
+            "print(tried(lambda: os.execv('/bin/true', ['true'])))\n"
+            "print(tried(lambda: os.posix_spawn('/bin/true', ['true'], {})))\n"
+        )
+        self.assertEqual(out, ["refused"] * 6)
+
+    def test_mount_in_needs_nothing_more(self):
+        """attach's part in the sandbox (mount point by a dropped child, fd
+        passing back, the mount) runs sealed: no lazy import on the way, the
+        one in socket.recv_fds included. The uid drop and the mount itself
+        need root, so they're stubbed."""
+        with tempfile.TemporaryDirectory() as tmp:
+            if attach.statfs_type(os.open(tmp, os.O_PATH)) != attach.TMPFS_MAGIC:
+                self.skipTest("TMPDIR must be on a tmpfs")
+            null = os.stat("/dev/null").st_rdev
+            out = self.run_sealed(
+                "os.setgroups = os.setresgid = os.setresuid = lambda *a: None\n"
+                "attach.move_mount = lambda tree, dst: print('mounted')\n"
+                "attach.seal()\n"
+                f"print(attach.mount_in(-1, {os.path.realpath(tmp) + '/a/b'!r}, True, os.getuid(), os.getgid(), None).decode())\n"
+                f"print(attach.mount_in(-1, '/dev/null', False, os.getuid(), os.getgid(), {null}).decode())\n"
+            )
+            self.assertTrue(os.path.isdir(os.path.join(tmp, "a", "b")))
+        self.assertEqual(out, ["mounted", "ok", "already"])
 
 
 class GuestMount(unittest.TestCase):

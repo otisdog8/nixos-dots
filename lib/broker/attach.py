@@ -57,11 +57,20 @@ from a held fd, strictly beneath it (openat2: no symlink, no other mount).
 Mount points are made by a child that has dropped to the sandbox's own uid,
 without following symlinks, and only on the sandbox's own tmpfs; root only
 does the mount.
+
+Inside a sandbox's mount namespace every path names the sandbox's files, which
+its user controls (a nixpak record is the user's to write, so "the sandbox" may
+be any namespace the user made). The forked child that joins one is sealed
+first (`seal`): from then on nothing can load code from a file, so nothing
+there runs as root. Everything the code after setns needs is imported here, at
+the top, in the host's namespace.
 """
 
+import array  # socket.send_fds/recv_fds import it lazily: after setns, too late
 import ctypes
 import errno
 import fnmatch
+import importlib.machinery
 import ipaddress
 import json
 import os
@@ -107,6 +116,28 @@ TMPFS_MAGIC = 0x01021994
 
 class Refused(Exception):
     pass
+
+
+def sealed(*_args, **_kwargs):
+    raise PermissionError("nothing loads from a file in a sandbox's namespace")
+
+
+def seal():
+    """Make this (forked, about to setns) process unable to load code from a
+    file: imports only from what is built into the interpreter (a lazy import
+    would dlopen or exec a module from the sandbox's /nix/store as root), no
+    dlopen (ctypes), no exec or spawn. Irreversible; only for a child that
+    exits when its job in the sandbox is done."""
+    sys.meta_path[:] = [
+        f for f in sys.meta_path if f in (importlib.machinery.BuiltinImporter, importlib.machinery.FrozenImporter)
+    ]
+    sys.path_hooks.clear()
+    sys.path_importer_cache.clear()
+    sys.path[:] = []
+    ctypes._dlopen = sealed
+    for name in ("execv", "execve", "posix_spawn", "posix_spawnp", "system", "popen"):
+        setattr(os, name, sealed)
+    subprocess.Popen = sealed
 
 
 def check(ret, what):
@@ -474,22 +505,24 @@ def mountpoint_as(owner, gid, path, is_dir, close=()):
     return fds[0]
 
 
-def attach(pidfd, tree, path, is_dir, owner):
+def attach(pidfd, tree, path, is_dir, owner, rdev=None):
     """Mount the detached `tree` at `path` inside the sandbox of `pidfd`, from a
     child (so this process keeps the host namespace). The mount point is made
     by a grandchild that has dropped to the sandbox's uid (mountpoint_as);
-    only the mount itself is root's."""
+    only the mount itself is root's. A detached tree can be mounted once: each
+    target needs its own clone. With `rdev` (a device node), a `path` that
+    already is that device (bound at start, or attached before) is left as it
+    is. True if mounted, False if it was already there."""
     gid = pidfd_gid(pidfd)
     r, w = os.pipe()
     child = os.fork()
     if child == 0:
         os.close(r)
         try:
+            seal()
             os.setns(pidfd, CLONE_NEWNS)
             # The detached tree and the pidfd stay out of the unprivileged child.
-            dst = mountpoint_as(owner, gid, path, is_dir, close=(tree, pidfd, w))
-            move_mount(tree, dst)
-            os.write(w, b"ok")
+            os.write(w, mount_in(tree, path, is_dir, owner, gid, rdev, close=(tree, pidfd, w)))
             os._exit(0)
         except BaseException as e:
             os.write(w, str(e).encode()[:500])
@@ -498,8 +531,48 @@ def attach(pidfd, tree, path, is_dir, owner):
     msg = os.read(r, 600).decode("utf-8", "replace")
     os.close(r)
     _, status = os.waitpid(child, 0)
-    if status != 0 or msg != "ok":
+    if status != 0 or msg not in ("ok", "already"):
         raise Refused(msg or "attach failed")
+    return msg == "ok"
+
+
+def mount_in(tree, path, is_dir, owner, gid, rdev, close=()):
+    """attach's part inside the sandbox's namespace (sealed): b"ok" once
+    `tree` is mounted at `path`, b"already" if `path` already is device
+    `rdev` (a sandbox can't make a device node itself, so it was bound)."""
+    dst = mountpoint_as(owner, gid, path, is_dir, close=close)
+    try:
+        if rdev is not None:
+            st = os.fstat(dst)
+            if stat.S_ISCHR(st.st_mode) and st.st_rdev == rdev:
+                return b"already"
+        move_mount(tree, dst)
+        return b"ok"
+    finally:
+        os.close(dst)
+
+
+def attach_all(pidfds, clone, path, is_dir, owner, rdev=None):
+    """attach a fresh clone (`clone()`, a detached tree) into each of
+    `pidfds`, closing them. Every target is tried; any failure is reported
+    after (Refused). The number of targets it was mounted into."""
+    n, errors = 0, []
+    try:
+        for pidfd in pidfds:
+            try:
+                tree = clone()
+                try:
+                    n += attach(pidfd, tree, path, is_dir, owner, rdev)
+                finally:
+                    os.close(tree)
+            except (Refused, OSError) as e:
+                errors.append(str(e))
+    finally:
+        for pidfd in pidfds:
+            os.close(pidfd)
+    if errors:
+        raise Refused(f"{len(errors)} of {len(pidfds)} failed: {errors[0]}")
+    return n
 
 
 def canonical(path):
@@ -574,27 +647,28 @@ def op_path(cfg, sb, name, req):
         raise Refused("this sandbox can't take folders while running")
     user = cfg["user"]
     path = home_path(user, req.get("path"))
+    attr = MOUNT_ATTR_NOSUID | MOUNT_ATTR_NODEV
+    if not req.get("write"):
+        attr |= MOUNT_ATTR_RDONLY
     fd = open_as_user(user, path)
     try:
-        tree = open_tree(fd, recursive=True)
-    finally:
-        os.close(fd)
-    try:
-        attr = MOUNT_ATTR_NOSUID | MOUNT_ATTR_NODEV
-        if not req.get("write"):
-            attr |= MOUNT_ATTR_RDONLY
-        mount_setattr(tree, attr)
+
+        def clone():
+            tree = open_tree(fd, recursive=True)
+            try:
+                mount_setattr(tree, attr)
+            except BaseException:
+                os.close(tree)
+                raise
+            return tree
+
         pidfds = targets(cfg, sb, name)
         if not pidfds:
             raise Refused(f"{name} isn't running")
-        for pidfd in pidfds:
-            try:
-                attach(pidfd, tree, path, True, user["uid"])
-            finally:
-                os.close(pidfd)
+        attach_all(pidfds, clone, path, True, user["uid"])
         return len(pidfds)
     finally:
-        os.close(tree)
+        os.close(fd)
 
 
 def vm_targets(cfg, vm, rtdir, owner, wait=10.0):
@@ -654,29 +728,31 @@ def op_vm_path(cfg, req):
     user = cfg["user"]
     path = home_path(user, req.get("path"))
     vm_pw = pwd.getpwnam(vms[vm])
+    attr = MOUNT_ATTR_NOSUID | MOUNT_ATTR_NODEV
+    if not req.get("write"):
+        attr |= MOUNT_ATTR_RDONLY
     fd = open_as_user(user, path)
     try:
-        tree = open_tree(fd, recursive=True)
-    finally:
-        os.close(fd)
-    try:
-        attr = MOUNT_ATTR_NOSUID | MOUNT_ATTR_NODEV
-        if not req.get("write"):
-            attr |= MOUNT_ATTR_RDONLY
-        mount_setattr(tree, attr)
-        idmap_to(tree, user, vm_pw, path)
+
+        def clone():
+            tree = open_tree(fd, recursive=True)
+            try:
+                mount_setattr(tree, attr)
+                idmap_to(tree, user, vm_pw, path)
+            except BaseException:
+                os.close(tree)
+                raise
+            return tree
+
+        # Refused before looking for the device if it can't be idmapped.
+        os.close(clone())
         pidfds = vm_targets(cfg, vm, rtdir, vm_pw.pw_uid)
         if not pidfds:
             raise Refused(f"{vm}'s grants share isn't running")
-        rel = path[len(user["home"]) :]
-        for pidfd in pidfds:
-            try:
-                attach(pidfd, tree, rel, True, vm_pw.pw_uid)
-            finally:
-                os.close(pidfd)
+        attach_all(pidfds, clone, path[len(user["home"]) :], True, vm_pw.pw_uid)
         return len(pidfds)
     finally:
-        os.close(tree)
+        os.close(fd)
 
 
 def uvc_nodes():
@@ -710,20 +786,15 @@ def op_camera(cfg, sb, name, req):
         for node in nodes:
             fd = os.open(node, os.O_PATH | os.O_NOFOLLOW | os.O_CLOEXEC)
             try:
-                if not stat.S_ISCHR(os.fstat(fd).st_mode):
+                st = os.fstat(fd)
+                if not stat.S_ISCHR(st.st_mode):
                     raise Refused(f"{node} isn't a device")
-                tree = open_tree(fd, recursive=False)
+                n = attach_all(
+                    [os.dup(p) for p in pidfds], lambda: open_tree(fd, recursive=False), node, False, owner, st.st_rdev
+                )
+                log(f"{name}: {node}: mounted in {n}, already there in {len(pidfds) - n}")
             finally:
                 os.close(fd)
-            try:
-                for pidfd in pidfds:
-                    try:
-                        attach(pidfd, tree, node, False, owner)
-                    except Refused as e:
-                        # Already there (bound at start, or attached before).
-                        log(f"{name}: {node}: {e}")
-            finally:
-                os.close(tree)
         return len(pidfds)
     finally:
         for pidfd in pidfds:
