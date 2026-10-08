@@ -15,8 +15,9 @@
 #   agent-vm.service       the VMM, as sbx-agentvm (group kvm); its disk (an
 #                          image bound in from /large, or a dedicated block
 #                          device) is all it sees of the host's data
-#   agent-vm-prep.service  root: per-boot runtime dir and SSH keys, the disk
-#                          image (created sparse and nodatacow on first start)
+#   agent-vm-prep.service  root (confined): per-boot runtime dir and SSH keys,
+#                          the disk image (created sparse and nodatacow on
+#                          first start, in a root-only directory)
 #   agent-vm-net.service   passt, as sbx-agentvm-net: the network policy below
 #                          (cgroup IP filter + owner-matched port limits)
 # Operators (members of agent-vm-users) get `agent-vm ssh|status|log|restart`,
@@ -89,13 +90,42 @@ let
 
   co = "${pkgs.coreutils}/bin";
   crosvm = "${pkgs.crosvm}/bin/crosvm";
+  setpriv = "${pkgs.util-linux}/bin/setpriv";
 
+  # Root never works inside a directory another uid owns, nor reads from one
+  # (the VMM's meta/ and ctl/, passt's net/). Clearing the runtime dir: such a
+  # directory is emptied AS its owner (root never walks what that uid put
+  # there), then removed as root, which only works on an empty one; root's own
+  # directories hold only root's files. Only root creates entries in the
+  # runtime dir itself. Run at start (leftovers) and at stop; systemd removes
+  # the (then root-only) directory itself (RuntimeDirectory=).
+  clearScript = pkgs.writeShellScript "${unit}-clear" ''
+    set -euo pipefail
+    for e in ${rt}/*; do
+      [ -e "$e" ] || [ -L "$e" ] || continue
+      if [ -d "$e" ] && [ ! -L "$e" ]; then
+        o="$(${co}/stat -c %u:%g -- "$e")"
+        if [ "''${o%:*}" != 0 ]; then
+          ${setpriv} --reuid="''${o%:*}" --regid="''${o#*:}" --clear-groups -- \
+            ${pkgs.findutils}/bin/find "$e" -xdev -mindepth 1 -delete
+          ${co}/rmdir -- "$e"
+          continue
+        fi
+      fi
+      ${co}/rm -rf --one-file-system -- "$e"
+    done
+  '';
+
+  # The runtime dir (/run/agent-vm, RuntimeDirectory=, root's, 0711) is new on
+  # every start. meta/ and ctl/ stay root's until everything in them is in
+  # place (the host key is read back from meta/ for known_hosts before the
+  # VMM's uid can touch it); then the files, and last the directories, are
+  # handed over.
   prepScript = pkgs.writeShellScript "${unit}-prep" ''
     set -euo pipefail
     umask 077
-    ${co}/rm -rf -- ${rt}
-    ${co}/install -d -m 0711 ${rt}
-    ${co}/install -d -m 0700 -o ${vmUser} -g ${group} ${rt}/meta ${rt}/ctl
+    ${clearScript}
+    ${co}/install -d -m 0700 ${rt}/meta ${rt}/ctl
     # passt (sbx-agentvm-net) makes the socket; the VMM connects as the group.
     ${co}/install -d -m 0750 -o ${netUser} -g ${group} ${rt}/net
     ${co}/install -d -m 0750 -g ${operators} ${rt}/client
@@ -103,26 +133,63 @@ let
     ${pkgs.openssh}/bin/ssh-keygen -q -t ed25519 -N "" -C "operators@${unit}" -f ${rt}/client/id_ed25519
     ${co}/install -m 0644 ${rt}/client/id_ed25519.pub ${rt}/meta/authorized_keys
     printf '${unit} %s\n' "$(${co}/cut -d' ' -f1,2 ${rt}/meta/ssh_host_ed25519_key.pub)" > ${rt}/client/known_hosts
-    ${co}/chown ${vmUser}:${group} ${rt}/meta/*
-    ${co}/chown root:${operators} ${rt}/client/*
+    ${co}/chown -h root:${operators} ${rt}/client/*
     ${co}/chmod 0640 ${rt}/client/*
+    ${co}/chown -h ${vmUser}:${group} ${rt}/meta/*
+    ${co}/chown -h ${vmUser}:${group} ${rt}/meta ${rt}/ctl
 
     ${if blockDisk then blockPrep else imagePrep}
   '';
   disk = lib.escapeShellArg cfg.disk.path;
+  diskDir = dirOf cfg.disk.path;
   # The image: sparse, created once, always owned by the VMM's uid (which may
   # differ across rebuilds on a host that doesn't persist its uid map). On a
   # copy-on-write host filesystem (btrfs) it is nodatacow: random writes into a
   # CoW file fragment it badly. +C only takes on files created empty, hence on
   # the directory before the image exists; elsewhere chattr fails harmlessly.
   # Compression and checksums come from the guest's own btrfs instead.
+  #
+  # Its directory is root's, 0700 (made by tmpfiles): nothing but root reaches
+  # the image by its path (the VMM gets it bound in by systemd), so no other
+  # uid can swap what root creates, chowns or binds there, and every directory
+  # above it must be root's and writable by root alone. Earlier builds gave the
+  # directory to the VMM's uid: it is taken back (here and by tmpfiles), and
+  # what that uid may have left in it is checked before root touches it.
   imagePrep = ''
-    ${co}/install -d -m 0700 -o ${vmUser} -g ${group} ${lib.escapeShellArg (dirOf cfg.disk.path)}
+    d=${lib.escapeShellArg diskDir}
+    if [ "$(${co}/realpath -e -- "$d" 2>/dev/null)" != "$d" ] || [ ! -d "$d" ]; then
+      echo "${unit}: $d must exist and be named by its real path (no symlinks)" >&2
+      exit 1
+    fi
+    p="$d"
+    while [ "$p" != / ]; do
+      p="$(${co}/dirname -- "$p")"
+      read -r u m < <(${co}/stat -c '%u %a' -- "$p")
+      if [ "$u" != 0 ] || (( 8#$m & 8#022 )); then
+        echo "${unit}: $p must be root's and writable by root alone (the disk image is below it)" >&2
+        exit 1
+      fi
+    done
+    o="$(${co}/stat -c %u -- "$d")"
+    if [ "$o" != 0 ]; then
+      # The old layout: the VMM's (or an orphaned) uid owned it.
+      if [ "$o" = "$(${co}/id -u ${vmUser})" ] || ! ${pkgs.glibc.getent}/bin/getent passwd "$o" >/dev/null; then
+        ${co}/chown -h root:root -- "$d"
+      else
+        echo "${unit}: $d is owned by uid $o, not root" >&2
+        exit 1
+      fi
+    fi
+    ${co}/chmod 0700 -- "$d"
+    if [ -L ${disk} ] || { [ -e ${disk} ] && { [ ! -f ${disk} ] || [ "$(${co}/stat -c %h -- ${disk})" != 1 ]; }; }; then
+      echo "${unit}: ${cfg.disk.path} is not a plain file (a symlink, a hard link, or not a regular file)" >&2
+      exit 1
+    fi
     if [ ! -e ${disk} ]; then
-      ${pkgs.e2fsprogs}/bin/chattr +C ${lib.escapeShellArg (dirOf cfg.disk.path)} 2>/dev/null || true
+      ${pkgs.e2fsprogs}/bin/chattr +C "$d" 2>/dev/null || true
       ${co}/truncate -s ${cfg.disk.size} ${disk}
     fi
-    ${co}/chown ${vmUser}:${group} ${disk}
+    ${co}/chown -h ${vmUser}:${group} ${disk}
     ${co}/chmod 0600 ${disk}
     # Mount point for the unit's private bind of the image.
     ${co}/install -m 0600 -o ${vmUser} -g ${group} /dev/null ${diskTarget}
@@ -272,9 +339,10 @@ in
         description = ''
           The guest's data disk (/persist in the guest: projects, homes, the
           store's writable layer, the store database, logs). For a file, the
-          image path (/large is persisted but not backed up). For a block
-          device, a stable path (/dev/<vg>/<lv>, /dev/disk/by-id/…), never
-          /dev/dm-N.
+          image path (/large is persisted but not backed up), in a directory
+          of its own: that directory is made root's, 0700, and every one above
+          it must be root's and writable by root alone. For a block device, a
+          stable path (/dev/<vg>/<lv>, /dev/disk/by-id/…), never /dev/dm-N.
         '';
       };
       size = lib.mkOption {
@@ -412,6 +480,10 @@ in
       });
     '';
 
+    # The image's directory: root's (see imagePrep), also taking back one an
+    # earlier build gave the VMM's uid.
+    systemd.tmpfiles.rules = lib.optional (!blockDisk) "d ${diskDir} 0700 root root -";
+
     systemd.services = {
       ${unit} = {
         description = "Agent VM";
@@ -443,7 +515,8 @@ in
           Group = group;
           SystemCallFilter = core.hardening.jailedSyscallFilter;
           # Nothing of the host's data is visible: the disk image is bound to
-          # a mount point in the runtime dir.
+          # a mount point in the runtime dir (from root's directory, so the
+          # source systemd resolves passes through nothing another uid owns).
           InaccessiblePaths = [
             "-/persist"
             "-/large"
@@ -470,9 +543,41 @@ in
           Type = "oneshot";
           RemainAfterExit = true;
           ExecStart = prepScript;
-          ExecStop = "${co}/rm -rf -- ${rt}";
-          PrivateNetwork = true;
+          ExecStop = clearScript;
+          RuntimeDirectory = unit;
+          RuntimeDirectoryMode = "0711";
+          # Writes only its runtime dir and the image's directory (or the
+          # device's ownership: /dev stays writable under ProtectSystem).
+          ProtectSystem = "strict";
+          ReadWritePaths = lib.optional (!blockDisk) "-${diskDir}";
           ProtectHome = true;
+          PrivateTmp = true;
+          PrivateDevices = !blockDisk;
+          PrivateNetwork = true;
+          # chown/chmod (the handover, the image, the device), and setpriv to
+          # the directories' owners.
+          CapabilityBoundingSet = [
+            "CAP_CHOWN"
+            "CAP_FOWNER"
+            "CAP_SETUID"
+            "CAP_SETGID"
+          ];
+          NoNewPrivileges = true;
+          RestrictAddressFamilies = [ "AF_UNIX" ];
+          RestrictNamespaces = true;
+          RestrictSUIDSGID = true;
+          RestrictRealtime = true;
+          LockPersonality = true;
+          MemoryDenyWriteExecute = true;
+          ProtectKernelTunables = true;
+          ProtectKernelModules = true;
+          ProtectKernelLogs = true;
+          ProtectControlGroups = true;
+          ProtectClock = true;
+          ProtectHostname = true;
+          SystemCallArchitectures = "native";
+          SystemCallFilter = [ "@system-service" ];
+          SystemCallErrorNumber = "EPERM";
         };
       };
 

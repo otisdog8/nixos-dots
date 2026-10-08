@@ -45,7 +45,6 @@ let
   sbxPrompt = import ../../../lib/broker/prompt.nix pkgs;
 
   user = cfg.user;
-  uid = toString config.users.users.${user}.uid;
 
   firefoxFamily = [
     "firefox"
@@ -80,21 +79,17 @@ let
   # Who owns the client socket directories: the broker, or the host bridge.
   socketOwner = if desktop && opInVm then "op-broker-bridge" else runAs;
 
-  # The host broker's display (no host broker with 1Password in its VM).
-  #   - desktop auth, 1Password in its container: the security-context socket
-  #     the 1Password launcher holds (and ACLs for app-onepassword), bound in;
-  #   - service account: a security-context socket of the broker's own, held
-  #     by op-broker-display.service in the user's session, in a directory the
-  #     op-broker group may traverse (nothing to bind: it outlives sessions).
+  # The host broker (none with 1Password in its VM: it runs in that guest).
+  hostBroker = !(desktop && opInVm);
+  # Its display: a security-context socket of its own, held by
+  # op-broker-display.service in the user's session, in a directory of the
+  # user's that the broker's uid may only traverse, ACL'd by that same helper
+  # for the broker's uid (wayland-security-context makes it 0600). The broker
+  # connects to it as itself: nothing is bound in by systemd (as root) from a
+  # directory the user controls, and it outlives sessions and 1Password.
   displayDir = "${base}/display";
-  bindSocket =
-    if cfg.prompt.waylandSocket != null then
-      cfg.prompt.waylandSocket
-    else if desktop then
-      "/run/user/${uid}/sandbox-onepassword-wayland"
-    else
-      null;
-  ownDisplay = !desktop && cfg.prompt.waylandSocket == null;
+  ownDisplay = hostBroker && cfg.prompt.waylandSocket == null;
+  display = if ownDisplay then "${displayDir}/wayland-0" else cfg.prompt.waylandSocket;
   wlSecure = import ../../../lib/backends/wayland-security-context.nix pkgs;
 
   browserOn = b: has b && apps.${b}.enable && builtins.elem b cfg.browsers;
@@ -359,7 +354,10 @@ let
     "d ${uplinkDir} 0710 op-broker-bridge op-broker-bridge -"
     "a+ ${uplinkDir} - - - - u:${uplinkUser}:--x"
   ]
-  ++ lib.optional ownDisplay "d ${displayDir} 0750 ${user} op-broker -";
+  ++ lib.optionals ownDisplay [
+    "d ${displayDir} 0700 ${user} ${config.users.users.${user}.group} -"
+    "a+ ${displayDir} - - - - u:${runAs}:--x"
+  ];
 
   clientType = lib.types.submodule {
     options = {
@@ -499,13 +497,12 @@ in
         type = lib.types.nullOr lib.types.str;
         default = null;
         description = ''
-          A Wayland socket for the host broker's dialogs, bound into the service
-          by systemd (the broker's uid must be allowed to connect to it). null
-          (the default) derives one: with 1Password in its container, the
-          security-context socket its launcher holds for app-onepassword; with
-          a service account, a security-context socket of the broker's own,
-          held by op-broker-display.service in your session. (1Password in its
-          VM: the broker runs in that guest and uses the VM's display.)
+          A Wayland socket for the host broker's dialogs, which the broker
+          connects to as its own uid (it must be able to reach and connect to
+          it; nothing is bound in). null (the default): a security-context
+          socket of the broker's own, held by op-broker-display.service in your
+          session under /run/op-broker/display. (1Password in its VM: the
+          broker runs in that guest and uses the VM's display.)
         '';
       };
     };
@@ -723,7 +720,7 @@ in
 
       systemd.tmpfiles.rules = tmpfiles;
 
-      systemd.services.op-broker = lib.mkIf (!(desktop && opInVm)) {
+      systemd.services.op-broker = lib.mkIf hostBroker {
         description = "1Password per-item approval broker (op-broker)";
         # Desktop auth: only useful (and only able to reach op's socket) while
         # 1Password runs, and started with it.
@@ -739,12 +736,9 @@ in
           # 1Password launcher recreates the directory on every start.
           XDG_RUNTIME_DIR = "/run/app-onepassword";
         }
-        # The dialogs' display (see displayDir / bindSocket above).
-        // lib.optionalAttrs (bindSocket != null) {
-          WAYLAND_DISPLAY = "/run/op-broker-ui/wayland-0";
-        }
-        // lib.optionalAttrs ownDisplay {
-          WAYLAND_DISPLAY = "${displayDir}/wayland-0";
+        # The dialogs' display (see displayDir above).
+        // lib.optionalAttrs (display != null) {
+          WAYLAND_DISPLAY = display;
         };
         serviceConfig = hardening // {
           Type = "notify";
@@ -772,14 +766,6 @@ in
           RestartSec = 2;
           ProtectHome = true;
           ReadWritePaths = [ "${base}/clients" ];
-          # The user's runtime dir is 0700 with no ACL for app uids (by design,
-          # lib/backends/systemd.nix), so the socket is bound in by systemd (as
-          # root), as the 1Password sandbox gets it. The unit restarts with
-          # 1Password (bindsTo), so the bound inode is never stale.
-          RuntimeDirectory = lib.mkIf (bindSocket != null) "op-broker-ui";
-          BindPaths = lib.mkIf (bindSocket != null) [
-            "-${bindSocket}:/run/op-broker-ui/wayland-0"
-          ];
           RestrictAddressFamilies = [
             "AF_UNIX"
           ]
@@ -791,9 +777,11 @@ in
         };
       };
 
-      # Service account: the broker's own display, a security-context socket
+      # The host broker's own display, a security-context socket
       # (sandboxed-client view of the compositor) held while the user's
-      # graphical session runs. UMask 0007: the op-broker group may connect.
+      # graphical session runs, and opened to the broker's uid by an ACL (the
+      # helper binds it 0600; the directory is the user's, so only the user's
+      # own processes ever touch it).
       systemd.user.services.op-broker-display = lib.mkIf ownDisplay {
         description = "Display for op-broker's dialogs";
         wantedBy = [ "graphical-session.target" ];
@@ -801,12 +789,29 @@ in
         after = [ "graphical-session.target" ];
         unitConfig.ConditionUser = user;
         serviceConfig = {
-          UMask = "0007";
           # Upstream: the session's display, else the compositor socket name the
-          # sandbox launchers pin (wayland-1).
+          # sandbox launchers pin (wayland-1). The socket appears (renamed into
+          # place) once the compositor has the context; then the broker's uid
+          # may connect. The helper dies with this script (PDEATHSIG).
           ExecStart = pkgs.writeShellScript "op-broker-display" ''
+            set -eu
             export WAYLAND_DISPLAY="''${WAYLAND_DISPLAY:-wayland-1}"
-            exec ${wlSecure}/bin/wayland-security-context hold ${displayDir}/wayland-0 com.otisroot.op_broker
+            sock=${displayDir}/wayland-0
+            ${pkgs.coreutils}/bin/rm -f "$sock"
+            ${wlSecure}/bin/wayland-security-context hold "$sock" com.otisroot.op_broker &
+            pid=$!
+            for _ in $(${pkgs.coreutils}/bin/seq 1 100); do
+              [ -S "$sock" ] && break
+              kill -0 "$pid" 2>/dev/null || break
+              ${pkgs.coreutils}/bin/sleep 0.05
+            done
+            if [ ! -S "$sock" ] || [ -L "$sock" ]; then
+              echo "op-broker-display: no security-context socket" >&2
+              kill "$pid" 2>/dev/null || true
+              exit 1
+            fi
+            ${pkgs.acl}/bin/setfacl -m "u:${runAs}:rw" "$sock"
+            wait "$pid"
           '';
           Restart = "on-failure";
           RestartSec = 2;

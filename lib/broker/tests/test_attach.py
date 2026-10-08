@@ -18,7 +18,9 @@ spec.loader.exec_module(attach)
 class Records(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
-        self.rt = self.tmp.name
+        self.rt = os.path.realpath(self.tmp.name)
+        if attach.statfs_type(os.open(self.rt, os.O_PATH)) != attach.TMPFS_MAGIC:
+            self.skipTest("TMPDIR must be on a tmpfs")
         os.mkdir(os.path.join(self.rt, ".flatpak"))
 
     def tearDown(self):
@@ -51,6 +53,30 @@ class Records(unittest.TestCase):
 
     def test_no_dir(self):
         self.assertEqual(attach.records(os.path.join(self.rt, "missing")), [])
+
+    def test_never_through_a_symlink(self):
+        """The user (or the app) owns everything below the runtime dir: a
+        record folder, or .flatpak itself, swapped for a link to records
+        elsewhere is not read."""
+        with tempfile.TemporaryDirectory() as other:
+            os.mkdir(os.path.join(other, ".flatpak"))
+            d = os.path.join(other, ".flatpak", "nixpak-app-9")
+            os.mkdir(d)
+            with open(os.path.join(d, "bwrapinfo.json"), "w") as f:
+                json.dump({"child-pid": 4321}, f)
+            with open(os.path.join(d, "info"), "w") as f:
+                f.write("[Application]\nname=x\n")
+            os.symlink(d, os.path.join(self.rt, ".flatpak", "nixpak-app-9"))
+            self.assertEqual(attach.records(self.rt), [])
+            os.remove(os.path.join(self.rt, ".flatpak", "nixpak-app-9"))
+            os.rmdir(os.path.join(self.rt, ".flatpak"))
+            os.symlink(os.path.join(other, ".flatpak"), os.path.join(self.rt, ".flatpak"))
+            self.assertEqual(attach.records(self.rt), [])
+            # Nor a runtime dir that is itself a link.
+            self.assertEqual(attach.records(os.path.join(self.rt, ".flatpak", "..")), [])
+            link = os.path.join(self.rt, "rt")
+            os.symlink(other, link)
+            self.assertEqual(attach.records(link), [])
 
 
 class Mountpoint(unittest.TestCase):
@@ -102,6 +128,13 @@ class Mountpoint(unittest.TestCase):
     def test_refuses_dotdot(self):
         with self.assertRaises(attach.Refused):
             self.mp("/a/../b", True)
+
+    def test_pidfd_gid(self):
+        fd = os.pidfd_open(os.getpid())
+        try:
+            self.assertEqual(attach.pidfd_gid(fd), os.getgid())
+        finally:
+            os.close(fd)
 
     def test_flatpak_name(self):
         self.assertEqual(attach.flatpak_name("[Application]\nname=x\n[Instance]\nname=y\n"), "x")

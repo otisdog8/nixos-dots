@@ -46,8 +46,12 @@ What it will do, whoever asks (the user is the only one who can):
 A sandbox is found from the record the host side of its launcher wrote
 (nixpak's bwrapinfo.json, which the sandbox can't reach), and, for systemd
 units, the unit's cgroup; the process must still be the one named there, run
-as the expected uid, and see the expected /.flatpak-info. Mount points are made
-without following symlinks, and only on the sandbox's own tmpfs.
+as the expected uid, and see the expected /.flatpak-info. Records and the VM's
+grants view sit in directories the user (or the app) owns: they are resolved
+from a held fd, strictly beneath it (openat2: no symlink, no other mount).
+Mount points are made by a child that has dropped to the sandbox's own uid,
+without following symlinks, and only on the sandbox's own tmpfs; root only
+does the mount.
 """
 
 import ctypes
@@ -86,8 +90,10 @@ MOVE_MOUNT_T_EMPTY_PATH = 0x40
 MOUNT_ATTR_RDONLY = 0x1
 MOUNT_ATTR_NOSUID = 0x2
 MOUNT_ATTR_NODEV = 0x4
+RESOLVE_NO_XDEV = 0x01
 RESOLVE_NO_MAGICLINKS = 0x02
 RESOLVE_NO_SYMLINKS = 0x04
+RESOLVE_BENEATH = 0x08
 CLONE_NEWNS = 0x20000
 NS_GET_OWNER_UID = 0xB704  # _IO(0xb7, 0x4)
 TMPFS_MAGIC = 0x01021994
@@ -170,10 +176,27 @@ def flatpak_name(text):
     return None
 
 
-def read_small(path, limit=65536):
+def openat2(dir_fd, path, flags, resolve):
+    how = struct.pack("QQQ", flags | os.O_CLOEXEC, 0, resolve)
+    buf = ctypes.create_string_buffer(how, len(how))
+    fd = libc.syscall(SYS_openat2, ctypes.c_long(dir_fd), os.fsencode(path), buf, ctypes.c_size_t(len(how)))
+    if fd < 0:
+        e = ctypes.get_errno()
+        raise OSError(e, f"{path}: {os.strerror(e)}")
+    return fd
+
+
+# Below a directory another uid controls: never out of it, through a symlink
+# (any component) or onto another mount (a FUSE mount of the user's).
+BENEATH = RESOLVE_BENEATH | RESOLVE_NO_SYMLINKS | RESOLVE_NO_MAGICLINKS | RESOLVE_NO_XDEV
+
+
+def read_small(path, limit=65536, dir_fd=None):
     # Records live in directories the user (or the app) can write: no symlinks,
-    # no FIFOs to hang on, regular files only, bounded.
-    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC)
+    # no FIFOs to hang on, regular files only, bounded. With dir_fd, `path` is
+    # resolved strictly beneath it (BENEATH).
+    flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC
+    fd = openat2(dir_fd, path, flags, BENEATH) if dir_fd is not None else os.open(path, flags)
     try:
         if not stat.S_ISREG(os.fstat(fd).st_mode):
             raise OSError(f"{path} is not a regular file")
@@ -183,34 +206,58 @@ def read_small(path, limit=65536):
 
 
 def records(runtime_dir):
-    """(child pid, app id) for every nixpak sandbox launched with this runtime dir."""
-    base = os.path.join(runtime_dir, ".flatpak")
+    """(child pid, app id) for every nixpak sandbox launched with this runtime dir.
+
+    The runtime dir is the user's (or the app's), in a root-owned /run: it is
+    opened without following a link in any component and must be a tmpfs (not
+    a FUSE mount its owner put there), and everything below it is resolved
+    from that fd, strictly beneath it (BENEATH)."""
     try:
-        names = os.listdir(base)
+        rfd = openat2(AT_FDCWD, runtime_dir, os.O_RDONLY | os.O_DIRECTORY, RESOLVE_NO_SYMLINKS | RESOLVE_NO_MAGICLINKS)
     except OSError:
         return []
-    out = []
-    for n in names:
-        if not n.startswith("nixpak-app-"):
-            continue
-        d = os.path.join(base, n)
+    try:
+        if statfs_type(rfd) != TMPFS_MAGIC:
+            log(f"{runtime_dir} isn't a tmpfs; ignoring its records")
+            return []
         try:
-            pid = int(json.loads(read_small(os.path.join(d, "bwrapinfo.json")))["child-pid"])
-            app = flatpak_name(read_small(os.path.join(d, "info")))
-        except (OSError, ValueError, KeyError, TypeError):
-            continue
-        if pid > 1 and app:
-            out.append((pid, app))
-    return out
+            bfd = openat2(rfd, ".flatpak", os.O_RDONLY | os.O_DIRECTORY, BENEATH)
+        except OSError:
+            return []
+        try:
+            names = os.listdir(bfd)
+            out = []
+            for n in names:
+                if not n.startswith("nixpak-app-"):
+                    continue
+                try:
+                    dfd = openat2(bfd, n, os.O_PATH | os.O_DIRECTORY, BENEATH)
+                except OSError:
+                    continue
+                try:
+                    pid = int(json.loads(read_small("bwrapinfo.json", dir_fd=dfd))["child-pid"])
+                    app = flatpak_name(read_small("info", dir_fd=dfd))
+                except (OSError, ValueError, KeyError, TypeError):
+                    continue
+                finally:
+                    os.close(dfd)
+                if pid > 1 and app:
+                    out.append((pid, app))
+            return out
+        finally:
+            os.close(bfd)
+    finally:
+        os.close(rfd)
 
 
 def unit_pids(unit):
-    path = f"/sys/fs/cgroup/system.slice/{unit}"
     pids = set()
-    for root, _dirs, files in os.walk(path):
-        if "cgroup.procs" in files:
-            with open(os.path.join(root, "cgroup.procs")) as f:
-                pids.update(int(x) for x in f.read().split())
+    # Containers in a restricted network mode run in netpolicy's slice.
+    for parent in ("system.slice", "system.slice/system-sandboxnet.slice"):
+        for root, _dirs, files in os.walk(f"/sys/fs/cgroup/{parent}/{unit}"):
+            if "cgroup.procs" in files:
+                with open(os.path.join(root, "cgroup.procs")) as f:
+                    pids.update(int(x) for x in f.read().split())
     return pids
 
 
@@ -308,16 +355,59 @@ def make_mountpoint(path, is_dir, owner, root="/"):
         raise
 
 
+def pidfd_gid(pidfd):
+    """The (real) gid of the process behind `pidfd`."""
+    with open(f"/proc/self/fdinfo/{pidfd}") as f:
+        pid = next(int(l.split()[1]) for l in f if l.startswith("Pid:"))
+    with open(f"/proc/{pid}/status") as f:
+        return next(int(l.split()[1]) for l in f if l.startswith("Gid:"))
+
+
+def mountpoint_as(owner, gid, path, is_dir, close=()):
+    """make_mountpoint, done AS the sandbox's own uid and gid (inside its
+    namespace, which the caller has already joined): its tmpfs is that uid's
+    to write, and a sandbox's tmpfs only takes new files from ids its user
+    namespace maps, which root's aren't. `close`: fds the unprivileged child
+    must not hold. Returns the O_PATH fd."""
+    a, b = socket.socketpair(socket.AF_UNIX, socket.SOCK_DGRAM)
+    child = os.fork()
+    if child == 0:
+        a.close()
+        try:
+            for fd in close:
+                os.close(fd)
+            os.setgroups([])
+            os.setresgid(gid, gid, gid)
+            os.setresuid(owner, owner, owner)
+            fd = make_mountpoint(path, is_dir, owner)
+            socket.send_fds(b, [b"ok"], [fd])
+            os._exit(0)
+        except BaseException as e:
+            b.send(f"err:{e}".encode()[:500])
+            os._exit(1)
+    b.close()
+    msg, fds, _flags, _addr = socket.recv_fds(a, 600, 1)
+    a.close()
+    os.waitpid(child, 0)
+    if msg != b"ok" or not fds:
+        raise Refused(msg.decode("utf-8", "replace").removeprefix("err:") or "no mount point")
+    return fds[0]
+
+
 def attach(pidfd, tree, path, is_dir, owner):
     """Mount the detached `tree` at `path` inside the sandbox of `pidfd`, from a
-    child (so this process keeps the host namespace)."""
+    child (so this process keeps the host namespace). The mount point is made
+    by a grandchild that has dropped to the sandbox's uid (mountpoint_as);
+    only the mount itself is root's."""
+    gid = pidfd_gid(pidfd)
     r, w = os.pipe()
     child = os.fork()
     if child == 0:
         os.close(r)
         try:
             os.setns(pidfd, CLONE_NEWNS)
-            dst = make_mountpoint(path, is_dir, owner)
+            # The detached tree and the pidfd stay out of the unprivileged child.
+            dst = mountpoint_as(owner, gid, path, is_dir, close=(tree, pidfd, w))
             move_mount(tree, dst)
             os.write(w, b"ok")
             os._exit(0)
@@ -351,14 +441,12 @@ def open_exact(path):
     """O_PATH fd for the folder at exactly `path` (canonical): no symlink is
     followed in any component, and the kernel's name for what was opened is
     `path` itself."""
-    how = struct.pack("QQQ", os.O_PATH | os.O_DIRECTORY | os.O_CLOEXEC, 0, RESOLVE_NO_SYMLINKS | RESOLVE_NO_MAGICLINKS)
-    buf = ctypes.create_string_buffer(how, len(how))
-    fd = libc.syscall(SYS_openat2, ctypes.c_long(AT_FDCWD), os.fsencode(path), buf, ctypes.c_size_t(len(how)))
-    if fd < 0:
-        e = ctypes.get_errno()
-        if e == errno.ELOOP:
+    try:
+        fd = openat2(AT_FDCWD, path, os.O_PATH | os.O_DIRECTORY, RESOLVE_NO_SYMLINKS | RESOLVE_NO_MAGICLINKS)
+    except OSError as e:
+        if e.errno == errno.ELOOP:
             raise Refused(f"{path}: a symlink is in the way")
-        raise OSError(e, f"{path}: {os.strerror(e)}")
+        raise
     try:
         if os.readlink(f"/proc/self/fd/{fd}") != path:
             raise Refused(f"{path} isn't where it was asked for")
@@ -436,10 +524,17 @@ def vm_targets(cfg, vm, rtdir, wait=10.0):
     base = f"/run/sandbox-vm/{vm}/"
     if os.path.realpath(rtdir) + "/" != rtdir.rstrip("/") + "/" or not rtdir.startswith(base):
         raise Refused("bad VM runtime dir")
-    view = os.path.join(rtdir, "grants", "view")
-    st = os.lstat(view)
-    if not stat.S_ISDIR(st.st_mode):
+    # $rtdir is root's; grants/ and its view are the user's: resolved beneath
+    # the launch dir, no symlink, no other mount.
+    rfd = open_exact(os.path.normpath(rtdir))
+    try:
+        vfd = openat2(rfd, "grants/view", os.O_PATH | os.O_DIRECTORY, BENEATH)
+    except OSError:
         raise Refused("no grants view")
+    finally:
+        os.close(rfd)
+    st = os.fstat(vfd)
+    os.close(vfd)
     want = (st.st_dev, st.st_ino)
     deadline = time.monotonic() + wait
     while True:

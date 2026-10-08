@@ -359,9 +359,12 @@ in
         StandardOutput = "journal";
         StandardError = "journal";
         TimeoutSec = 30;
-        # open_tree/setns/move_mount, setns's chroot check, dropping to the user
-        # to open the source, reading other uids' /proc entries and runtime
-        # dirs, pidfd signal 0, the device ACL, chown of new mount points.
+        # open_tree/setns/move_mount, setns's chroot check, dropping to the
+        # user (opening the source) and to the sandbox's uid (making the mount
+        # point), reading other uids' /proc entries and runtime dirs, pidfd
+        # signal 0. Nothing it writes as root is another uid's: the device ACL
+        # is on root's nodes, mount points are made as the sandbox's uid, so
+        # no CAP_DAC_OVERRIDE, CAP_FOWNER or CAP_CHOWN.
         # (systemctl set-property needs none: root on systemd's private bus.)
         CapabilityBoundingSet = [
           "CAP_SYS_ADMIN"
@@ -369,18 +372,33 @@ in
           "CAP_SETUID"
           "CAP_SETGID"
           "CAP_DAC_READ_SEARCH"
-          "CAP_DAC_OVERRIDE"
           "CAP_SYS_PTRACE"
           "CAP_KILL"
-          "CAP_FOWNER"
-          "CAP_CHOWN"
         ];
         NoNewPrivileges = true;
-        # Not ProtectSystem/ProtectHome/PrivateMounts: sources are cloned from
-        # this process's own mount namespace, which must be the host's as is
-        # (a read-only remount here would make every grant read-only), nor
-        # anything else that gives the unit its own mount namespace.
+        # Not ProtectSystem/ProtectHome/PrivateTmp/PrivateMounts, nor anything
+        # else that gives the unit its own mount namespace (ProtectKernel*,
+        # ProtectControlGroups, ProtectProc, ProtectHostname, PrivateDevices):
+        # sources are cloned (open_tree) from this process's own namespace,
+        # which must be the host's as is. A clone keeps each mount's flags, so
+        # a ProtectSystem read-only remount here would make every grant
+        # read-only; clearing that again (mount_setattr) would also make a
+        # host mount that IS read-only writable, and ProtectHome would hide
+        # the very folders granted. Only what is seccomp, cgroup or
+        # capability based:
+        SystemCallFilter = [
+          "@system-service"
+          "@mount"
+        ];
+        SystemCallErrorNumber = "EPERM";
+        # setns into a sandbox's mount namespace only.
+        RestrictNamespaces = "mnt";
+        RestrictSUIDSGID = true;
+        # Device nodes are only opened O_PATH (the camera's, for open_tree),
+        # which the device policy doesn't gate.
+        DevicePolicy = "closed";
         RestrictAddressFamilies = [ "AF_UNIX" ];
+        IPAddressDeny = "any";
         LockPersonality = true;
         RestrictRealtime = true;
         SystemCallArchitectures = "native";

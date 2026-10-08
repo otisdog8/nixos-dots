@@ -340,9 +340,9 @@ What the module still generates for it:
 
 - `op-broker.service`: `User=app-onepassword`, `Group=onepassword-cli`,
   `WantedBy=`/`BindsTo=sandbox-onepassword.service` (it runs exactly while
-  1Password runs), `XDG_RUNTIME_DIR=/run/app-onepassword`, dialogs on
-  `/run/user/<uid>/sandbox-onepassword-wayland` bound in with `BindPaths=`
-  (jrt's runtime dir has no ACL for app uids, by design), `ProtectSystem=strict`,
+  1Password runs), `XDG_RUNTIME_DIR=/run/app-onepassword`, dialogs on a
+  display socket of its own (`op-broker-display.service`, as with a service
+  account below; nothing is bound in from jrt's runtime dir), `ProtectSystem=strict`,
   no network (`IPAddressDeny=any`, AF_UNIX only), empty capability set.
 - 1Password's own nixpak sandbox additionally binds its runtime dir (so the CLI
   socket the app creates there is on the host, where the broker, same uid, sees
@@ -494,12 +494,15 @@ The broker runs as its own `op-broker` uid (network allowed) with the token from
 see Personal/Private/Employee vaults (web logins would have to live in a shared
 vault granted to the account), have request rate limits, and the token reads
 those vaults without any 1Password-side prompt: op-broker's dialog is then the
-only gate. Its dialogs get a display of their own: `op-broker-display.service`
-(a user service in your graphical session) holds a wp_security_context_v1 socket
-at `/run/op-broker/display/wayland-0` (directory `0750 <user>:op-broker`, socket
-`0660` through `UMask=0007`), which the broker uses directly: nothing to bind, so
-it works whether the session starts before or after the broker.
-`prompt.waylandSocket` overrides it.
+only gate. Its dialogs get a display of their own (the host broker's in either
+mode): `op-broker-display.service` (a user service in your graphical session)
+holds a wp_security_context_v1 socket at `/run/op-broker/display/wayland-0`
+(directory `0700 <user>` with an ACL `u:<broker uid>:--x`; the socket, which the
+helper binds `0600`, gets `u:<broker uid>:rw` from the same service once it is
+in place), which the broker connects to directly as its own uid: nothing is
+bound in by systemd from a directory the user controls, and it works whether
+the session starts before or after the broker. `prompt.waylandSocket` overrides
+it (a socket the broker's uid can reach and connect to).
 
 ## Installing the extension
 
