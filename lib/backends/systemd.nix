@@ -152,6 +152,11 @@ let
     # The broker socket: same-uid apps reach it in jrt's runtime dir; a dedicated
     # app's is relayed into its own runtime dir by the runScript below.
     brokerSocketName = if dedicated then "sbx-broker.sock" else "sbx-broker/${appName}.sock";
+    # Audio: the broker's filtered pulse socket, never jrt's raw pulse dir (which
+    # records everything). Same-uid apps bind it from jrt's runtime dir, as
+    # nixpak.nix does (without the broker, jrt's own pulse, as there too); a
+    # dedicated app's own runtime dir already has it at pulse/native (runScript).
+    pulseSocketName = if !dedicated && brokerOn then "sbx-broker/${appName}.pulse" else null;
     # dedicated: shared jrt data (extraBinds like the vault) lives in jrt's home,
     # not the app's own home (with appearAsUser: at its stage, since the app's
     # home is mounted over jrt's).
@@ -538,22 +543,17 @@ let
           # runScript binds into the app's own runtime dir). No ACL on jrt's
           # runtime dir itself → app-${appUser} can't list/create/delete there.
           # NOT the raw wayland-* sockets: the app's display is the secure one.
-          # Pulse is NOT here: the runScript binds pulse/native (a 0666 socket)
+          # Pulse is NOT here: the runScript binds pulse/native (the broker's
+          # socket, ACL'd by the broker; without it pipewire-pulse's, 0666)
           # directly, and an ACL on jrt's pulse DIR is a trap — jrt-side libpulse
           # clients chmod that dir 0700, zeroing the ACL mask (see runScript).
-          # (revokeAclsScript still sweeps wayland-* and pulse to clear grants left
-          # by older builds.)
+          # Nor PipeWire: the app gets no PipeWire socket (the whole media graph);
+          # a portal screen cast hands it a remote fd over D-Bus instead.
+          # (revokeAclsScript still sweeps wayland-*, pipewire-* and pulse to clear
+          # grants left by older builds.)
           ${lib.optionalString usesWayland ''
             ${acl}/setfacl -m "u:${appUser}:rw" "${wlSock}" 2>/dev/null || true
           ''}
-          for __s in "${jrtRuntime}"/pipewire-*; do
-            [ -e "$__s" ] || continue
-            # Mirror the root-side relay checks: never ACL a symlink or a non-socket/
-            # non-dir (a compromised jrt could plant one to widen the ACL's reach).
-            [ -L "$__s" ] && continue
-            { [ -S "$__s" ] || [ -d "$__s" ]; } || continue
-            ${acl}/setfacl -R -m "u:${appUser}:rwX" "$__s" 2>/dev/null || true
-          done
           # Cross-uid D-Bus bridge: a transparent xdg-dbus-proxy run AS JRT (so it
           # authenticates to the session bus fine), exposing an ACL'd socket the
           # runScript binds in as the app's bus. Unblocks tray + portals + notifs.

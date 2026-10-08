@@ -12,7 +12,7 @@
       ../../../lib/features/gui.nix
       ../../../lib/features/needs-gpu.nix
       ../../../lib/features/network.nix
-      ../../../lib/features/audio.nix
+      ../../../lib/features/microphone.nix # in-game voice chat (asks you first)
       ../../../lib/features/xdg-desktop.nix
       # Proton, game wrapper scripts, and r2modman's modded-launch wrapper
       # (web_start_wrapper.sh, see r2modman.nix) all exec a hardcoded /bin/sh,
