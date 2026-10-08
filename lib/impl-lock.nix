@@ -34,7 +34,8 @@
 # bwrap), which only drops its own protection. A missing file (before the first
 # activation that declares it) is skipped: the launch goes ahead.
 #
-# Not locked: apps without persisted data. (A `none`-backend app locks only its
+# Not locked: apps without persisted data, and app.multiInstance ones (the AI
+# agents: they run several sessions on one data dir already). (A `none`-backend app locks only its
 # main command: its other programs, e.g. wine's, start without the check.)
 { lib, pkgs }:
 let
@@ -90,9 +91,17 @@ in
 {
   inherit dir prog;
 
-  # Whether an app's implementations lock each other out.
+  # Whether an app's implementations lock each other out: not without data,
+  # nor for an app that keeps several sessions on one data dir itself
+  # (app.multiInstance).
   # (`backend` is kept for callers; every backend locks now.)
-  wanted = { backend, entries }: entries != [ ];
+  wanted =
+    {
+      backend,
+      entries,
+      multiInstance ? false,
+    }:
+    entries != [ ] && !multiInstance;
 
   # systemd.tmpfiles.settings fragment declaring one app's two lock files.
   tmpfiles =

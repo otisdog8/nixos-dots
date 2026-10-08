@@ -389,12 +389,29 @@
           lockArgs = {
             backend = effectiveBackend;
             inherit (storage) entries;
+            inherit (appCfg) multiInstance;
           };
 
           variants = import ./variants.nix { inherit lib pkgs; };
           variantsOn = config.modules.sandbox.variants.enable;
           vmWanted = cfg.sandbox.mode == "vm" || variantsOn;
-          selectedPkg = if cfg.sandbox.mode == "vm" then vmResult.package else backendResult.package;
+          # app.groupCommand in a group VM: the regular command stays the
+          # container's, and the group command enters the VM.
+          inGroup = lib.any (g: lib.elem appName g.apps) (lib.attrValues config.modules.sandbox.groups);
+          groupVm = cfg.sandbox.mode == "vm" && appCfg.groupCommand != null && inGroup;
+          selectedPkg =
+            if groupVm then
+              pkgs.symlinkJoin {
+                inherit (backendResult.package) name;
+                paths = [ backendResult.package ];
+                postBuild = ''
+                  ln -s ${vmResult.package}/bin/${appCfg.packageName} "$out/bin/${appCfg.groupCommand}"
+                '';
+              }
+            else if cfg.sandbox.mode == "vm" then
+              vmResult.package
+            else
+              backendResult.package;
           # With variants on, the launcher lists "<App> (container)" / "<App> (vm)"
           # instead of the plain entry, which stays for MIME/default-browser use.
           finalPkg = if variantsOn then variants.hideDesktop selectedPkg else selectedPkg;

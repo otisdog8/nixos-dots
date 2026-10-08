@@ -150,6 +150,7 @@ in
                 implLock.wanted {
                   backend = "nixpak";
                   inherit (m.storage) entries;
+                  inherit (m.appCfg) multiInstance;
                 }
               ) members
             );

@@ -26,6 +26,7 @@ let
     apps = lib.optional (implLock.wanted {
       backend = "none";
       inherit (storage) entries;
+      inherit (appCfg) multiInstance;
     }) appName;
     notify = true;
   };

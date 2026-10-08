@@ -51,11 +51,22 @@
       default = null;
       example = "claude-agents";
       description = ''
-        For a member of a sandbox group with a shared container
-        (modules.sandbox.groups): the app's regular command runs in its own
-        sandbox, and this extra command runs it in the group's shared container
-        (where a member's command runs by default). null: the regular command
-        joins the group. nixpak backend only.
+        For a member of a sandbox group (modules.sandbox.groups): the app's
+        regular command runs in its own container sandbox, and this extra
+        command runs it in the group's sandbox (where a member's command runs
+        by default): the shared container, or with sandbox.mode = "vm" the
+        group's VM. null: the regular command joins the group. nixpak backend
+        only.
+      '';
+    };
+
+    multiInstance = lib.mkOption {
+      type = lib.types.bool;
+      default = false;
+      description = ''
+        The app runs several sessions on one data dir by itself, so its
+        container and VM may run at the same time (lib/impl-lock.nix doesn't
+        lock them against each other).
       '';
     };
 

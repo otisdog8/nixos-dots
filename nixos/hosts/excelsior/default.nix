@@ -51,6 +51,10 @@
   modules = {
     desktop.full.enable = true;
 
+    # The agents' shared sandbox is a VM here (`claude-agents`, `codex-agents`,
+    # and the other agents' plain commands).
+    sandbox.agents.mode = "vm";
+
     # Physical layout, left to right: ASUS OLED, KTC, then the two Dells
     # stacked (4DGM884 bottom, GCGM884 top). All 4K@scale 1 at each panel's
     # max refresh (highres alone picks the preferred rate), so each column

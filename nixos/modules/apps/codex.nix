@@ -31,6 +31,11 @@
 
       defaultBackend = "nixpak";
 
+      # As claude-code: plain `codex` runs in its own sandbox, `codex-agents`
+      # in the shared agents sandbox; sessions share ~/.codex.
+      groupCommand = "codex-agents";
+      multiInstance = true;
+
       storage = [
         # Parent catches auth/config/state (goals/memories/state sqlite, skills,
         # sessions, models_cache.json) + anything codex writes we don't carve out.

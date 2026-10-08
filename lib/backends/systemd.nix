@@ -260,6 +260,7 @@ let
   lockApps = lib.optional (implLock.wanted {
     backend = "systemd";
     inherit (storage) entries;
+    inherit (appCfg) multiInstance;
   }) appName;
   lockHold = implLock.hold {
     cls = "container";

@@ -106,6 +106,7 @@ let
     implLock = (import ../impl-lock.nix { inherit lib pkgs; }).wanted {
       backend = appCfg.defaultBackend;
       inherit (storage) entries;
+      inherit (appCfg) multiInstance;
     };
     # Shared downloads (sandbox.sharedDownloads; dedicated uids, as for the
     # container): the subfolder of the user's ~/Downloads that is its ~/Downloads.
@@ -202,7 +203,9 @@ let
     ++ lib.optional (
       appCfg.nixpakModules != [ ] || cfg.sandbox.nixpakModules != [ ]
     ) "binds/env/devices from raw nixpakModules"
-    ++ lib.optional (appCfg.variantCommands != { }) "variantCommands";
+    # (With app.groupCommand the regular command, and its variants, stay
+    # containers: lib/apps.nix.)
+    ++ lib.optional (appCfg.variantCommands != { } && appCfg.groupCommand == null) "variantCommands";
 in
 {
   inherit package member;

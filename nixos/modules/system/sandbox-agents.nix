@@ -15,6 +15,9 @@
 # home. A container agent started in a folder outside ~ it doesn't have runs in
 # its own per-app sandbox instead (which also gets the projects and shared
 # paths, and agent-peers' stashes to run the others).
+# Agents with app.groupCommand (claude, codex) keep their regular command in
+# their own container sandbox in either mode; `claude-agents` / `codex-agents`
+# run them in the group's.
 #
 # Less confined than one sandbox per agent by design: any agent here can read
 # and change every declared project and every other agent's credentials.
@@ -28,6 +31,18 @@ in
       type = lib.types.bool;
       default = true;
       description = "Run the AI agents in the shared agents sandbox group.";
+    };
+
+    mode = lib.mkOption {
+      type = lib.types.enum [
+        "container"
+        "vm"
+      ];
+      default = "container";
+      description = ''
+        The group's sandbox: one shared container, or one persistent VM
+        (sets the members' sandbox.mode; needs /dev/kvm).
+      '';
     };
 
     apps = lib.mkOption {
@@ -86,6 +101,7 @@ in
   };
 
   config = lib.mkIf cfg.enable {
+    modules.apps = lib.mkIf (cfg.mode == "vm") (lib.genAttrs cfg.apps (_: { sandbox.mode = lib.mkDefault "vm"; }));
     modules.sandbox.groups.agents = {
       inherit (cfg)
         apps
@@ -94,6 +110,7 @@ in
         shareHomeReadOnly
         ;
       persistent = true;
+      sharedContainer = cfg.mode == "container";
       network.mode = cfg.network;
     };
   };

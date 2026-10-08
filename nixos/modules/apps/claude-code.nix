@@ -32,9 +32,11 @@
       defaultBackend = "nixpak";
 
       # Plain `claude` runs in its own sandbox; `claude-agents` runs it in the
-      # shared agents sandbox (modules/system/sandbox-agents.nix), whose
-      # projects and shared paths the own sandbox gets too.
+      # shared agents sandbox (modules/system/sandbox-agents.nix: a container,
+      # or the agents VM), whose projects and shared paths the own sandbox gets
+      # too. Sessions share ~/.claude, which claude handles itself.
       groupCommand = "claude-agents";
+      multiInstance = true;
 
       # `claude-nesbox`: the same sandbox plus what the virtio-nvgpu GPU/VM tests
       # need. Opt-in per session; plain `claude` is unchanged. Device binds are

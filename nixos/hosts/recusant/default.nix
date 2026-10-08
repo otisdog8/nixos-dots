@@ -78,6 +78,10 @@
   # Flip back to true to use it as a workstation again.
   modules.desktop.full.enable = false;
 
+  # The agents' shared sandbox is a VM here (`claude-agents`, `codex-agents`,
+  # and the other agents' plain commands).
+  modules.sandbox.agents.mode = "vm";
+
   # Enable Intel iGPU (for media transcoding)
   modules.system.hardware.intel = {
     enable = true;

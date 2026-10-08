@@ -98,6 +98,7 @@ let
     apps = lib.optional (implLock.wanted {
       backend = "nixpak";
       inherit (storage) entries;
+      inherit (appCfg) multiInstance;
     }) appName;
     notify = true;
   };
