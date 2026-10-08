@@ -34,12 +34,14 @@ of JSON lines, the last one final:
 Audio: a sandbox with audio also gets $XDG_RUNTIME_DIR/sbx-broker/<sandbox>.pulse,
 a PulseAudio socket in front of the user's own (PulseFilter below): playback
 passes, recording (the microphone, or a monitor of what other apps play) needs
-the sandbox's microphone capability and the user's approval, and whatever
-reconfigures the sound server for everyone is refused.
+the sandbox's microphone capability and the user's approval, volume, mute and
+the like pass only for the client's own streams, and whatever reconfigures the
+sound server for everyone is refused.
 
 Every request not covered by a rule asks the user with sbx-prompt (a desktop
 dialog naming the sandbox, what it wants, and the sandbox's stated reason,
-labelled as such). Rules come from the Nix config (modules.sandbox.broker).
+labelled as such), one dialog per sandbox at a time. Rules come from the Nix
+config (modules.sandbox.broker).
 """
 
 import base64
@@ -55,10 +57,19 @@ import subprocess
 import sys
 import threading
 import time
+import unicodedata
 
 MAX_REQUEST = 64 * 1024
 MAX_ARGS = 256
 SESSION_TTL = 12 * 3600
+# One dialog per sandbox at a time; up to PROMPT_QUEUE more of its requests wait
+# their turn (an app asking for the microphone and then the camera), the rest
+# are refused, so a sandbox can't bury the desktop in dialogs.
+PROMPT_QUEUE = 4
+# Connections a sandbox may hold open at once, to the broker and to its audio
+# socket (each costs a thread or two here).
+MAX_CONNS = 32
+MAX_PULSE_CONNS = 32
 # authenticate: one at a time per sandbox; after AUTH_FAILS failed or dismissed
 # authentications in a row, refuse for AUTH_PAUSE seconds (a compromised
 # sandbox can't keep the user's password dialog on screen).
@@ -69,6 +80,93 @@ AUTH_TIMEOUT = 300
 
 def log(msg):
     print(f"sbx-broker: {msg}", file=sys.stderr, flush=True)
+
+
+# ── Showing what a sandbox sent ──────────────────────────────────────────────
+# Dialogs are plain text without wrapping. Whatever the sandbox chose (command,
+# folder, reason, device name) goes on lines of its own behind GUTTER, escaped so
+# it can't start a new line, reorder or hide text (bidi controls, zero-width and
+# other invisible characters), and cut to FIELD_WIDTH characters a line: the
+# lines without the gutter (who asks, for what) are always the broker's own.
+GUTTER = "┃ "
+FIELD_WIDTH = 80
+UNTRUSTED_NOTE = (
+    f"Lines marked {GUTTER.strip()} were sent by the sandbox and are unverified; control and"
+    "\ninvisible characters in them are shown escaped (\\n, \\u202e, …)."
+)
+# Categories escaped: controls, format (bidi, zero-width), surrogates, private
+# use, unassigned, line/paragraph separators, enclosing marks.
+_UNSAFE = {"Cc", "Cf", "Cs", "Co", "Cn", "Zl", "Zp", "Me"}
+# Blank or default-ignorable characters outside those categories.
+_INVISIBLE = {0x034F, 0x115F, 0x1160, 0x17B4, 0x17B5, 0x2800, 0x3164, 0xFFA0}
+_INVISIBLE_RANGES = ((0x180B, 0x180F), (0xFE00, 0xFE0F), (0xE0100, 0xE01EF))
+_NAMED = {"\n": "\\n", "\r": "\\r", "\t": "\\t"}
+MAX_MARKS = 3  # combining marks in a row before the rest are escaped (stacked
+# marks draw over the lines above and below)
+
+
+def escape(s, ascii_only=False, backslash=True):
+    """`s` with every character that could hide or fake text escaped visibly
+    (\\n, \\x1b, \\u202e, …): one line, nothing invisible. `ascii_only` also
+    escapes everything outside printable ASCII (look-alike letters). With
+    `backslash`, a backslash is shown doubled, so an escape can't be faked."""
+    out = []
+    marks = 0
+    for c in str(s):
+        o = ord(c)
+        cat = unicodedata.category(c)
+        marks = marks + 1 if cat[0] == "M" else 0
+        if c == "\\":
+            out.append("\\\\" if backslash else c)
+        elif c in _NAMED:
+            out.append(_NAMED[c])
+        elif (
+            cat in _UNSAFE
+            or (cat == "Zs" and c != " ")
+            or o in _INVISIBLE
+            or any(lo <= o <= hi for lo, hi in _INVISIBLE_RANGES)
+            or marks > MAX_MARKS
+            or (ascii_only and not 0x20 <= o < 0x7F)
+        ):
+            out.append(f"\\x{o:02x}" if o < 0x100 else f"\\u{o:04x}" if o < 0x10000 else f"\\U{o:08x}")
+        else:
+            out.append(c)
+    return "".join(out)
+
+
+def block(text, max_lines=4, width=FIELD_WIDTH):
+    """Already escaped sandbox text as dialog lines behind the gutter, `width`
+    characters each, at most `max_lines` of them, then (the broker's own line)
+    how much was left out."""
+    lines = [text[i : i + width] for i in range(0, len(text), width)] or [""]
+    out = "\n".join(GUTTER + line for line in lines[:max_lines])
+    rest = len(text) - width * max_lines
+    if rest > 0:
+        out += f"\n… ({rest} more characters not shown)"
+    return out
+
+
+def untrusted(s, max_lines=4):
+    return block(escape(s), max_lines)
+
+
+def show_argv(argv):
+    """A command as shell words, each escaped first (the program also to
+    ASCII, so a look-alike can't pass for a familiar one)."""
+    return " ".join(shlex.quote(escape(a, ascii_only=(i == 0))) for i, a in enumerate(argv))
+
+
+def scrub(text, width=2 * FIELD_WIDTH):
+    """The last pass over a whole dialog text: the broker's own lines are kept
+    (and anything unsafe on them escaped, backslashes as they are), and each is
+    cut to `width`."""
+    out = []
+    for line in str(text).split("\n"):
+        line = escape(line, backslash=False)
+        if len(line) > width:
+            line = line[:width] + f" … ({len(line) - width} more characters not shown)"
+        out.append(line)
+    return "\n".join(out)
 
 
 class Broker:
@@ -83,6 +181,23 @@ class Broker:
         self.lock = threading.Lock()
         self.auth_busy = set()  # sandboxes with an authentication on screen
         self.auth_fails = {}  # sandbox -> (failures in a row, paused until)
+        self.turns = {}  # sandbox -> lock held while its dialog is on screen
+        self.waiting = {}  # sandbox -> requests on screen or waiting their turn
+        self.conns = {}  # (sandbox, kind) -> connections open
+
+    def take_slot(self, sandbox, kind, limit):
+        """Count one more open connection of `kind` for `sandbox`, unless it
+        already has `limit` of them."""
+        with self.lock:
+            n = self.conns.get((sandbox, kind), 0)
+            if n >= limit:
+                return False
+            self.conns[(sandbox, kind)] = n + 1
+            return True
+
+    def free_slot(self, sandbox, kind):
+        with self.lock:
+            self.conns[(sandbox, kind)] -= 1
 
     # ── Decisions ────────────────────────────────────────────────────────────
     def rule_for(self, sandbox, op, as_, argv):
@@ -101,37 +216,74 @@ class Broker:
             return r.get("action", "prompt")
         return None
 
-    def decide(self, sandbox, op, key, summary, detail, as_="user", argv=None, allow_session=True):
+    def approved_before(self, sandbox, key):
+        with self.lock:
+            exp = self.approved.get((sandbox, key))
+            return bool(exp and exp > time.time())
+
+    def decide(self, sandbox, op, key, summary, detail, as_="user", argv=None, allow_session=True, conn=None):
+        """Whether to grant a request: by rule, by an earlier answer for the
+        session, or by asking the user. `summary` and `detail` are the dialog's
+        text: anything the sandbox sent in them must already be shown through
+        untrusted()/block() (scrub() here only escapes what slipped through).
+        With `conn`, a request whose sandbox hung up while it waited for its
+        turn is dropped instead of asked."""
         action = self.rule_for(sandbox, op, as_, argv or [])
         if action == "deny":
             return False, "denied by rule"
         if action == "allow":
             return True, "allowed by rule"
-        now = time.time()
+        if self.approved_before(sandbox, key):
+            return True, "allowed earlier this session"
         with self.lock:
-            exp = self.approved.get((sandbox, key))
-            if exp and exp > now:
-                return True, "allowed earlier this session"
+            n = self.waiting.get(sandbox, 0)
+            if n > PROMPT_QUEUE:
+                return False, "too many requests from this sandbox are waiting for an answer"
+            self.waiting[sandbox] = n + 1
+            turn = self.turns.setdefault(sandbox, threading.Lock())
+        try:
+            with turn:
+                # The answer to a request ahead in line may cover this one.
+                if self.approved_before(sandbox, key):
+                    return True, "allowed earlier this session"
+                if conn is not None and peer_gone(conn):
+                    return False, "the sandbox withdrew the request"
+                return self.ask(sandbox, key, summary, detail, allow_session)
+        finally:
+            with self.lock:
+                self.waiting[sandbox] -= 1
+
+    def ask(self, sandbox, key, summary, detail, allow_session):
         args = [self.prompt, "--timeout", "90"]
         if not allow_session:
             args.append("--no-session")
-        args += ["--", self.sandboxes[sandbox]["label"], summary, detail]
+        args += ["--", self.sandboxes[sandbox]["label"], scrub(summary), scrub(detail)]
         try:
-            r = subprocess.run(args, capture_output=True, text=True, timeout=120)
+            r = subprocess.run(args, stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=120)
             answer = r.stdout.strip()
         except (OSError, subprocess.TimeoutExpired) as e:
             log(f"prompt failed: {e}")
             return False, "could not ask the user"
-        if answer == "session":
+        if answer == "session" and allow_session:
             with self.lock:
-                self.approved[(sandbox, key)] = now + SESSION_TTL
+                self.approved[(sandbox, key)] = time.time() + SESSION_TTL
             return True, "allowed for the session"
-        if answer == "once":
+        if answer in ("once", "session"):
             return True, "allowed once"
         return False, "denied by the user"
 
+    @staticmethod
+    def with_reason(detail, req):
+        """`detail`, then the reason the sandbox gave (if any) and the note on
+        sandbox-supplied lines. Every op whose dialog shows sandbox text ends
+        its detail with this."""
+        reason = req.get("reason") or ""
+        if reason:
+            detail += "\n\nThe reason it gives:\n" + untrusted(reason)
+        return detail + "\n\n" + UNTRUSTED_NOTE
+
     # ── Operations ───────────────────────────────────────────────────────────
-    def op_exec(self, sandbox, req, send):
+    def op_exec(self, sandbox, req, send, conn=None):
         argv = req.get("argv")
         as_ = req.get("as", "user")
         if (
@@ -146,13 +298,10 @@ class Broker:
         cwd = req.get("cwd") or os.environ.get("HOME", "/")
         if not isinstance(cwd, str) or not os.path.isabs(cwd) or not os.path.isdir(cwd):
             cwd = os.environ.get("HOME", "/")
-        reason = str(req.get("reason", ""))[:500]
-        cmd = shlex.join(argv)
+        cmd = show_argv(argv)
         who = "ROOT" if as_ == "root" else "your user"
-        summary = f"run a command outside its sandbox as {who}:\n{cmd}"
-        detail = f"in {cwd}"
-        if reason:
-            detail += f"\n\nThe sandbox says why (unverified): {reason}"
+        summary = f"run a command outside its sandbox as {who}"
+        detail = self.with_reason(f"The command:\n{block(cmd, 8)}\nIn the folder:\n{untrusted(cwd, 2)}", req)
         ok, why = self.decide(
             sandbox,
             "exec",
@@ -163,8 +312,9 @@ class Broker:
             argv=argv,
             # A root command is never approved for the rest of the session.
             allow_session=(as_ == "user"),
+            conn=conn,
         )
-        log(f"{sandbox}: exec as {as_}: {cmd} in {cwd}: {why}")
+        log(f"{sandbox}: exec as {as_}: {cmd[:2000]} in {escape(cwd)[:500]}: {why}")
         if not ok:
             return send({"type": "denied", "reason": why})
         full = argv if as_ == "user" else [self.run0, "--user=root", "--", *argv]
@@ -194,10 +344,8 @@ class Broker:
         units = self.sandboxes[sandbox].get("netUnits", [])
         if not units:
             return send({"type": "denied", "reason": "this sandbox's network isn't filtered per sandbox"})
-        reason = str(req.get("reason", ""))[:500]
-        detail = "until the sandbox stops"
-        if reason:
-            detail += f"\n\nThe sandbox says why (unverified): {reason}"
+        # A runtime drop-in: it outlives the sandbox, until the host reboots.
+        detail = self.with_reason("until the computer restarts (even if the sandbox stops sooner)", req)
         ok, why = self.decide(sandbox, "grant-net", ("net", str(net)), f"connect to {net}", detail)
         log(f"{sandbox}: grant-net {net}: {why}")
         if not ok:
@@ -225,7 +373,7 @@ class Broker:
                 return send({"type": "error", "message": f"could not update {u}"})
         send({"type": "granted"})
 
-    def op_grant_path(self, sandbox, req, send):
+    def op_grant_path(self, sandbox, req, send, conn=None):
         path = req.get("path")
         write = bool(req.get("write", False))
         if not isinstance(path, str) or not os.path.isabs(path) or "\0" in path or "\n" in path:
@@ -243,13 +391,12 @@ class Broker:
             return send({"type": "error", "message": "no such folder"})
         if not stat.S_ISDIR(st.st_mode):
             return send({"type": "error", "message": "not a folder"})
-        reason = str(req.get("reason", ""))[:500]
         mode = "read and change" if write else "read"
-        detail = "until the sandbox stops"
-        if reason:
-            detail += f"\n\nThe sandbox says why (unverified): {reason}"
-        ok, why = self.decide(sandbox, "grant-path", ("path", path, write), f"{mode} {path}", detail)
-        log(f"{sandbox}: grant-path {path} write={write}: {why}")
+        detail = self.with_reason(f"The folder:\n{untrusted(path, 3)}\nuntil the sandbox stops", req)
+        ok, why = self.decide(
+            sandbox, "grant-path", ("path", path, write), f"{mode} a folder of yours", detail, conn=conn
+        )
+        log(f"{sandbox}: grant-path {escape(path)[:500]} write={write}: {why}")
         if not ok:
             return send({"type": "denied", "reason": why})
         r = subprocess.run([grant, path, "rw" if write else "ro"], capture_output=True, text=True)
@@ -258,15 +405,14 @@ class Broker:
             return send({"type": "error", "message": r.stderr.strip() or "could not grant the folder"})
         send({"type": "granted"})
 
-    def op_camera(self, sandbox, req, send):
+    def op_camera(self, sandbox, req, send, conn=None):
         prog = self.sandboxes[sandbox].get("camera")
         if not prog:
             return send({"type": "denied", "reason": "this sandbox has no camera access"})
-        reason = str(req.get("reason", ""))[:500]
         detail = "until the sandbox stops; meanwhile no other app can use the camera"
-        if reason:
-            detail += f"\n\nThe sandbox says why (unverified): {reason}"
-        ok, why = self.decide(sandbox, "camera", ("camera",), "use your camera", detail)
+        if req.get("reason"):
+            detail = self.with_reason(detail, req)
+        ok, why = self.decide(sandbox, "camera", ("camera",), "use your camera", detail, conn=conn)
         log(f"{sandbox}: camera: {why}")
         if not ok:
             return send({"type": "denied", "reason": why})
@@ -288,6 +434,7 @@ class Broker:
             ("fido",),
             "use your security key (FIDO/WebAuthn)",
             "until the sandbox stops; each sign-in still needs a touch on the key",
+            conn=conn,
         )
         log(f"{sandbox}: fido {node}: {why}")
         if not ok:
@@ -416,15 +563,15 @@ class Broker:
                 return send({"type": "error", "message": "bad request"})
             op = req.get("op")
             fn = {
-                "exec": self.op_exec,
+                "exec": lambda sb, r, snd: self.op_exec(sb, r, snd, conn),
                 "grant-net": self.op_grant_net,
-                "grant-path": self.op_grant_path,
-                "camera": self.op_camera,
+                "grant-path": lambda sb, r, snd: self.op_grant_path(sb, r, snd, conn),
+                "camera": lambda sb, r, snd: self.op_camera(sb, r, snd, conn),
                 "fido": lambda sb, r, snd: self.op_fido(sb, r, snd, conn),
                 "authenticate": lambda sb, r, snd: self.op_authenticate(sb, r, snd, conn),
             }.get(op)
             if fn is None:
-                return send({"type": "error", "message": f"unknown op {op!r}"})
+                return send({"type": "error", "message": f"unknown op {str(op)[:100]!r}"})
             fn(sandbox, req, send)
         except Exception as e:  # never let one request take the broker down
             log(f"{sandbox}: {type(e).__name__}: {e}")
@@ -450,6 +597,10 @@ class Broker:
         upstream = os.path.join(os.environ["XDG_RUNTIME_DIR"], "pulse", "native")
         while True:
             conn, _ = s.accept()
+            if not self.take_slot(sandbox, "pulse", MAX_PULSE_CONNS):
+                log(f"{sandbox}: audio: too many connections")
+                conn.close()
+                continue
 
             def run(conn=conn):
                 try:
@@ -457,13 +608,31 @@ class Broker:
                 except OSError as e:
                     log(f"{sandbox}: audio: {e}")
                     conn.close()
+                finally:
+                    self.free_slot(sandbox, "pulse")
 
             threading.Thread(target=run, daemon=True).start()
 
     def serve(self, sandbox, s):
         while True:
             conn, _ = s.accept()
-            threading.Thread(target=self.handle, args=(sandbox, conn), daemon=True).start()
+            if not self.take_slot(sandbox, "broker", MAX_CONNS):
+                log(f"{sandbox}: too many connections")
+                try:
+                    conn.settimeout(1)
+                    conn.sendall(b'{"type": "denied", "reason": "too many requests from this sandbox at once"}\n')
+                except OSError:
+                    pass
+                conn.close()
+                continue
+
+            def run(conn=conn):
+                try:
+                    self.handle(sandbox, conn)
+                finally:
+                    self.free_slot(sandbox, "broker")
+
+            threading.Thread(target=run, daemon=True).start()
 
 
 # ── Audio ────────────────────────────────────────────────────────────────────
@@ -473,9 +642,16 @@ class Broker:
 # with the command and its tag (both 'L' u32s); any other channel is audio.
 PA_DESC = struct.Struct("!IIIII")
 PA_CONTROL = 0xFFFFFFFF
+PA_INVALID_INDEX = 0xFFFFFFFF
 PA_MAX_PACKET = 16 * 1024 * 1024
-PA_ERROR, PA_REPLY, PA_CREATE_RECORD_STREAM, PA_AUTH = 0, 2, 5, 8
+PA_ERROR, PA_REPLY, PA_AUTH = 0, 2, 8
+PA_CREATE_PLAYBACK_STREAM, PA_DELETE_PLAYBACK_STREAM = 3, 4
+PA_CREATE_RECORD_STREAM, PA_DELETE_RECORD_STREAM = 5, 6
+PA_SET_CLIENT_NAME = 9
+PA_PLAYBACK_STREAM_KILLED, PA_RECORD_STREAM_KILLED = 64, 65
+PA_UPDATE_RECORD_STREAM_PROPLIST, PA_UPDATE_CLIENT_PROPLIST = 80, 82
 PA_ERR_ACCESS = 1
+PA_VERSION_MASK = 0xFFFF
 # Shared memory can't cross the filter (it forwards no descriptors), so it is
 # negotiated away in both directions of AUTH (PA_PROTOCOL_FLAG_SHM, _MEMFD).
 PA_PROTOCOL_SHM_FLAGS = 0x80000000 | 0x40000000
@@ -483,6 +659,7 @@ PA_PROTOCOL_SHM_FLAGS = 0x80000000 | 0x40000000
 # client's own streams: refused for every sandbox.
 PA_REFUSED = {
     7: "EXIT",
+    19: "REMOVE_SAMPLE",  # the sample cache is shared with every client
     36: "SET_SINK_VOLUME",
     38: "SET_SOURCE_VOLUME",
     39: "SET_SINK_MUTE",
@@ -490,13 +667,11 @@ PA_REFUSED = {
     44: "SET_DEFAULT_SINK",
     45: "SET_DEFAULT_SOURCE",
     48: "KILL_CLIENT",
-    49: "KILL_SINK_INPUT",
-    50: "KILL_SOURCE_OUTPUT",
     51: "LOAD_MODULE",
     52: "UNLOAD_MODULE",
     53: "ADD_AUTOLOAD",
     54: "REMOVE_AUTOLOAD",
-    67: "MOVE_SINK_INPUT",
+    # Even for its own stream: recording is approved for the source it named.
     68: "MOVE_SOURCE_OUTPUT",
     70: "SUSPEND_SINK",
     71: "SUSPEND_SOURCE",
@@ -507,6 +682,164 @@ PA_REFUSED = {
     100: "SET_PORT_LATENCY_OFFSET",
     104: "SEND_OBJECT_MESSAGE",
 }
+# Commands on a stream by its server-wide index (the first 'L' after the tag):
+# allowed on the client's own streams (an app's own volume slider), refused on
+# every other client's.
+PA_OWN_ONLY = {
+    37: ("SET_SINK_INPUT_VOLUME", "sink-input"),
+    49: ("KILL_SINK_INPUT", "sink-input"),
+    50: ("KILL_SOURCE_OUTPUT", "source-output"),
+    67: ("MOVE_SINK_INPUT", "sink-input"),
+    69: ("SET_SINK_INPUT_MUTE", "sink-input"),
+    98: ("SET_SOURCE_OUTPUT_VOLUME", "source-output"),
+    99: ("SET_SOURCE_OUTPUT_MUTE", "source-output"),
+}
+PA_STREAM_KIND = {
+    PA_CREATE_PLAYBACK_STREAM: "sink-input",
+    PA_DELETE_PLAYBACK_STREAM: "sink-input",
+    PA_PLAYBACK_STREAM_KILLED: "sink-input",
+    PA_CREATE_RECORD_STREAM: "source-output",
+    PA_DELETE_RECORD_STREAM: "source-output",
+    PA_RECORD_STREAM_KILLED: "source-output",
+}
+PA_MAX_PENDING_RECORDS = 4  # record streams of one connection awaiting a decision
+
+
+def pa_routes(props):
+    """Whether a proplist picks what a stream connects to. PipeWire's pulse
+    server copies client and stream properties onto its streams, where
+    target.object, node.target or stream.capture.sink choose the source over
+    the request's own fields (another app's stream, a sink's monitor)."""
+    return any(
+        k.startswith(("target.", "stream.", "object.", "port."))
+        or k in ("node.target", "node.link-group", "node.autoconnect", "media.class")
+        for k in props
+    )
+
+
+class PaTags:
+    """A reader for a tagstruct, from `offset` on (pulsecore/tagstruct.c).
+    Malformed input raises ValueError."""
+
+    def __init__(self, data, offset=10):
+        self.data = data
+        self.i = offset
+
+    def take(self, n):
+        if self.i + n > len(self.data):
+            raise ValueError("truncated tagstruct")
+        b = self.data[self.i : self.i + n]
+        self.i += n
+        return b
+
+    def expect(self, tag):
+        if self.take(1) != tag:
+            raise ValueError(f"expected tag {tag!r}")
+
+    def u32(self):
+        self.expect(b"L")
+        return struct.unpack("!I", self.take(4))[0]
+
+    def boolean(self):
+        t = self.take(1)
+        if t not in (b"0", b"1"):
+            raise ValueError("expected a boolean")
+        return t == b"1"
+
+    def string(self):
+        t = self.take(1)
+        if t == b"N":
+            return None
+        if t != b"t":
+            raise ValueError("expected a string")
+        end = self.data.find(b"\0", self.i)
+        if end < 0:
+            raise ValueError("unterminated string")
+        s = self.data[self.i : end].decode("utf-8", "replace")
+        self.i = end + 1
+        return s
+
+    def sample_spec(self):
+        self.expect(b"a")
+        self.take(6)  # format, channels, rate
+
+    def channel_map(self):
+        self.expect(b"m")
+        self.take(self.take(1)[0])
+
+    def proplist(self):
+        """The keys of a proplist ('P', then key, length, value until a null key)."""
+        self.expect(b"P")
+        keys = []
+        while True:
+            k = self.string()
+            if k is None:
+                return keys
+            n = self.u32()
+            self.expect(b"x")
+            if struct.unpack("!I", self.take(4))[0] != n:
+                raise ValueError("proplist length mismatch")
+            self.take(n)
+            keys.append(k)
+
+
+def pa_record_request(payload, version):
+    """(source index, source name, direct_on_input, proplist keys) of a
+    CREATE_RECORD_STREAM, or None when it doesn't parse (pulse/stream.c
+    create_stream; the protocol version decides which fields are there)."""
+    if version is None:
+        return None
+    r = PaTags(payload)
+    try:
+        if version < 13:
+            r.string()  # stream name
+        r.sample_spec()
+        r.channel_map()
+        index = r.u32()
+        name = r.string()
+        r.u32()  # maxlength
+        r.boolean()  # corked
+        r.u32()  # fragsize
+        keys, direct = [], PA_INVALID_INDEX
+        if version >= 12:
+            for _ in range(7):  # no_remap … variable_rate
+                r.boolean()
+        if version >= 13:
+            r.boolean()  # peak_detect
+            r.boolean()  # adjust_latency
+            keys = r.proplist()
+            direct = r.u32()
+        return index, name, direct, keys
+    except ValueError:
+        return None
+
+
+def pa_record_kind(req, client_routes=False):
+    """What a record request would hear, conservatively, as (kind, source,
+    named): ("mic", None, True) only for the default source chosen by nothing
+    but the server's default; else "monitor" for the sound other apps play (a
+    monitor, another app's stream, or a source the filter can't name), or
+    "device" for a source the app named, which may be a monitor under another
+    name (PipeWire records a sink named as a source). `named` is whether the
+    source is a name, the same one next time (an index can be reused)."""
+    if req is None:
+        return "monitor", "a source the request doesn't let the broker identify", False
+    index, name, direct, keys = req
+    if direct != PA_INVALID_INDEX:
+        return "monitor", f"the sound of one stream of another app (#{direct})", False
+    # PipeWire takes a name that starts with a number (atoi) as an index.
+    numbered = name is not None and name.lstrip()[:1] in ("", "+", "-", *"0123456789")
+    if index != PA_INVALID_INDEX or numbered:
+        # An index can't be resolved to a source without asking the server,
+        # so it may be a monitor.
+        return "monitor", f"the source numbered {name if numbered else index}", False
+    if client_routes or pa_routes(keys):
+        return "monitor", "a source the app picks through PipeWire stream properties", False
+    if name is None or name == "@DEFAULT_SOURCE@":
+        return "mic", None, True
+    if name == "@DEFAULT_MONITOR@" or name.endswith(".monitor"):
+        return "monitor", name, True
+    return "device", name, True
 
 
 def pa_read_packet(sock):
@@ -531,6 +864,13 @@ def pa_command(payload):
     return None
 
 
+def pa_u32(payload, offset):
+    """The 'L' u32 at payload[offset:], or None."""
+    if payload[offset : offset + 1] != b"L" or len(payload) < offset + 5:
+        return None
+    return struct.unpack("!I", payload[offset + 1 : offset + 5])[0]
+
+
 def pa_packet(payload):
     return PA_DESC.pack(len(payload), PA_CONTROL, 0, 0, 0) + payload
 
@@ -547,30 +887,12 @@ def pa_clear_shm(payload, offset):
     return payload[: offset + 1] + struct.pack("!I", v & ~PA_PROTOCOL_SHM_FLAGS) + payload[offset + 5 :]
 
 
-def pa_record_source(payload):
-    """The source name a CREATE_RECORD_STREAM names ('' for the default or by
-    index), from its tagstruct: sample spec, channel map, source index, name."""
-    try:
-        i = 10
-        if payload[i : i + 1] != b"a":  # sample spec: format, channels, rate
-            return ""
-        i += 1 + 1 + 1 + 4
-        if payload[i : i + 1] != b"m":  # channel map: count, positions
-            return ""
-        i += 2 + payload[i + 1]
-        if payload[i : i + 1] != b"L":  # source index
-            return ""
-        i += 5
-        if payload[i : i + 1] == b"t":
-            end = payload.index(b"\0", i + 1)
-            return payload[i + 1 : end].decode("utf-8", "replace")
-    except (IndexError, ValueError):
-        pass
-    return ""
-
-
 class PulseFilter:
-    """One sandbox client's connection to the user's PulseAudio server."""
+    """One sandbox client's connection to the user's PulseAudio server.
+
+    It follows the streams the client creates (the server's reply to each
+    CREATE_*_STREAM names its channel and index, until deleted or killed), so
+    commands on a stream by index pass only for the client's own."""
 
     def __init__(self, broker, sandbox, client, upstream_path):
         self.broker = broker
@@ -581,7 +903,14 @@ class PulseFilter:
         self.to_client = threading.Lock()
         self.to_server = threading.Lock()
         self.auth_tag = None
+        self.client_version = None
+        self.version = None  # negotiated in AUTH
         self.mic = broker.sandboxes[sandbox].get("audio") == "microphone"
+        self.state = threading.Lock()
+        self.pending = {}  # tag of a CREATE_*_STREAM -> stream kind
+        self.streams = {}  # (kind, channel) -> server-wide index
+        self.recording = 0  # record requests awaiting a decision
+        self.client_routes = False  # the client's proplist picked a target
 
     def send_client(self, data):
         with self.to_client:
@@ -590,6 +919,14 @@ class PulseFilter:
     def send_server(self, data):
         with self.to_server:
             self.server.sendall(data)
+
+    def owns(self, kind, index):
+        with self.state:
+            return any(k == kind and i == index for (k, _), i in self.streams.items())
+
+    def forget(self, kind, channel):
+        with self.state:
+            self.streams.pop((kind, channel), None)
 
     def run(self):
         t = threading.Thread(target=self.from_server, daemon=True)
@@ -614,9 +951,7 @@ class PulseFilter:
                     break
                 desc, payload = pkt
                 if desc[1] == PA_CONTROL:
-                    cmd = pa_command(payload)
-                    if cmd and cmd[0] == PA_REPLY and cmd[1] == self.auth_tag:
-                        payload = pa_clear_shm(payload, 10)
+                    payload = self.server_control(payload)
                 self.send_client(PA_DESC.pack(len(payload), *desc[1:]) + payload)
         except (OSError, ValueError):
             pass
@@ -625,6 +960,26 @@ class PulseFilter:
                 self.client.shutdown(socket.SHUT_RDWR)
             except OSError:
                 pass
+
+    def server_control(self, payload):
+        cmd = pa_command(payload)
+        if cmd is None:
+            return payload
+        command, tag = cmd
+        if command == PA_REPLY and tag == self.auth_tag:
+            server_version = pa_u32(payload, 10)
+            if server_version is not None and self.client_version is not None:
+                self.version = min(server_version & PA_VERSION_MASK, self.client_version)
+            return pa_clear_shm(payload, 10)
+        if command in (PA_REPLY, PA_ERROR):
+            with self.state:
+                kind = self.pending.pop(tag, None)
+                channel, index = pa_u32(payload, 10), pa_u32(payload, 15)
+                if kind and command == PA_REPLY and channel is not None and index is not None:
+                    self.streams[(kind, channel)] = index
+        elif command in (PA_PLAYBACK_STREAM_KILLED, PA_RECORD_STREAM_KILLED):
+            self.forget(PA_STREAM_KIND[command], pa_u32(payload, 10))
+        return payload
 
     def from_client(self):
         try:
@@ -642,44 +997,108 @@ class PulseFilter:
                 if cmd is None:
                     break
                 command, tag = cmd
-                if command == PA_AUTH:
-                    self.auth_tag = tag
-                    payload = pa_clear_shm(payload, 10)
-                elif command in PA_REFUSED:
-                    log(f"{self.sandbox}: audio: refused {PA_REFUSED[command]}")
+                refused = self.refuse(command, payload)
+                if refused:
+                    log(f"{self.sandbox}: audio: refused {refused}")
                     self.send_client(pa_error(tag))
                     continue
+                if command == PA_AUTH:
+                    self.auth_tag = tag
+                    v = pa_u32(payload, 10)
+                    self.client_version = None if v is None else v & PA_VERSION_MASK
+                    payload = pa_clear_shm(payload, 10)
                 elif command == PA_CREATE_RECORD_STREAM:
+                    with self.state:
+                        busy = self.recording >= PA_MAX_PENDING_RECORDS
+                        if not busy:
+                            self.recording += 1
+                    if busy:
+                        log(f"{self.sandbox}: audio: refused a record stream (too many waiting)")
+                        self.send_client(pa_error(tag))
+                        continue
                     # Decided off this thread, so the prompt doesn't stall the
                     # connection's playback meanwhile.
                     threading.Thread(target=self.record, args=(tag, payload), daemon=True).start()
                     continue
+                elif command == PA_CREATE_PLAYBACK_STREAM:
+                    with self.state:
+                        self.pending[tag] = "sink-input"
+                elif command in (PA_DELETE_PLAYBACK_STREAM, PA_DELETE_RECORD_STREAM):
+                    self.forget(PA_STREAM_KIND[command], pa_u32(payload, 10))
                 self.send_server(pa_packet(payload))
         except (OSError, ValueError):
             pass
 
+    def refuse(self, command, payload):
+        """Why a client command is refused (its name), or None to pass it."""
+        if command in PA_REFUSED:
+            return PA_REFUSED[command]
+        if command in PA_OWN_ONLY:
+            name, kind = PA_OWN_ONLY[command]
+            index = pa_u32(payload, 10)
+            if index is None or not self.owns(kind, index):
+                return f"{name} on another client's stream"
+            return None
+        if command in (PA_SET_CLIENT_NAME, PA_UPDATE_CLIENT_PROPLIST):
+            # Later streams inherit the client's properties (PipeWire): one
+            # that picks a target makes every later recording "other sound".
+            r = PaTags(payload)
+            try:
+                if command == PA_UPDATE_CLIENT_PROPLIST:
+                    r.u32()  # update mode
+                routes = pa_routes(r.proplist())
+            except ValueError:
+                routes = command == PA_UPDATE_CLIENT_PROPLIST or payload[10:11] == b"P"
+            if routes:
+                self.client_routes = True
+            return None
+        if command == PA_UPDATE_RECORD_STREAM_PROPLIST:
+            r = PaTags(payload)
+            try:
+                r.u32()  # channel
+                r.u32()  # update mode
+                routes = pa_routes(r.proplist())
+            except ValueError:
+                routes = True
+            if routes:
+                return "UPDATE_RECORD_STREAM_PROPLIST that picks a different source"
+        return None
+
     def record(self, tag, payload):
-        source = pa_record_source(payload)
         try:
+            kind, source, named = pa_record_kind(pa_record_request(payload, self.version), self.client_routes)
             if not self.mic:
                 ok, why = False, "this sandbox has no microphone access"
-            else:
-                what = (
-                    f"record the sound other apps play ({source})"
-                    if source.endswith(".monitor")
-                    else "use your microphone"
-                )
+            elif kind == "mic":
                 ok, why = self.broker.decide(
-                    self.sandbox, "microphone", ("microphone", source.endswith(".monitor")), what,
+                    self.sandbox, "microphone", ("microphone", "default"), "use your microphone",
                     "until you close the app or the answer's session expires",
                 )
-            log(f"{self.sandbox}: audio: record {source or '(default source)'}: {why}")
+            else:
+                what = (
+                    "record the sound other apps play"
+                    if kind == "monitor"
+                    else "record from a sound device the app chose (it may be the sound other apps play)"
+                )
+                ok, why = self.broker.decide(
+                    self.sandbox, "microphone", ("microphone", kind, source), what,
+                    Broker.with_reason(f"The source:\n{untrusted(source, 2)}", {}),
+                    # A source by index (or a stream) can't be told apart from
+                    # a later one with the same number.
+                    allow_session=named,
+                )
+            log(f"{self.sandbox}: audio: record {kind} {escape(source or '(default source)')[:300]}: {why}")
             if ok:
+                with self.state:
+                    self.pending[tag] = "source-output"
                 self.send_server(pa_packet(payload))
             else:
                 self.send_client(pa_error(tag))
         except OSError:
             pass
+        finally:
+            with self.state:
+                self.recording -= 1
 
 
 def peer_gone(conn):

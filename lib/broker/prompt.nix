@@ -7,11 +7,15 @@
 # asks for, and prints the decision on stdout: "once", "session" (allow the same
 # request again without asking, for the rest of the login session; the broker
 # caps it at 12 hours) or "deny". Exit status 0 when allowed, 1 when denied. No answer
-# within the timeout (default 60 s) is a denial, as is a closed dialog.
+# within the timeout (default 60 s) is a denial, as is a closed dialog. Deny has
+# the focus, so a stray Enter or Space (typing into the window under the dialog
+# as it appears) denies.
 #
 # Everything in the dialog may come from the sandbox, so it is shown as plain text
 # (no markup) and the requester is always the broker's own name for the sandbox,
-# never something the sandbox chose.
+# never something the sandbox chose. Callers pass sandbox-supplied text escaped,
+# one line per field and of bounded length (no wrapping here, so it can't pose as
+# a line of the dialog's own).
 pkgs:
 pkgs.writeShellScriptBin "sbx-prompt" ''
   set -u
@@ -37,7 +41,7 @@ pkgs.writeShellScriptBin "sbx-prompt" ''
 
   $detail"
   args=(
-    --question --no-markup --no-wrap
+    --question --no-markup --no-wrap --default-cancel
     --title "Sandbox permission request"
     --icon dialog-warning
     --text "$text"
