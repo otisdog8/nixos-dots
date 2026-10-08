@@ -50,6 +50,10 @@ let
       # qt6ct recurses in QProxyStyle::standardPalette. Override the whole Qt
       # scope (including its wrapper hook), preserving the compositor pin.
       qt6 = pkgs.qt6;
+      # ...and build with that Qt's toolchain: upstream forces the pin's
+      # gcc15Stdenv, whose glibc falls behind the host Qt's (libQt6Gui needing
+      # GLIBC_2.43 against a 2.42 link) whenever the host nixpkgs moves ahead.
+      stdenv = pkgs.stdenv;
     }).overrideAttrs
       (old: {
         patches = (old.patches or [ ]) ++ [ ./patches/xdph-dequeue-busy-buffers.patch ];
