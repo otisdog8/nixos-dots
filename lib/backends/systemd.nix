@@ -1,6 +1,6 @@
 # systemd-stash backend — the app's private data lives in a root-owned stash
 # (/persist/sandbox/<app>, 0700 root: the per-app LOCK). A static per-app system
-# service runs, as its single ExecStart (`+` = full privileges),
+# service runs, as its single ExecStart (as root, but confined: see `confinement`),
 # `unshare --mount … runScript`, which:
 #   1. gets a fresh private, non-propagating mount namespace (from unshare),
 #   2. as root grafts each stash leaf onto its ~/path via `mount --bind` — root
@@ -8,6 +8,11 @@
 #   3. setpriv-drops to the app principal and execs the inner bwrap wrapper.
 # One invocation: systemd applies namespacing per-Exec, so a mount in ExecStartPre
 # would be gone by ExecStart.
+#
+# Root works only in root-owned directories nobody else can write (/run/app-<name>
+# while it prepares it, the stash's root-owned parents); everything inside a
+# directory another uid owns (jrt's runtime dir, the app's home) is done as that
+# uid: mount-helper.py's owner-dropped children, or setpriv.
 #
 # TWO isolation modes (sandbox.dedicatedUser):
 #   - same-uid (default): drops to jrt. Hides the stash from OTHER SANDBOXED apps
@@ -39,7 +44,6 @@ let
   gid = toString config.users.groups.${config.users.users.${username}.group}.gid;
   binName = appCfg.packageName;
   unitName = "sandbox-${appName}";
-  envFile = "/run/user/${uid}/sandbox/${appName}.env";
   jrtRuntime = "/run/user/${uid}";
 
   dedicated = cfg.sandbox.dedicatedUser; # dedicated app-<name> uid vs same-uid jrt
@@ -48,7 +52,9 @@ let
   sharedHome = "/home/${username}";
   # Same-uid apps use jrt's runtime dir directly. A dedicated app can't write into
   # jrt's 0700 /run/user/<uid> (nixpak needs to create .flatpak/nixpak-bus/etc.),
-  # so it gets its OWN runtime dir with jrt's session sockets bind-mounted in.
+  # so it gets its OWN runtime dir with jrt's session sockets bind-mounted in:
+  # the unit's RuntimeDirectory (systemd makes it root-owned at start and
+  # removes it at stop), handed to the app just before the privilege drop.
   runtimeDir = if dedicated then "/run/${appUser}" else jrtRuntime;
   # sandbox.appearAsUser: the dedicated app sees itself as the user. The
   # runScript mounts the app's home over the user's home path and its runtime
@@ -69,6 +75,7 @@ let
   stageHome = "/run/sandbox-user-home/${appName}";
 
   co = "${pkgs.coreutils}/bin";
+  fu = "${pkgs.findutils}/bin";
   ul = "${pkgs.util-linux}/bin";
   acl = "${pkgs.acl}/bin";
   bwrap = "${pkgs.bubblewrap}/bin/bwrap";
@@ -104,6 +111,25 @@ let
   mountHelper = pkgs.writeScript "sandbox-mount-helper" (
     "#!${pkgs.python3}/bin/python3 -IS\n" + builtins.readFile ./mount-helper.py
   );
+  # A command prefix: the rest of the line runs as jrt (no supplementary groups).
+  # The root phase's own looks into jrt's runtime dir go through it — root doesn't
+  # resolve paths in a directory jrt owns (and, confined, has no CAP_DAC_* to).
+  asUser = "${ul}/setpriv --reuid=${uid} --regid=${gid} --clear-groups --";
+  # Cheap pre-filters (as jrt, through asUser) for the runScript's optional
+  # relays; mount-helper.py does the authoritative, race-free check.
+  pulseProbe = pkgs.writeShellScript "sandbox-pulse-probe-${appName}" ''
+    __d=$(${co}/dirname "$1")
+    [ -d "$__d" ] && [ ! -L "$__d" ] || exit 1
+    # Session start can race the socket unit: give native a moment to appear.
+    for __i in $(${co}/seq 1 40); do [ -e "$1" ] && break; ${co}/sleep 0.05; done
+    [ -S "$1" ] && [ ! -L "$1" ]
+  '';
+  docProbe = pkgs.writeShellScript "sandbox-doc-probe-${appName}" ''
+    [ -d "${jrtRuntime}/doc" ] \
+      && [ ! -L "${jrtRuntime}/doc" ] \
+      && [ ! -L "${jrtRuntime}/doc/by-app" ] \
+      && [ ! -L "${jrtRuntime}/doc/by-app/${appId}" ]
+  '';
 
   paths = import ../paths.nix { inherit lib; };
 
@@ -222,7 +248,7 @@ let
   # relayed security-context socket under this name, and the launcher falls back
   # to it as the upstream socket when started without WAYLAND_DISPLAY.
   # needsWaylandDisplay: dedicated and same-uid "defaults" mode (same-uid
-  # "inject" gets WAYLAND_DISPLAY from the env file).
+  # "inject" is refused: injectAssertion).
   needsWaylandDisplay = dedicated || cfg.sandbox.envMode == "defaults";
   waylandSocket = "wayland-1";
 
@@ -257,13 +283,20 @@ let
       # App's own runtime dir; jrt's session sockets bound in (ns-private, so they
       # never appear on the host) and ACL'd by the launcher. nixpak's own writes
       # (.flatpak, nixpak-bus, wayland proxy) then land in a dir the app owns.
-      # Recreate it FRESH each launch (its parent /run is root-owned, so the app
-      # can't swap the dir for a symlink) — this clears any stale symlinks/mount
-      # targets the previous, possibly-compromised, app uid left as a trap. It
-      # stays ROOT-owned while root prepares it; ownership passes to the app only
+      # FRESH each launch: it's the unit's RuntimeDirectory, which systemd removes
+      # at stop (fd-based, never following a link) and makes root-owned 0700 at
+      # start (its parent /run is root-owned, so the app can't swap the dir for a
+      # symlink) — so the stale symlinks/mount targets the previous, possibly-
+      # compromised, app uid left as a trap are gone. Anything still in it (a dir
+      # left by an older build, or a removal that failed) systemd has chowned to
+      # root at start; it's emptied here, as root, in a dir only root can write.
+      # It stays ROOT-owned while root prepares it; ownership passes to the app only
       # right before the privilege drop (see the setpriv exec below).
-      ${co}/rm -rf "${runtimeDir}"
-      ${co}/mkdir -m 0700 "${runtimeDir}"
+      if [ "$(${co}/stat -c %u:%a "${runtimeDir}")" != 0:700 ]; then
+        echo "sandbox-${appName}: ${runtimeDir} is not root's alone; refusing to start" >&2
+        exit 1
+      fi
+      ${fu}/find "${runtimeDir}" -xdev -mindepth 1 -delete
       # No PipeWire socket: it is the whole media graph (every microphone, every
       # app's sound, screen casts). Audio goes through PulseAudio below.
       ${lib.optionalString usesWayland ''
@@ -286,16 +319,13 @@ let
         # pipewire-pulse's is 0666), so the bind alone suffices.
         # Trade-off: a file bind pins the inode, so restarting the broker (or
         # pipewire-pulse) needs an app relaunch.
+        # Cheap pre-filter, as jrt (pulseProbe); __bind_checked does the
+        # authoritative, race-free check.
         __pn="${pulseSource}"
-        if [ -d "$(${co}/dirname "$__pn")" ] && [ ! -L "$(${co}/dirname "$__pn")" ]; then
-          # Session start can race the socket unit: give native a moment to appear.
-          for __i in $(${co}/seq 1 40); do [ -e "$__pn" ] && break; ${co}/sleep 0.05; done
-          # Cheap pre-filter; __bind_checked does the authoritative, race-free check.
-          if [ -S "$__pn" ] && [ ! -L "$__pn" ]; then
-            ${co}/mkdir -m 0700 "${runtimeDir}/pulse"
-            ${co}/touch "${runtimeDir}/pulse/native"
-            __bind_checked "$__pn" "${runtimeDir}/pulse/native" S || ${co}/rm -f "${runtimeDir}/pulse/native" 2>/dev/null || true
-          fi
+        if ${asUser} ${pulseProbe} "$__pn"; then
+          ${co}/mkdir -m 0700 "${runtimeDir}/pulse"
+          ${co}/touch "${runtimeDir}/pulse/native"
+          __bind_checked "$__pn" "${runtimeDir}/pulse/native" S || ${co}/rm -f "${runtimeDir}/pulse/native" 2>/dev/null || true
         fi
       ''}
       # Cross-uid document portal: jrt's doc FUSE lives under jrt's 0700 runtime dir
@@ -306,12 +336,10 @@ let
       # <appId> at the identity path is correct AND is what nixpak does same-uid. The
       # FUSE is allow_other (our fork), so the app uid can read it; nixpak binds this
       # at jrt's identity path inside the sandbox (docBind).
-      if [ -d "${jrtRuntime}/doc" ] \
-         && [ ! -L "${jrtRuntime}/doc" ] \
-         && [ ! -L "${jrtRuntime}/doc/by-app" ] \
-         && [ ! -L "${jrtRuntime}/doc/by-app/${appId}" ]; then
+      # Cheap pre-filter, as jrt (docProbe); __bind_checked does the
+      # authoritative, race-free check.
+      if ${asUser} ${docProbe}; then
         ${co}/mkdir -p "${runtimeDir}/doc"
-        # Cheap pre-filter; __bind_checked does the authoritative, race-free check.
         __bind_checked "${jrtRuntime}/doc/by-app/${appId}" "${runtimeDir}/doc" d || ${co}/rmdir "${runtimeDir}/doc" 2>/dev/null || true
       fi
       # D-Bus session bus goes through the jrt-side bridge (started by the launcher),
@@ -321,7 +349,7 @@ let
       __bind_checked "${bridgeSock}" "${runtimeDir}/bus" S || ${co}/rm -f "${runtimeDir}/bus" 2>/dev/null || true
       # The sandbox broker's socket for this app (modules/system/sandbox-broker.nix;
       # the broker ACLs it for this uid), when the broker is running.
-      if [ -S "${jrtRuntime}/sbx-broker/${appName}.sock" ]; then
+      if ${asUser} ${co}/test -S "${jrtRuntime}/sbx-broker/${appName}.sock"; then
         ${co}/touch "${runtimeDir}/sbx-broker.sock"
         __bind_checked "${jrtRuntime}/sbx-broker/${appName}.sock" "${runtimeDir}/sbx-broker.sock" S || ${co}/rm -f "${runtimeDir}/sbx-broker.sock" 2>/dev/null || true
       fi
@@ -338,7 +366,8 @@ let
           # jrt's runtime dir (nixpak binds $XDG_RUNTIME_DIR/$WAYLAND_DISPLAY). If
           # it's missing, name a socket that doesn't exist — leaving it unset would
           # make nixpak fall back to binding a raw $XDG_RUNTIME_DIR/wayland-0.
-          if [ -S "${wlSock}" ]; then
+          # (Looked at as jrt: asUser.)
+          if ${asUser} ${co}/test -S "${wlSock}"; then
             export WAYLAND_DISPLAY=sandbox-${appName}-wayland
           else
             export WAYLAND_DISPLAY=sandbox-${appName}-no-display
@@ -347,9 +376,10 @@ let
     )}
     ${
       # Stash grafts via mount-helper.py (race-free: the app owns every component
-      # of the target path). Dedicated: intermediate dirs are chowned to the app
-      # uid so it can traverse them — including ones pre-existing inside a mounted
-      # parent stash (e.g. a chromium "Shared Dictionary" left jrt-owned 0700).
+      # of the target path, and every step inside it runs as its owner).
+      # Dedicated: intermediate dirs are chowned to the app uid so it can traverse
+      # them — including ones pre-existing inside a mounted parent stash (e.g. a
+      # chromium "Shared Dictionary" left jrt-owned 0700).
       # Parent-first order from storage.entries; a refusal aborts (set -e).
       lib.concatMapStringsSep "\n" (
         e:
@@ -369,21 +399,25 @@ let
         ''
           __u=$(${co}/id -u ${appUser}); __g=$(${co}/id -g ${appUser})
           # Preparation is done: hand the runtime dir (and the pulse subdir, if
-          # made) to the app. Deliberately NOT recursive — the entries inside are
-          # bind mounts of jrt's sockets and must keep their owner.
-          ${co}/chown "${appUser}" "${runtimeDir}"
-          if [ -d "${runtimeDir}/pulse" ]; then ${co}/chown "${appUser}" "${runtimeDir}/pulse"; fi
+          # made) to the app. The subdir FIRST and the dir itself last, so no
+          # chown ever runs inside a dir the app already owns; -h never follows a
+          # link. Deliberately NOT recursive — the entries inside are bind mounts
+          # of jrt's sockets and must keep their owner.
+          if [ -d "${runtimeDir}/pulse" ] && [ ! -L "${runtimeDir}/pulse" ]; then
+            ${co}/chown -h "${appUser}" "${runtimeDir}/pulse"
+          fi
+          ${co}/chown -h "${appUser}" "${runtimeDir}"
           ${lib.optionalString identity ''
             # appearAsUser. Every path here sits in a root-owned parent (/home,
             # /run, /run/user), so neither the user nor the app can redirect these
             # mounts; the shared binds below the stage are resolved later by bwrap,
             # as the app's uid. Recursive: the stash grafts above, and the user's
-            # impermanence mounts, come along. Private to this namespace.
-            ${co}/mkdir -p -m 0755 /run/sandbox-user-home
-            ${co}/mkdir -p -m 0755 "${stageHome}"
-            ${ul}/mount --rbind -- "${sharedHome}" "${stageHome}"
-            ${ul}/mount --rbind -- "${appHome}" "${sharedHome}"
-            ${ul}/mount --rbind -- "${runtimeDir}" "${jrtRuntime}"
+            # impermanence mounts, come along. Private to this namespace. (The
+            # stage is a RuntimeDirectory too: /run is read-only here. -n: no
+            # utab bookkeeping, for the same reason.)
+            ${ul}/mount -n --rbind -- "${sharedHome}" "${stageHome}"
+            ${ul}/mount -n --rbind -- "${appHome}" "${sharedHome}"
+            ${ul}/mount -n --rbind -- "${runtimeDir}" "${jrtRuntime}"
             export HOME="${sharedHome}" USER="${username}" LOGNAME="${username}"
             export XDG_RUNTIME_DIR="${jrtRuntime}"
             export DBUS_SESSION_BUS_ADDRESS="unix:path=${jrtRuntime}/bus"
@@ -398,53 +432,45 @@ let
     }
   '';
 
-  # Curated env forwarded from the session (same-uid inject mode only). Covers the
-  # session vars features reference via `sloth.envOr`.
-  injectVars = [
-    "XDG_RUNTIME_DIR"
-    "WAYLAND_DISPLAY"
-    "DBUS_SESSION_BUS_ADDRESS"
-    "DISPLAY"
-    "LANG"
-    "QT_QPA_PLATFORMTHEME"
-  ];
-
   # Idempotent removal of every u:app-<name> ACL entry the launcher grants on jrt's
   # LONG-LIVED objects (session sockets, bridge sock, shared jrt data like the
-  # vault). Called from TWO places: the launcher's trap (as jrt — the fast path)
-  # and the unit's ExecStopPost (as root — authoritative: it fires on unit
-  # deactivation even when the launcher was SIGKILLed/OOM-killed and its trap never
-  # ran, which was the one path that used to leak grants). Both runs are safe and
+  # vault). Called from TWO places: the launcher's trap (the fast path) and the
+  # unit's ExecStopPost (authoritative: it fires on unit deactivation even when the
+  # launcher was SIGKILLed/OOM-killed and its trap never ran, which was the one
+  # path that used to leak grants). Both run it AS JRT — the ExecStopPost through
+  # asUser: every object here is jrt's, and an owner may change its own ACLs, so
+  # root never walks jrt's home or runtime dir. Both runs are safe and
   # composable: `setfacl -x` only REMOVES an entry (never grants), so a double run
-  # is a no-op and a jrt-planted symlink can't turn this into an escalation; `-P`
-  # keeps the recursive walk from following a symlink jrt might plant to redirect it
-  # into a large tree (DoS). Entries are per-uid, so removing THIS app's entry never
-  # disturbs another concurrent dedicated app on the same shared socket. The per-app
-  # ~/Downloads/<app> folder keeps its ACLs (jrt-owned; its default ACL keeps saved
-  # files jrt-readable); only the traverse grants on ~ and ~/Downloads are removed. xhost and the bridge are NOT here: xhost needs
-  # jrt's X-session context (root in ExecStopPost has none), and the bridge dies via
-  # --die-with-parent — both stay in the trap. Only meaningful for dedicated apps;
-  # every caller gates on `dedicated`.
+  # is a no-op; `-P` never follows a symlink (an argument or, in the recursive
+  # walk, one jrt might plant to redirect it into a large tree: DoS). Entries are
+  # per-uid, so removing THIS app's entry never disturbs another concurrent
+  # dedicated app on the same shared socket. The per-app ~/Downloads/<app> folder
+  # keeps its ACLs (jrt-owned; its default ACL keeps saved files jrt-readable);
+  # only the traverse grants on ~ and ~/Downloads are removed. xhost and the
+  # bridge are NOT here: xhost needs jrt's X-session context (ExecStopPost has
+  # none), and the bridge dies via --die-with-parent — both stay in the trap. The
+  # camera nodes are root's: revokeCameraScript. Only meaningful for dedicated
+  # apps; every caller gates on `dedicated`.
   revokeAclsScript = pkgs.writeShellScript "sandbox-revoke-acls-${appName}" ''
     for __s in "${jrtRuntime}"/wayland-* "${jrtRuntime}"/pipewire-* "${jrtRuntime}/pulse"; do
       [ -e "$__s" ] || continue
       ${acl}/setfacl -R -P -x "u:${appUser}" "$__s" 2>/dev/null || true
     done
-    ${acl}/setfacl -x "u:${appUser}" "${bridgeSock}" 2>/dev/null || true
-    ${lib.optionalString camera ''
-      # Camera nodes the attach helper granted this uid (only root can undo it:
-      # the ExecStopPost run).
-      for __n in /dev/video*; do
-        [ -c "$__n" ] && ${acl}/setfacl -x "u:${appUser}" "$__n" 2>/dev/null || true
-      done
-    ''}
-    ${acl}/setfacl -x "u:${appUser}" "${wlSock}" 2>/dev/null || true
+    ${acl}/setfacl -P -x "u:${appUser}" "${bridgeSock}" 2>/dev/null || true
+    ${acl}/setfacl -P -x "u:${appUser}" "${wlSock}" 2>/dev/null || true
     ${lib.concatMapStringsSep "\n" (p: ''
       ${acl}/setfacl -R -P -x "u:${appUser}" "${sharedHome}/${p}" 2>/dev/null || true
     '') relExtraBinds}
     ${lib.concatMapStringsSep "\n" (d: ''
       ${acl}/setfacl -x "u:${appUser}" "${d}" 2>/dev/null || true
     '') sharedAncestors}
+  '';
+  # Camera nodes the attach helper granted this uid: root's nodes in root's /dev,
+  # so only root (the ExecStopPost run) can undo it.
+  revokeCameraScript = pkgs.writeShellScript "sandbox-revoke-camera-${appName}" ''
+    for __n in /dev/video*; do
+      [ -c "$__n" ] && ${acl}/setfacl -P -x "u:${appUser}" "$__n" 2>/dev/null || true
+    done
   '';
 
   launcher = pkgs.writeShellScriptBin binName ''
@@ -559,8 +585,8 @@ let
       if dedicated then
         ''
           # ACL teardown lives in ${revokeAclsScript} (defined above), invoked from
-          # BOTH the trap below (as jrt, fast path) and the unit's ExecStopPost (as
-          # root, authoritative — so a SIGKILL/OOM of this launcher, which skips the
+          # BOTH the trap below (fast path) and the unit's ExecStopPost (also as jrt,
+          # authoritative — so a SIGKILL/OOM of this launcher, which skips the
           # trap, still gets grants revoked on unit deactivation). See that script.
           # Grant app-${appUser} rw on ONLY the specific session sockets (which the
           # runScript binds into the app's own runtime dir). No ACL on jrt's
@@ -635,15 +661,7 @@ let
           ''}
         ''
       else
-        lib.optionalString (cfg.sandbox.envMode == "inject") ''
-          umask 077
-          ${co}/mkdir -p "$(${co}/dirname "${envFile}")"
-          : > "${envFile}"
-          for v in ${lib.concatStringsSep " " injectVars}; do
-            val="$(${co}/printenv "$v" 2>/dev/null || true)"
-            [ -n "$val" ] && ${co}/printf '%s=%s\n' "$v" "$val" >> "${envFile}"
-          done
-        ''
+        ""
     }
     ${lib.optionalString (dedicated && cfg.sandbox.x11Forward) ''
       # Grant the dedicated app uid access to jrt's X server via server-interpreted
@@ -715,20 +733,62 @@ let
       /proc/<pid>/root — only sandbox.dedicatedUser does that.
     '';
   };
-  # Same-uid + inject reads a jrt-written EnvironmentFile into the ROOT ExecStart
-  # (the `+unshare … runScript` runs privileged before the setpriv drop). jrt can
-  # pre-create/race that file (it may start the unit via polkit) and even the curated
-  # values are newline-injectable, so LD_PRELOAD / loader env would execute as ROOT.
-  # Dedicated NEVER reads it (uses Nix-derived `defaults`); forbid it for same-uid.
+  # Same-uid + inject would read a jrt-written env file into the ROOT ExecStart
+  # (the runScript runs privileged before the setpriv drop). jrt can pre-create/race
+  # that file (it may start the unit via polkit) and even the curated values are
+  # newline-injectable, so LD_PRELOAD / loader env would execute as ROOT. So the
+  # backend has no such mode: the unit reads no env file at all, and this refuses
+  # the combination. Dedicated never needs one (Nix-derived env).
   injectAssertion = lib.optional (!dedicated && cfg.sandbox.envMode == "inject") {
     assertion = false;
     message = ''
       sandbox app '${appName}': systemd same-uid backend with envMode = "inject" is
-      unsafe — the jrt-written ${envFile} is read into the ROOT ExecStart, an
+      unsafe — a jrt-written env file read into the ROOT ExecStart is an
       LD_PRELOAD/loader-injection vector into a root process. Use
       envMode = "defaults" (Nix-derived env) for a same-uid systemd app, or run it
       under sandbox.dedicatedUser (which never reads a jrt env file).
     '';
+  };
+
+  # The unit's confinement. It runs as root (no User=: the root phase must
+  # unshare, mount and setpriv), never unconfined (no "+" on any Exec line), and
+  # what confines the root phase confines the app too (it's the unit's child), so
+  # this is what the root phase touches plus what the app writes:
+  #   - capabilities: CAP_SYS_ADMIN (unshare, mount), CAP_SETUID + CAP_SETGID
+  #     (setpriv; mount-helper's owner-dropped children), CAP_CHOWN (handing
+  #     /run/app-<name> over; a graft's foreign intermediates). No CAP_DAC_*:
+  #     root only works in directories it owns, the rest is done as their owner.
+  #     (The app itself is unprivileged; bwrap's user namespace gets its own
+  #     full set there whatever this bounding set is.)
+  #   - ProtectSystem=strict: all read-only but /dev, /proc, /sys and
+  #       the app's runtime dir (+ the appearAsUser stage): RuntimeDirectory;
+  #       its stash roots (the graft sources, written by the app);
+  #       absolute extraBinds and binds.rw outside the homes (the app's).
+  #   - ProtectHome=tmpfs: /home, /root, /run/user empty but for the user's home
+  #     and runtime dir and the app's home (BindPaths), read-write: the app
+  #     writes there (and through the doc portal's FUSE), the ExecStopPost
+  #     revoke sets ACLs there; DAC decides what the app uid may touch. Every
+  #     source here has only root-owned ancestors, so systemd resolves no path
+  #     through a directory a user controls. (The absolute binds are the app's
+  #     own config; ReadWritePaths only flips their mount to read-write.)
+  stashRoots = lib.unique (map (e: lib.removeSuffix "/${e.path}" e.stashPath) stashEntries);
+  absBindsRw = lib.filter (
+    p: paths.isAbsolute p && !(lib.hasPrefix "${sharedHome}/" p) && !(lib.hasPrefix "${appHome}/" p)
+  ) (cfg.sandbox.extraBinds ++ appCfg.capabilities.binds.rw);
+  confinement = {
+    CapabilityBoundingSet = "CAP_SYS_ADMIN CAP_SETUID CAP_SETGID CAP_CHOWN";
+    ProtectSystem = "strict";
+    ProtectHome = "tmpfs";
+    BindPaths = lib.unique [
+      sharedHome
+      appHome
+      "-${jrtRuntime}"
+    ];
+    ReadWritePaths = map (p: "-${p}") (stashRoots ++ absBindsRw);
+  }
+  // lib.optionalAttrs dedicated {
+    RuntimeDirectory = [ "app-${appName}" ] ++ lib.optional identity "sandbox-user-home/${appName}";
+    RuntimeDirectoryMode = "0700";
   };
 in
 {
@@ -744,6 +804,10 @@ in
       # chmod 0755 (which tmpfiles re-runs every activation) would clamp the mask to
       # r-x and strip the app's ACL write bit. 0775 keeps the mask rwx (group = users,
       # effectively just jrt; other stays r-x) so the app's write survives resetups.
+      # Root making it in jrt's home is tmpfiles' own fd-safe walk (no symlink
+      # followed, no unsafe owner transition) and only ever gives jrt a jrt-owned
+      # dir; and it must exist before either implementation's first launch (the
+      # VM's launcher grants on it too, lib/vm/instance.nix), so it stays here.
       ++ lib.optional (
         dedicated && cfg.sandbox.sharedDownloads
       ) "d ${sharedHome}/Downloads/${appName} 0775 ${username} users -";
@@ -800,9 +864,10 @@ in
       stopIfChanged = false;
       serviceConfig = {
         Type = "exec";
-        # Root (+) so it can unshare a mount ns and graft the stash; runScript
-        # drops to the app principal via setpriv before exec'ing the sandbox.
-        ExecStart = "+${pkgs.util-linux}/bin/unshare --mount --propagation private -- ${runScript}";
+        # Root (confined: see `confinement`) so it can unshare a mount ns and
+        # graft the stash; runScript drops to the app principal via setpriv
+        # before exec'ing the sandbox.
+        ExecStart = "${pkgs.util-linux}/bin/unshare --mount --propagation private -- ${runScript}";
         Restart = "no";
         # No core dumps: a sandboxed app's core would write its memory — including
         # secrets like the Discord token this stash exists to hide — in plaintext
@@ -811,6 +876,9 @@ in
         LimitCORE = 0;
         IPAddressAllow = netPolicy.ipAddressAllow;
         IPAddressDeny = netPolicy.ipAddressDeny;
+        # Restricted modes: netpolicy's slice, which also denies the host's and
+        # LAN's public addresses (sbx-netlocal, modules/system/sandbox-dnsallow.nix).
+        Slice = lib.mkIf (netPolicy.slice != null) netPolicy.slice;
         Environment = [
           "HOME=${appHome}"
           # setpriv --reuid/--regid does NOT reset USER/LOGNAME, so without these
@@ -835,21 +903,20 @@ in
           "LANG=${config.i18n.defaultLocale}"
         ];
       }
-      # Authoritative ACL teardown on unit deactivation, as root (no User= on this
-      # unit → ExecStopPost runs as root, which can setfacl -x jrt's files). This is
-      # the net for the one case the launcher's trap misses: a SIGKILL/OOM of the
-      # launcher, after which the app self-exits and the unit deactivates with the
-      # grants still on jrt's sockets. `-` so a revoke hiccup never marks the unit
-      # failed; the script is idempotent so it composes with the trap's own run on a
-      # clean quit. (xhost/bridge stay in the trap — see revokeAclsScript.)
+      # Authoritative ACL teardown on unit deactivation: the net for the one case
+      # the launcher's trap misses, a SIGKILL/OOM of the launcher, after which the
+      # app self-exits and the unit deactivates with the grants still on jrt's
+      # sockets. jrt's objects as jrt (asUser: an owner may change its own ACLs),
+      # the camera nodes as root. `-` so a revoke hiccup never marks the unit
+      # failed; the scripts are idempotent so they compose with the trap's own run
+      # on a clean quit. (xhost/bridge stay in the trap — see revokeAclsScript.)
       // lib.optionalAttrs dedicated {
-        ExecStopPost = "-${revokeAclsScript}";
+        ExecStopPost = [
+          "-${asUser} ${revokeAclsScript}"
+        ]
+        ++ lib.optional camera "-${revokeCameraScript}";
       }
-      # Only the same-uid inject mode reads a jrt-written env file; dedicated NEVER
-      # does (that would be an LD_PRELOAD injection into a different-uid process).
-      // lib.optionalAttrs (!dedicated && cfg.sandbox.envMode == "inject") {
-        EnvironmentFile = "-${envFile}";
-      };
+      // confinement;
     };
   };
 }
