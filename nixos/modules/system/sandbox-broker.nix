@@ -399,7 +399,9 @@ in
         # setns into a sandbox's mount namespace, and a VM grant's idmap (a
         # user namespace that never holds a process).
         RestrictNamespaces = "mnt user";
-        RestrictSUIDSGID = true;
+        # Not RestrictSUIDSGID: it fails every openat2 with ENOSYS (seccomp
+        # can't see its mode), and sources and records are opened with
+        # openat2 (no symlinks, beneath a held fd), which has no fallback.
         # Device nodes are only opened O_PATH (the camera's, for open_tree),
         # which the device policy doesn't gate.
         DevicePolicy = "closed";

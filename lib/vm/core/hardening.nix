@@ -44,7 +44,9 @@
     RestrictNamespaces = true;
     LockPersonality = true;
     RestrictRealtime = true;
-    RestrictSUIDSGID = true;
+    # Not RestrictSUIDSGID: seccomp can't see openat2's mode (it's in a
+    # struct), so systemd fails every openat2 with ENOSYS, and root.py opens
+    # user paths with openat2 (RESOLVE_NO_SYMLINKS), which has no fallback.
     MemoryDenyWriteExecute = true;
     RestrictAddressFamilies = [ "AF_UNIX" ];
     SystemCallArchitectures = "native";
