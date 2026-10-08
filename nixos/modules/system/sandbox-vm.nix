@@ -37,10 +37,15 @@ let
       inherit (g) persistent projects;
       # Launching a member from an undeclared folder in ~ grants it to the VM.
       grantCwd = true;
-      extraBinds = map (p: {
-        path = p;
-        ro = false;
-      }) g.shareHome;
+      extraBinds =
+        map (p: {
+          path = p;
+          ro = false;
+        }) g.shareHome
+        ++ map (p: {
+          path = p;
+          ro = true;
+        }) g.shareHomeReadOnly;
       inherit (g) network;
       inherit (g.vm)
         memory

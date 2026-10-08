@@ -122,8 +122,12 @@ let
       cameraOnLaunch
       ;
     # Home-relative or absolute binds (./-relative ones are dropped with a warning).
+    # Not the user's git config into a restricted VM (one whose data is
+    # app-<name>'s): core.fsmonitor, core.hooksPath and the like name programs
+    # git runs, so the user could run code as the app (the VM's GUI toolkit
+    # config is kept out of it for the same reason: lib/vm/instance.nix).
     bindReqs =
-      lib.optionals caps.gitConfig [
+      lib.optionals (caps.gitConfig && principal == username) [
         {
           path = ".gitconfig";
           ro = true;
@@ -136,7 +140,7 @@ let
       ++ map (p: {
         path = p;
         ro = true;
-      }) caps.binds.ro
+      }) (caps.binds.ro ++ cfg.sandbox.extraBindsReadOnly)
       ++ map (p: {
         path = p;
         ro = false;

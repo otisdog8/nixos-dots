@@ -20,8 +20,28 @@ let
   ours = name: builtins.match "(sandbox-|sbx-|agent-vm|op-broker).*" name != null;
   desktopUser = config.modules.sandbox.vm.user;
   vmUnit = name: builtins.match "sandbox-vm-.*" name != null;
-  asUserOk =
-    name: builtins.match "sandbox-vm-.*-(wl|bus|bus-info|docs-portal|docs|grants)@?" name != null;
+  # Exact names, per instance: every instance has its VMM unit (sandbox-vm-<name>,
+  # "@" for a per-project one) and a -prep unit next to it. A suffix match would
+  # also pass, e.g., -capture-bus or the VMM of an app named "foo-docs".
+  instances = lib.concatMap (
+    n:
+    let
+      m = builtins.match "(sandbox-vm-.*)-prep(@?)" n;
+    in
+    lib.optional (m != null && config.systemd.services ? "${lib.head m}${lib.last m}") m
+  ) (lib.attrNames config.systemd.services);
+  asUserUnits = lib.concatMap (
+    m:
+    map (s: "${lib.head m}-${s}${lib.last m}") [
+      "wl"
+      "bus"
+      "bus-info"
+      "docs-portal"
+      "docs"
+      "grants"
+    ]
+  ) instances;
+  asUserOk = name: lib.elem name asUserUnits;
 
   # Units that can't comply yet, by exact name. Each entry says why and what
   # removes it; delete it as soon as the unit passes.

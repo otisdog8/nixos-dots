@@ -646,17 +646,19 @@ let
           ${co}/printf '{"child-pid": 1, "mnt-namespace": 1, "net-namespace": 1, "pid-namespace": 1}' \
             > "${jrtRuntime}/.flatpak/${appName}/bwrapinfo.json"
           # Shared jrt data (extraBinds, sharedDownloads): traverse every ancestor,
-          # rw the shared trees.
+          # rw the shared trees. -P, as the revoke: a shared path that is itself a
+          # symlink gets no grant (setfacl would otherwise follow it, and the
+          # revoke wouldn't, leaving the target's ACLs behind for good).
           ${lib.concatMapStringsSep "\n" (d: ''
             ${acl}/setfacl -m "u:${appUser}:x" "${d}" 2>/dev/null || true
           '') sharedAncestors}
           ${lib.concatMapStringsSep "\n" (p: ''
-            ${acl}/setfacl -R -m "u:${appUser}:rwX" "${sharedHome}/${p}" 2>/dev/null || true
+            ${acl}/setfacl -R -P -m "u:${appUser}:rwX" "${sharedHome}/${p}" 2>/dev/null || true
           '') relExtraBinds}
           ${lib.optionalString cfg.sandbox.sharedDownloads ''
             # Per-app shared downloads (traverse comes from sharedAncestors). A
             # default ACL makes files the app creates jrt-accessible too.
-            ${acl}/setfacl -R -m "u:${appUser}:rwX" "${sharedHome}/Downloads/${appName}" 2>/dev/null || true
+            ${acl}/setfacl -R -P -m "u:${appUser}:rwX" "${sharedHome}/Downloads/${appName}" 2>/dev/null || true
             ${acl}/setfacl -d -m "u:${appUser}:rwX" "${sharedHome}/Downloads/${appName}" 2>/dev/null || true
           ''}
         ''
@@ -749,6 +751,12 @@ let
       under sandbox.dedicatedUser (which never reads a jrt env file).
     '';
   };
+  # Read-only extra binds are bound by nixpak as the app's uid; a dedicated uid
+  # would need jrt's data ACL'd to it, and those grants (below) are read-write.
+  readOnlyBindsAssertion = lib.optional (dedicated && cfg.sandbox.extraBindsReadOnly != [ ]) {
+    assertion = false;
+    message = "sandbox app '${appName}': sandbox.extraBindsReadOnly isn't supported for a dedicated-uid app (systemd backend + dedicatedUser).";
+  };
 
   # The unit's confinement. It runs as root (no User=: the root phase must
   # unshare, mount and setpriv), never unconfined (no "+" on any Exec line), and
@@ -812,7 +820,7 @@ in
         dedicated && cfg.sandbox.sharedDownloads
       ) "d ${sharedHome}/Downloads/${appName} 0775 ${username} users -";
     environment.persistence = storage.homePersistence;
-    assertions = storage.assertions ++ ptraceAssertion ++ injectAssertion;
+    assertions = storage.assertions ++ ptraceAssertion ++ injectAssertion ++ readOnlyBindsAssertion;
     # Explicit unit name for the polkit start/stop/ref allowlist (sandbox.nix) —
     # not a prefix scan.
     modules.sandbox.units = [ "${unitName}.service" ];
@@ -834,7 +842,7 @@ in
     };
     modules.sandbox.dnsAllow = lib.optional (netPolicy.names != [ ]) {
       units = [ "${unitName}.service" ];
-      inherit (netPolicy) names;
+      inherit (netPolicy) names deny;
     };
 
     users.groups = lib.optionalAttrs dedicated { "app-${appName}" = { }; };

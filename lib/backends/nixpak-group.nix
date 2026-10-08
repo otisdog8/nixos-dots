@@ -57,6 +57,7 @@ let
       cfg = m.cfg // {
         sandbox = m.cfg.sandbox // {
           extraBinds = lib.filter (p: !(paths.isPwdRelative p)) m.cfg.sandbox.extraBinds;
+          extraBindsReadOnly = lib.filter (p: !(paths.isPwdRelative p)) m.cfg.sandbox.extraBindsReadOnly;
         };
       };
       inherit (m) gpuDevices;

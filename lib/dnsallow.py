@@ -20,10 +20,12 @@ An allowed name never opens a local address: IPAddressAllow= wins over every
 deny (the static ranges and the slice's), so answers in `local` (netpolicy's
 static ranges) or in sbx-netlocal's current set of the host's and LAN's public
 prefixes (`localFile`) are dropped. While localFile is configured but missing
-(sbx-netlocal isn't running), nothing is opened.
+(sbx-netlocal isn't running), nothing is opened. For the same reason a rule's
+own `deny` (the sandbox's policy deny entries) is never opened by its names.
 
 Config (JSON): {"systemctl": PATH, "local": [CIDR...], "localFile": PATH or
-null, "rules": [{"units": [UNIT or GLOB...], "names": [NAME...]}]}
+null, "rules": [{"units": [UNIT or GLOB...], "names": [NAME...],
+"deny": [CIDR or "any"...]}]}
 
 sbx-netlocal: keep the sandboxes in a restricted network mode off the host's
 and LAN's public addresses. netpolicy's static ranges (RFC 1918, ULA, ...)
@@ -154,6 +156,21 @@ class Local:
         return any(c.is_unspecified or any(c in n for n in nets) for c in candidates)
 
 
+def rule_deny(rule):
+    """A rule's own deny entries as networks ("any": everything; systemd's
+    other names are all in `local` already)."""
+    nets = []
+    for d in rule.get("deny") or []:
+        if d == "any":
+            nets += [ipaddress.ip_network("0.0.0.0/0"), ipaddress.ip_network("::/0")]
+            continue
+        try:
+            nets.append(ipaddress.ip_network(d, strict=False))
+        except ValueError:
+            pass
+    return nets
+
+
 class Allower:
     def __init__(self, cfg):
         self.systemctl = cfg["systemctl"]
@@ -193,8 +210,12 @@ class Allower:
         if not addrs:
             return
         for rule in rules:
+            denied = [a for a in addrs if Local.contains(rule_deny(rule), a)]
+            if denied:
+                log(f"{', '.join(names)}: not opening {' '.join(denied)}, which {' '.join(rule['units'])} deny")
+            allowed = [a for a in addrs if a not in denied]
             for unit in self.units(rule["units"]):
-                new = [a for a in addrs if (unit, a) not in self.done]
+                new = [a for a in allowed if (unit, a) not in self.done]
                 if not new:
                     continue
                 r = subprocess.run(

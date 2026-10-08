@@ -257,6 +257,12 @@
             description = "Additional bind mounts for sandboxed ${appName}: absolute, ./ or ../ (relative to $PWD), or home-relative (see lib/paths.nix).";
           };
 
+          extraBindsReadOnly = lib.mkOption {
+            type = lib.types.listOf lib.types.str;
+            default = [ ];
+            description = "Like extraBinds, but read-only. Not for dedicated-uid apps (the systemd backend's ACL grants are read-write).";
+          };
+
           # See nixos/modules/apps/xwayland-forward.md.
           x11Forward = lib.mkOption {
             type = lib.types.bool;
@@ -434,6 +440,7 @@
                       capabilities = appCfg.capabilities // v.capabilities;
                       nixpakModules = appCfg.nixpakModules ++ v.nixpakModules;
                     };
+                    joinGroup = false;
                   };
                 in
                 pkgs.writeShellScriptBin name ''

@@ -95,6 +95,11 @@ in
             description = "Units (or unit globs) whose IPAddressAllow= the names extend.";
           };
           names = lib.mkOption { type = lib.types.listOf lib.types.str; };
+          deny = lib.mkOption {
+            type = lib.types.listOf lib.types.str;
+            default = [ ];
+            description = "The units' policy deny entries (lib/netpolicy.nix `deny`), which the names never open.";
+          };
         };
       }
     );

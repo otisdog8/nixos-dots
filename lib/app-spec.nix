@@ -46,6 +46,19 @@
       '';
     };
 
+    groupCommand = lib.mkOption {
+      type = lib.types.nullOr lib.types.str;
+      default = null;
+      example = "claude-agents";
+      description = ''
+        For a member of a sandbox group with a shared container
+        (modules.sandbox.groups): the app's regular command runs in its own
+        sandbox, and this extra command runs it in the group's shared container
+        (where a member's command runs by default). null: the regular command
+        joins the group. nixpak backend only.
+      '';
+    };
+
     desktopFileName = lib.mkOption {
       type = lib.types.nullOr lib.types.str;
       default = null;

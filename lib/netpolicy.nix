@@ -15,9 +15,10 @@
 rec {
   # Ranges that are never the public internet: "this network", RFC 1918, CGNAT
   # (including the tailnet), IETF protocol assignments (PCP/TURN anycast, DS-Lite),
-  # reserved and limited broadcast; ULA and the old site-local; and those IPv4
+  # reserved and limited broadcast; ULA and the old site-local; those IPv4
   # ranges again behind the NAT64 well-known prefix (a NAT64 gateway on the LAN
-  # would otherwise translate 64:ff9b::192.168.1.1 to the LAN).
+  # would otherwise translate 64:ff9b::192.168.1.1 to the LAN); and all of the
+  # local-use NAT64 prefix.
   localRanges = [
     "0.0.0.0/8"
     "10.0.0.0/8"
@@ -36,6 +37,9 @@ rec {
     "64:ff9b::ac10:0/108"
     "64:ff9b::c000:0/120"
     "64:ff9b::c0a8:0/112"
+    # RFC 8215's local-use NAT64 prefix: whatever it translates to is the
+    # operator's choice, the LAN included.
+    "64:ff9b:1::/48"
   ];
 
   # Everything that isn't the public internet, statically: the host's loopback,
@@ -68,10 +72,11 @@ rec {
   # policy: { mode, allow, deny, allowDns }; backendDefault: the mode "default"
   # resolves to; dns: the resolvers the app uses (for a container, the host's,
   # usually on loopback), kept reachable in the restricted modes when allowDns.
-  # Returns { mode; ipAddressAllow; ipAddressDeny; names; slice; }: `names`
-  # (allowNames, in the restricted modes) are opened at run time as they
-  # resolve, by sbx-dnsallow (modules/system/sandbox-dnsallow.nix); `slice` is
-  # the unit's Slice= (null: leave it in system.slice).
+  # Returns { mode; ipAddressAllow; ipAddressDeny; names; deny; slice; }:
+  # `names` (allowNames, in the restricted modes) are opened at run time as they
+  # resolve, by sbx-dnsallow (modules/system/sandbox-dnsallow.nix), except into
+  # `deny` (the policy's own deny entries; pass both in the dnsAllow rule);
+  # `slice` is the unit's Slice= (null: leave it in system.slice).
   lower =
     {
       policy,
@@ -92,6 +97,7 @@ rec {
     {
       inherit mode;
       names = lib.optionals (mode != "open") (policy.allowNames or [ ]);
+      deny = lib.unique policy.deny;
       ipAddressAllow = lib.unique allow;
       ipAddressDeny = lib.unique (deny ++ policy.deny);
       slice = if mode == "open" then null else slice;

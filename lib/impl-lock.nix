@@ -20,7 +20,8 @@
 # launcher attaching to its VM) never conflicts:
 #   - container: nixpak's launcher (the app's command, or its group's service),
 #     which outlives the sandbox; the systemd backend's unit, as root just before
-#     the privilege drop. The descriptor is inherited by what they exec.
+#     the privilege drop; the `none` backend's command itself (the `-host`
+#     variant). The descriptor is inherited by what they exec.
 #   - VM: the VMM unit, beside crosvm (`hold-for`), never anything in the guest.
 # Launchers also `check` first, as the user, to say so in a notification: the
 # units have no session to show one.
@@ -33,8 +34,8 @@
 # bwrap), which only drops its own protection. A missing file (before the first
 # activation that declares it) is skipped: the launch goes ahead.
 #
-# Not locked: the `none` backend (no wrapper on the host side), and apps
-# without persisted data.
+# Not locked: apps without persisted data. (A `none`-backend app locks only its
+# main command: its other programs, e.g. wine's, start without the check.)
 { lib, pkgs }:
 let
   dir = "/run/sandbox-impl";
@@ -90,7 +91,8 @@ in
   inherit dir prog;
 
   # Whether an app's implementations lock each other out.
-  wanted = { backend, entries }: backend != "none" && entries != [ ];
+  # (`backend` is kept for callers; every backend locks now.)
+  wanted = { backend, entries }: entries != [ ];
 
   # systemd.tmpfiles.settings fragment declaring one app's two lock files.
   tmpfiles =

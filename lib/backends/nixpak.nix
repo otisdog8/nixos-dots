@@ -11,6 +11,10 @@
   pkgs,
   inputs,
   storage,
+  # false: a variant command (app.variantCommands, lib/apps.nix), whose own
+  # capabilities and modules the group's shared container doesn't have, so it
+  # always runs its own sandbox.
+  joinGroup ? true,
 }:
 let
   inner = import ./nixpak-pkg.nix {
@@ -46,14 +50,16 @@ let
   );
 
   # A group's shared container (nixpak-group.nix): this app's command runs in it
-  # when launched inside the group's projects.
+  # when launched inside the group's projects. With app.groupCommand, the
+  # regular command keeps its own sandbox, and that command is the group's.
   groups = config.modules.sandbox.groups;
   group = lib.findFirst (g: lib.elem appName groups.${g}.apps) null (lib.attrNames groups);
   sharedGroup =
-    if group != null && config.modules.sandbox.containerGroups ? ${group} then
+    if joinGroup && group != null && config.modules.sandbox.containerGroups ? ${group} then
       config.modules.sandbox.containerGroups.${group}
     else
       null;
+  groupCommand = appCfg.groupCommand or null;
   member = {
     inherit
       appName
@@ -136,7 +142,7 @@ in
         inherit (perAppPackage) name;
         paths = [ perAppPackage ];
         postBuild = ''
-          rm "$out/bin/${binName}"
+          ${lib.optionalString (groupCommand == null) "rm \"$out/bin/${binName}\""}
           ln -s ${
             sharedGroup.launcherFor {
               bin = binName;
@@ -146,7 +152,7 @@ in
                 p: if lib.hasPrefix "/" p then p else "/home/${username}/${lib.removePrefix "~/" p}"
               ) groups.${group}.projects;
             }
-          } "$out/bin/${binName}"
+          } "$out/bin/${if groupCommand == null then binName else groupCommand}"
         '';
       };
   systemConfig = {

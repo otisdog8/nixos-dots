@@ -165,8 +165,11 @@ let
         # appearAsUser (identity): $HOME is the user's home path, which the runScript
         # has made the app's home, so jrt's real data comes from its stage
         # (sharedHome), and the app's previous home path gets the same view: its
-        # home first, then each shared bind again under it.
-        ++ lib.optional (identity != null) [
+        # home first, then each shared bind again under it. Only for an app that
+        # keeps data: an ephemeral one (no storage entries, e.g. the browsers with
+        # a tmpfs home) must not get its on-disk home, writable and kept across
+        # launches, at the old path.
+        ++ lib.optional (identity != null && storage.entries != [ ]) [
           sloth.homeDir
           identity.oldHome
         ]
@@ -219,6 +222,17 @@ let
           (sloth.concat' sloth.runtimeDir "/${pulseSocketName}")
           (sloth.concat' sloth.runtimeDir "/pulse/native")
         ];
+      # Read-only extra binds (same-uid apps only: systemd.nix refuses them for
+      # a dedicated uid, which would need jrt's data ACL'd to it).
+      bubblewrap.bind.ro = map (
+        p:
+        if bindPath.isAbsolute p then
+          p
+        else if bindPath.isPwdRelative p then
+          sloth.concat' (sloth.env "PWD") "/${p}"
+        else
+          sloth.concat' sloth.homeDir "/${p}"
+      ) (cfg.sandbox.extraBindsReadOnly or [ ]);
       bubblewrap.sockets.pulse = lib.mkIf (pulseSocketName != null) (lib.mkForce false);
     };
 

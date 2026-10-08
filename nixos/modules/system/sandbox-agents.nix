@@ -55,8 +55,18 @@ in
 
     shareHome = lib.mkOption {
       type = lib.types.listOf lib.types.str;
+      default = [ ];
+      description = "Home-relative paths (credentials, tool state) shared read-write with every agent. Missing ones are skipped.";
+    };
+
+    # Read-only: gh's config.yml names commands the HOST's gh runs (pager,
+    # editor, browser, aliases), so an agent that could write it could run code
+    # as the user outside any sandbox. Its token (hosts.yml) is still readable.
+    # ~/.local/share/gh (extensions, also run by the host's gh) is not shared.
+    shareHomeReadOnly = lib.mkOption {
+      type = lib.types.listOf lib.types.str;
       default = [ ".config/gh" ];
-      description = "Home-relative paths (credentials, tool config) shared read-write with every agent. Missing ones are skipped.";
+      description = "Home-relative paths shared read-only with every agent. Missing ones are skipped.";
     };
 
     network = lib.mkOption {
@@ -77,7 +87,12 @@ in
 
   config = lib.mkIf cfg.enable {
     modules.sandbox.groups.agents = {
-      inherit (cfg) apps projects shareHome;
+      inherit (cfg)
+        apps
+        projects
+        shareHome
+        shareHomeReadOnly
+        ;
       persistent = true;
       network.mode = cfg.network;
     };

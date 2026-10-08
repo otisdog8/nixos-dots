@@ -31,6 +31,11 @@
 
       defaultBackend = "nixpak";
 
+      # Plain `claude` runs in its own sandbox; `claude-agents` runs it in the
+      # shared agents sandbox (modules/system/sandbox-agents.nix), whose
+      # projects and shared paths the own sandbox gets too.
+      groupCommand = "claude-agents";
+
       # `claude-nesbox`: the same sandbox plus what the virtio-nvgpu GPU/VM tests
       # need. Opt-in per session; plain `claude` is unchanged. Device binds are
       # bind-try, so nodes absent on a host are skipped. /dev/nvidia-uvm-tools is

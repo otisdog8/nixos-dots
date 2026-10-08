@@ -125,6 +125,12 @@ in
               example = [ ".config/gh" ];
               description = "Home-relative paths shared read-write with every member (e.g. credentials the members all use).";
             };
+            shareHomeReadOnly = lib.mkOption {
+              type = lib.types.listOf lib.types.str;
+              default = [ ];
+              example = [ ".config/gh" ];
+              description = "Home-relative paths shared read-only with every member: for config that host tools also run (gh's pager/editor/aliases), which a member must not be able to rewrite.";
+            };
             network = {
               mode = lib.mkOption {
                 type = lib.types.enum [
@@ -298,6 +304,7 @@ in
         lib.genAttrs g.apps (_: {
           sandbox.extraBinds =
             map (p: if lib.hasPrefix "~/" p then lib.removePrefix "~/" p else p) g.projects ++ g.shareHome;
+          sandbox.extraBindsReadOnly = g.shareHomeReadOnly;
         })
       ) cfg.groups
     );
