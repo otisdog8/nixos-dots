@@ -404,8 +404,12 @@ let
     }) projects
     # GUI apps see the user's toolkit/theme settings, read-only (as gui.nix binds
     # them for the container backends); the theme files themselves come from the
-    # host's system profile, which the launcher puts on XDG_DATA_DIRS.
-    ++ lib.optionals gui (
+    # host's system profile, which the launcher puts on XDG_DATA_DIRS. Not a
+    # restricted VM's: these name code its app would load (gtk-modules= in
+    # settings.ini, Qt style plugins), and the user's session is exactly what
+    # that VM keeps the app from (sessionVars below). gui.nix's are the
+    # dedicated app's own HOME's for its container, so missing there too.
+    ++ lib.optionals (gui && !restricted) (
       map
         (p: {
           path = p;
@@ -1018,9 +1022,6 @@ let
       echo "${unit}: no security-context Wayland socket (is the compositor running?)" >&2
       exit 1
     fi
-    ${lib.optionalString (gpuUser != username) ''
-      ${pkgs.acl}/bin/setfacl -m "u:${gpuUser}:rw" "$sock"
-    ''}
     wait "$pid"
   '';
 
@@ -1032,8 +1033,15 @@ let
   #   cross-domain: crosvm's GPU device as a separate process, cross-domain
   #                 Wayland only (no virgl/venus: no host GPU API at all), its
   #                 virtual display hidden so no stray window appears.
+  # The -wl unit is active only once its socket exists and, for another uid,
+  # is ACL'd (its ExecStartPost), and this unit starts after it; still, a
+  # missing socket fails here rather than as a GPU device without a display.
   waitForWl = ''
     for _ in $(${co}/seq 1 200); do [ -S "$rt/wl/wayland.sock" ] && break; ${co}/sleep 0.05; done
+    if [ ! -S "$rt/wl/wayland.sock" ]; then
+      echo "${unit}: no Wayland socket from ${unit}-wl" >&2
+      exit 1
+    fi
   '';
   gpuScript = pkgs.writeShellScript "${unit}-gpu" (
     ''
@@ -1144,13 +1152,7 @@ let
       --shared-dir ${docsView} \
       --cfg cache=never,posix_acl=false,security_ctx=false \
       --uid "$eu" --gid "$eg" \
-      --uid-map "$eu $eu 1" --gid-map "$eg $eg 1" &
-    pid=$!
-    stage="granting the VM access to the document virtio-fs socket"
-    for _ in $(${co}/seq 1 200); do [ -S "$rt/docs/fs.sock" ] && break; ${co}/sleep 0.05; done
-    ${pkgs.acl}/bin/setfacl -m "u:${vmUser}:rw" "$rt/docs/fs.sock"
-    stage="waiting for the document virtio-fs backend"
-    wait "$pid"
+      --uid-map "$eu $eu 1" --gid-map "$eg $eg 1"
   '';
 
   # Root (the -camera unit, confined: cameraService): attach every USB
@@ -1262,23 +1264,29 @@ let
     ]
     ++ lib.optional gpuCap "/dev/nvidia-uvm rw";
 
-  # Give the VM's uid one of the user's sockets ($rt/SUB/NAME), once its unit
-  # has made it: ExecStartPost of that unit (the session bus proxy's bus.sock,
-  # the grants hub's guest.sock), as the user who owns the socket, in the
-  # unit's own view of the launch dir; the VM's units that connect start after.
-  grantSocket = pkgs.writeShellScript "${unit}-grant-socket" ''
-    set -euo pipefail
-    sub="$1" name="$2"
-    dir="''${3:-}"
-    ${unitPrelude}
-    sock="$rt/$sub/$name"
-    for _ in $(${co}/seq 1 200); do [ -S "$sock" ] && break; ${co}/sleep 0.05; done
-    if [ ! -S "$sock" ] || [ -L "$sock" ]; then
-      echo "${unit}: no socket $sock to grant" >&2
-      exit 1
-    fi
-    ${pkgs.acl}/bin/setfacl -m "u:${vmUser}:rw" -- "$sock"
-  '';
+  # Give the VM's uid (or `user`) one of the user's sockets ($rt/SUB/NAME), once
+  # its unit has made it: ExecStartPost of that unit (the session bus proxy's
+  # bus.sock, the grants hub's guest.sock, the document share's fs.sock, the
+  # display's wayland.sock for the GPU device's uid), as the user who owns the
+  # socket, in the unit's own view of the launch dir. A unit is active only
+  # once its ExecStartPost is done, so the units that connect (ordered after
+  # it) never find the socket without its ACL.
+  grantSocketTo =
+    user:
+    pkgs.writeShellScript "${unit}-grant-socket${lib.optionalString (user != vmUser) "-${user}"}" ''
+      set -euo pipefail
+      sub="$1" name="$2"
+      dir="''${3:-}"
+      ${unitPrelude}
+      sock="$rt/$sub/$name"
+      for _ in $(${co}/seq 1 200); do [ -S "$sock" ] && break; ${co}/sleep 0.05; done
+      if [ ! -S "$sock" ] || [ -L "$sock" ]; then
+        echo "${unit}: no socket $sock to grant" >&2
+        exit 1
+      fi
+      ${pkgs.acl}/bin/setfacl -m "u:${user}:rw" -- "$sock"
+    '';
+  grantSocket = grantSocketTo vmUser;
 
   # Where the relay finds the broker's sockets for this VM: the user's runtime
   # dir is the user's alone, so the prep stages the broker's folder (opened as
@@ -1610,35 +1618,12 @@ let
   # any other filesystem the host mounts (a btrfs top level holds every
   # subvolume: the user's home included), /run/dbus (the system bus, where
   # polkit lets the desktop user start and stop units), or, unless `attach`
-  # (the grants hub), the root attach helper's socket. ProtectHome= (each
-  # unit's) hides /home and /run/user.
-  hiddenMounts =
-    let
-      keep =
-        p:
-        p == "/"
-        || lib.any (k: p == k || lib.hasPrefix "${k}/" p) [
-          "/nix"
-          "/etc"
-          "/var"
-          "/run"
-          "/tmp"
-          "/usr"
-          "/proc"
-          "/sys"
-          "/dev"
-          "/home"
-          "/root"
-        ];
-    in
-    lib.unique (
-      [
-        "/persist"
-        "/large"
-        "/cache"
-      ]
-      ++ lib.filter (p: !keep p) (lib.attrNames config.fileSystems)
-    );
+  # (the grants hub), the root attach helper's socket, or the host's name
+  # services (hostResolvers). ProtectHome= (each unit's) hides /home and
+  # /run/user.
+  # (Both lists are lib/vm/core's, shared with the agent VM's units.)
+  hiddenMounts = core.hiddenMounts config.fileSystems;
+  inherit (core) hostResolvers;
   view =
     {
       launch ? true,
@@ -1655,6 +1640,7 @@ let
       InaccessiblePaths =
         map (p: "-${p}") hiddenMounts
         ++ [ "-/run/dbus" ]
+        ++ map (p: "-${p}") hostResolvers
         ++ lib.optional (!attach) "-/run/sbx-attach.sock"
         ++ hide;
     };
@@ -1843,8 +1829,8 @@ let
   );
 
   # The user: a compositor client (the security context's maker), with the
-  # compositor's socket alone of /run/user. Not PrivateUsers: it ACLs the
-  # display socket for another uid (${gpuUser}), which a user namespace that
+  # compositor's socket alone of /run/user. Not PrivateUsers: grantSocketTo
+  # ACLs the display socket for another uid (${gpuUser}), which a user namespace that
   # maps only its own uid can't name, and the compositor may look the client
   # up in /proc (which a process in a user namespace the compositor isn't in
   # refuses it).
@@ -1863,6 +1849,9 @@ let
           ExecStart = "${wlScript}${instArg}";
           User = username;
           Group = hostUser.group;
+        }
+        // lib.optionalAttrs (gpuUser != username) {
+          ExecStartPost = "${grantSocketTo gpuUser} wl wayland.sock${instArg}";
         };
     }
   );
@@ -2249,6 +2238,7 @@ let
         // view { binds = [ (bindPair "${stage}/docs" docsView) ]; }
         // {
           ExecStart = "${docsScript}${instArg}";
+          ExecStartPost = "${grantSocket} docs fs.sock${instArg}";
           User = username;
           Group = hostUser.group;
         };
@@ -2378,7 +2368,7 @@ in
   # For sbx-dnsallow (modules.sandbox.dnsAllow).
   dnsAllow = lib.optional (network' && netPolicy.names != [ ]) {
     units = [ netUnitPattern ];
-    inherit (netPolicy) names;
+    inherit (netPolicy) names deny;
   };
 
   # For the polkit allowlist (modules/system/sandbox.nix): the user starts/stops

@@ -167,14 +167,21 @@ class Hub:
 
 
 def listen(path):
-    try:
-        os.unlink(path)
-    except FileNotFoundError:
-        pass
+    """A socket at `path`, 0600, appearing there only once it's listening with
+    its final mode: the unit's ExecStartPost (instance.nix grantSocket) waits
+    for the name and ACLs it for the VM's uid, which a chmod after it would
+    undo (the ACL mask)."""
+    new = path + ".new"
+    for p in (path, new):
+        try:
+            os.unlink(p)
+        except FileNotFoundError:
+            pass
     s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM | socket.SOCK_CLOEXEC)
-    s.bind(path)
-    os.chmod(path, 0o600)
+    s.bind(new)
+    os.chmod(new, 0o600)
     s.listen(8)
+    os.rename(new, path)
     return s
 
 
@@ -275,7 +282,18 @@ def walk(path, create=None):
                 home, uid, gid = create
                 os.mkdir(part, 0o755, dir_fd=fd)
                 if here.startswith(home + "/"):
-                    os.chown(part, uid, gid, dir_fd=fd, follow_symlinks=False)
+                    # The user can swap the name between mkdir and the chown
+                    # (the home is theirs): the folder is opened without
+                    # following a link, checked to be the one root just made,
+                    # and handed over by fd, so nothing else can be chowned.
+                    dfd = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC, dir_fd=fd)
+                    try:
+                        st = os.fstat(dfd)
+                        if st.st_uid != os.geteuid():
+                            raise ValueError(f"{path}: {here} changed while it was made")
+                        os.fchown(dfd, uid, gid)
+                    finally:
+                        os.close(dfd)
                 nfd = os.open(part, flags, dir_fd=fd)
             except (NotADirectoryError, OSError) as e:
                 if isinstance(e, NotADirectoryError) or e.errno == errno.ELOOP:

@@ -353,6 +353,14 @@ class Removal(Tmp):
             with self.assertRaises(vmroot.Refused):
                 vmroot.cleanup(base, "main", rt)
 
+    def test_cleanup_key(self):
+        """The key names one stage under base/stage, as for `stage`: never the
+        stage itself or what's above it (which unstage would unmount)."""
+        with mock.patch.object(vmroot, "unstage", lambda *a: self.fail("unstaged")):
+            for key in ("", ".", "..", "a/b", "../x", "a\0b", "k" * 256):
+                with self.assertRaises(vmroot.Refused, msg=repr(key)):
+                    vmroot.cleanup("/run/sandbox-vm/x", key, "/run/sandbox-vm/x/main")
+
 
 class Sockets(Tmp):
     def test_open_socket(self):
@@ -566,7 +574,9 @@ class StageFlow(Tmp):
         os.symlink(".data", self.p("persist", "sandbox", "app", "linked"))
         self.moves = []
         self.attrs = []
+        self.props = []
         self.userns = []
+        self.private_roots = []
         root = self.d
         patches = [
             mock.patch.object(vmroot, "enter_host_mount_ns", lambda: None),
@@ -575,6 +585,7 @@ class StageFlow(Tmp):
                 vmroot, "open_trusted", lambda path, *a, **k: os.open(root + path, os.O_PATH | os.O_DIRECTORY)
             ),
             mock.patch.object(vmroot, "private_tmpfs", lambda fd: None),
+            mock.patch.object(vmroot, "private_mount_root", self.private_root),
             mock.patch.object(vmroot, "open_tree", lambda fd, recursive: os.dup(fd)),
             mock.patch.object(vmroot, "mount_setattr", self.setattr),
             mock.patch.object(
@@ -589,11 +600,15 @@ class StageFlow(Tmp):
         self.user = {"name": "u", "uid": os.getuid(), "gid": os.getgid(), "home": self.p("home", "u")}
         self.fail_idmap = set()
 
-    def setattr(self, fd, attr_set=0, userns_fd=0, **k):
+    def setattr(self, fd, attr_set=0, propagation=0, userns_fd=0, **k):
         path = os.readlink(f"/proc/self/fd/{fd}")
         if attr_set & vmroot.MOUNT_ATTR_IDMAP and path in self.fail_idmap:
             raise OSError(errno.EINVAL, "Invalid argument")
         self.attrs.append((path, attr_set, userns_fd))
+        self.props.append((path, propagation))
+
+    def private_root(self, parent_fd, name):
+        self.private_roots.append(os.path.join(os.readlink(f"/proc/self/fd/{parent_fd}"), name))
 
     def make_userns(self, uids, gids):
         self.userns.append((uids, gids))
@@ -627,6 +642,10 @@ class StageFlow(Tmp):
         self.assertEqual(
             [a[1] for a in self.attrs], [base, base, base | ro, base | vmroot.MOUNT_ATTR_NOEXEC]
         )
+        # Every clone private (no peer of its source left), and the stage's
+        # parent a private mount before anything is mounted under it.
+        self.assertEqual([p[1] for p in self.props], [vmroot.MS_PRIVATE] * 4)
+        self.assertEqual(self.private_roots, [self.p("run", "sandbox-vm", "vm", "stage")])
         # Not a VM of its own uid: nothing idmapped.
         self.assertEqual(self.userns, [])
 
@@ -705,6 +724,115 @@ class StageFlow(Tmp):
         self.user["uid"] += 1  # someone else's socket now
         with mock.patch.object(vmroot, "user_creds", lambda u: (os.getuid(), os.getgid(), [])):
             self.assertEqual(self.stage(self.cfg([item]), key="k2"), 0)
+
+
+class PrivateMountRoot(Tmp):
+    """The stage's parent becomes a private bind onto itself, once."""
+
+    def setUp(self):
+        super().setUp()
+        os.makedirs(self.p("base", "stage"))
+        self.calls = []
+        for name, fn in (
+            ("open_tree", lambda fd, recursive: self.calls.append(("clone", recursive)) or os.dup(fd)),
+            ("mount_setattr", lambda fd, **k: self.calls.append(("setattr", k))),
+            ("move_mount", lambda tree, dst: self.calls.append(("move", os.readlink(f"/proc/self/fd/{dst}")))),
+        ):
+            pt = mock.patch.object(vmroot, name, fn)
+            pt.start()
+            self.addCleanup(pt.stop)
+
+    def run_it(self):
+        b = os.open(self.p("base"), os.O_PATH | os.O_DIRECTORY)
+        try:
+            vmroot.private_mount_root(b, "stage")
+        finally:
+            os.close(b)
+
+    def test_binds_private_onto_itself(self):
+        self.run_it()
+        self.assertEqual(
+            self.calls,
+            [
+                ("clone", False),
+                ("setattr", {"propagation": vmroot.MS_PRIVATE, "recursive": False}),
+                ("move", self.p("base", "stage")),
+            ],
+        )
+
+    def test_already_a_mount(self):
+        ids = iter([2, 1])
+        with mock.patch.object(vmroot, "mount_id", lambda fd: next(ids)):
+            self.run_it()
+        self.assertEqual(self.calls, [])
+
+    def test_never_through_a_link(self):
+        os.rmdir(self.p("base", "stage"))
+        os.makedirs(self.p("elsewhere"))
+        os.symlink(self.p("elsewhere"), self.p("base", "stage"))
+        with self.assertRaises(OSError):
+            self.run_it()
+        self.assertEqual(self.calls, [])
+
+
+class Coresched(unittest.TestCase):
+    """The cookie only moves while both processes are still the ones pinned."""
+
+    def setUp(self):
+        self.calls = []
+        self.cookies = {}
+        self.living = {"b": True, "v": True}
+        for name, fn in (
+            ("main_pid", lambda systemctl, unit: {"be.service": 10, "vmm.service": 20}[unit]),
+            ("pinned", lambda pid, unit: {10: "b", 20: "v"}[pid]),
+            ("alive", lambda fd: self.living[fd]),
+            ("cookie", lambda pid: self.cookies.get(pid, 0)),
+            ("sched_core", self.sched),
+        ):
+            pt = mock.patch.object(vmroot, name, fn)
+            pt.start()
+            self.addCleanup(pt.stop)
+        pt = mock.patch.object(vmroot.os, "close", lambda fd: None)
+        pt.start()
+        self.addCleanup(pt.stop)
+        pt = mock.patch.object(vmroot.time, "sleep", lambda s: None)
+        pt.start()
+        self.addCleanup(pt.stop)
+
+    def sched(self, cmd, pid, scope, addr=None):
+        self.calls.append((cmd, pid))
+        if cmd == vmroot.PR_SCHED_CORE_SHARE_FROM:
+            self.cookies[0] = self.cookies.get(pid, 0)
+        elif cmd == vmroot.PR_SCHED_CORE_SHARE_TO:
+            self.cookies[pid] = self.cookies.get(0, 0)
+
+    def run_it(self):
+        vmroot.coresched("be.service", "vmm.service", "systemctl")
+
+    def test_shares(self):
+        self.cookies[20] = 7
+        self.run_it()
+        self.assertEqual(self.calls, [(vmroot.PR_SCHED_CORE_SHARE_FROM, 20), (vmroot.PR_SCHED_CORE_SHARE_TO, 10)])
+        self.assertEqual(self.cookies[10], 7)
+
+    def test_backend_gone_before_anything(self):
+        self.cookies[20] = 7
+        self.living["b"] = False
+        self.run_it()
+        self.assertEqual(self.calls, [])
+
+    def test_vmm_gone_after_share_from(self):
+        """The VMM's pid may have been someone else's by then: nothing is given
+        to the backend."""
+        self.cookies[20] = 7
+
+        def sched(cmd, pid, scope, addr=None):
+            self.calls.append((cmd, pid))
+            self.living["v"] = False
+
+        with mock.patch.object(vmroot, "sched_core", sched):
+            self.run_it()
+        self.assertEqual(self.calls, [(vmroot.PR_SCHED_CORE_SHARE_FROM, 20)])
 
 
 class GpuOpenFlow(Tmp):

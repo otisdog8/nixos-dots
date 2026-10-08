@@ -18,15 +18,19 @@ bounding set, no network).
       entry should be) can redirect it. The one exception: a link straight
       into /nix/store (a home-manager file), which every guest sees anyway.
       What was opened is cloned (open_tree OPEN_TREE_CLONE, with its
-      submounts, nosuid, nodev, read-only when the bind is) and, for a VM that
+      submounts, nosuid, nodev, read-only when the bind is, and private: a
+      clone of a shared mount would otherwise stay its peer, and whatever the
+      host mounts under the source later, unidmapped, would turn up in the
+      VM's share) and, for a VM that
       runs as its own uid, idmapped (MOUNT_ATTR_IDMAP): the user's files show
       as the VM's uid and group, what the VM creates lands on disk as the
       user's, and every other owner shows as nobody. A tree with a mount that
       can't be idmapped under it (FUSE, NFS) isn't shared at all: unmapped,
       the VM would act as the user on it. Then it's moved onto a mount point
       in a private tmpfs at the stage, in the host's mount namespace, which is
-      where systemd resolves BindPaths= sources. Private, so none of it
-      propagates into any other unit's namespace. Before that namespace is
+      where systemd resolves BindPaths= sources. Private, as is BASE/stage
+      itself (a bind onto itself, made once), so none of it propagates into
+      any other unit's namespace, not even the empty tmpfs. Before that namespace is
       entered every capability the work there doesn't need is gone for good
       (restrict_caps): the unit's read-only view of the host stays behind.
   cleanup BASE KEY RT           (the -prep unit, on stop) unmounts the stage and
@@ -531,6 +535,31 @@ def private_tmpfs(dst_fd):
         os.close(mnt)
 
 
+def mount_id(fd):
+    with open(f"/proc/self/fdinfo/{fd}") as f:
+        return next(int(l.split()[1]) for l in f if l.startswith("mnt_id:"))
+
+
+def private_mount_root(parent_fd, name):
+    """Make parent/name (a root-only folder) a private mount of its own, a bind
+    onto itself, unless it already is one: what is mounted under it later then
+    propagates nowhere, where under the shared /run every new mount is copied
+    into each namespace that has /run as a slave. Only this bind is copied,
+    once, empty."""
+    fd = os.open(name, os.O_PATH | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC, dir_fd=parent_fd)
+    try:
+        if mount_id(fd) != mount_id(parent_fd):
+            return
+        tree = open_tree(fd, recursive=False)
+        try:
+            mount_setattr(tree, propagation=MS_PRIVATE, recursive=False)
+            move_mount(tree, fd)
+        finally:
+            os.close(tree)
+    finally:
+        os.close(fd)
+
+
 def mountpoint(stage_fd, name, is_dir):
     if is_dir:
         os.mkdir(name, 0o700, dir_fd=stage_fd)
@@ -600,12 +629,19 @@ def launch_dir(base, rt):
     return rt
 
 
+def stage_key(key):
+    """KEY, a single name under base/stage (the unit's instance, which a user may
+    pick): nothing that names the stage itself or anything above it."""
+    if not key or "/" in key or "\0" in key or key in (".", "..") or len(key) > 255:
+        raise Refused(f"bad stage key {key!r}")
+    return key
+
+
 def stage(cfg, base, key, rt, project=None):
     """Mount every item of `cfg`, and the launch dir `rt` as "rt", into
     base/stage/key (see the module doc)."""
     user = cfg["user"]
-    if not key or "/" in key or key in (".", "..") or len(key) > 255:
-        raise Refused(f"bad stage key {key!r}")
+    stage_key(key)
     launch_dir(base, rt)
     items = stage_items(cfg, project)
     for item in items:
@@ -629,6 +665,7 @@ def stage_into(cfg, base, key, rt, items, stash_owner, userns, vm):
             os.mkdir("stage", 0o700, dir_fd=bfd)
         except FileExistsError:
             pass
+        private_mount_root(bfd, "stage")
         sfd = open_trusted(f"{base}/stage")
     finally:
         os.close(bfd)
@@ -666,7 +703,7 @@ def stage_into(cfg, base, key, rt, items, stash_owner, userns, vm):
                 attr = MOUNT_ATTR_NOSUID | MOUNT_ATTR_NODEV
                 if item.get("ro"):
                     attr |= MOUNT_ATTR_RDONLY
-                mount_setattr(tree, attr)
+                mount_setattr(tree, attr, propagation=MS_PRIVATE)
                 if userns is not None and item.get("idmap"):
                     try:
                         idmap(tree, userns, path, vm, user["name"])
@@ -690,7 +727,9 @@ def stage_into(cfg, base, key, rt, items, stash_owner, userns, vm):
         finally:
             os.close(rfd)
         try:
-            mount_setattr(tree, MOUNT_ATTR_NOSUID | MOUNT_ATTR_NODEV | MOUNT_ATTR_NOEXEC, recursive=False)
+            mount_setattr(
+                tree, MOUNT_ATTR_NOSUID | MOUNT_ATTR_NODEV | MOUNT_ATTR_NOEXEC, propagation=MS_PRIVATE, recursive=False
+            )
             mp = mountpoint(kfd, "rt", True)
             try:
                 move_mount(tree, mp)
@@ -801,6 +840,7 @@ def remove_rt(rt, uid=0, base_fd=None, as_owner=run_as):
 
 
 def cleanup(base, key, rt):
+    stage_key(key)
     launch_dir(base, rt)
     # Unmounting happens in the host's namespace, in a child: the removal stays
     # inside this unit's (where only the VM's runtime dir is writable).
@@ -1072,18 +1112,27 @@ def coresched(backend_unit, vmm_unit, systemctl):
         log(f"{backend_unit} or {vmm_unit} has no main process; the backend keeps no core-scheduling cookie")
         return
     bfd, vfd = pinned(be, backend_unit), pinned(vmm, vmm_unit)
+    # The prctls take pid numbers, which stay a process's only while it lives:
+    # each step on a pid is followed by its pidfd showing that process still
+    # alive (so the number was still its), and nothing goes on once either has
+    # gone.
+    gone = f"the backend (pid {be}) or the VMM (pid {vmm}) has gone; no core-scheduling cookie shared"
     try:
         for _ in range(200):
             c = cookie(vmm)
+            if not (alive(vfd) and alive(bfd)):
+                log(gone)
+                return
             if c:
                 sched_core(PR_SCHED_CORE_SHARE_FROM, vmm, SCOPE_THREAD)
+                if not (alive(vfd) and alive(bfd)) or cookie(0) != c:
+                    log(gone)
+                    return
                 sched_core(PR_SCHED_CORE_SHARE_TO, be, SCOPE_THREAD_GROUP)
                 if alive(bfd) and alive(vfd) and cookie(be) == c:
                     print(f"the backend (pid {be}) shares the VMM's core-scheduling cookie {c:#x}", flush=True)
                 else:
                     log(f"could not give the backend (pid {be}) the VMM's core-scheduling cookie")
-                return
-            if not alive(vfd):
                 return
             time.sleep(0.05)
         log(f"the VMM (pid {vmm}) has no core-scheduling cookie after 10 s")
