@@ -1,8 +1,11 @@
 # The guest's network: virtio-net backed by passt in its own unit. passt makes
 # every outbound connection from that unit, so the unit's cgroup IP filter
-# (lib/netpolicy.nix) — and, with a dedicated uid, owner-matched firewall rules
-# (`portFilter`) — apply to all of the guest's traffic. No inbound forwarding,
-# no route to the host's loopback.
+# (lib/netpolicy.nix, with its slice's: the host's and LAN's public addresses)
+# — and, with a dedicated uid, owner-matched firewall rules (`portFilter`) —
+# apply to all of the guest's traffic. No inbound forwarding, no route to the
+# host's loopback (--no-map-gw: the gateway address is the real router, not
+# the host). passt can't filter destinations itself, so the host's other
+# addresses are only kept out by those filters.
 {
   lib,
   pkgs,
@@ -47,7 +50,8 @@ rec {
       policy,
       readWritePaths,
     }:
-    {
+    lib.optionalAttrs (policy.slice != null) { Slice = policy.slice; }
+    // {
       User = user;
       Group = group;
       IPAddressAllow = policy.ipAddressAllow;
