@@ -55,7 +55,9 @@ let
   # manage running sandbox VMs (units the user may start/stop via polkit).
   # `sudo sandbox-vm root NAME [PROJECT-DIR] [-- COMMAND…]`: a root shell (or
   # command) in a running VM, with the root key its prep made for this launch
-  # (lib/vm/instance.nix), which only root on the host can read.
+  # (lib/vm/instance.nix), which only root on the host can read. Everything it
+  # trusts (the key, the guest's host key, the CID) is from root's own copy in
+  # $rt/root, never the VMM's or the user's folders.
   sandboxVmCli = pkgs.writeShellScriptBin "sandbox-vm" ''
     set -euo pipefail
     unit_for() {
@@ -68,7 +70,7 @@ let
     case "''${1:-list}" in
       list)
         ${pkgs.systemd}/bin/systemctl list-units --no-legend --plain --state=active 'sandbox-vm-*.service' \
-          | ${pkgs.gnugrep}/bin/grep -Ev -- '-(prep|net|wl|gpu|relay|bus|capture-bus|capture-broker|grantsfs|grants|docs|camera)(@.*)?\.service' \
+          | ${pkgs.gnugrep}/bin/grep -Ev -- '-(prep|net|wl|gpu|gpu-open|coresched|relay|bus|capture-bus|capture-broker|grantsfs|grants|docs|docs-portal|camera)(@.*)?\.service' \
           | ${pkgs.gawk}/bin/awk '{print $1}' | ${pkgs.gnused}/bin/sed -E 's/^sandbox-vm-//; s/\.service$//' || true ;;
       stop) ${pkgs.systemd}/bin/systemctl stop "$(unit_for "$2" "''${3:-}")" ;;
       camera)
@@ -87,6 +89,7 @@ let
           echo "sandbox-vm root: needs root (sudo sandbox-vm root NAME …)" >&2; exit 1
         fi
         name="''${2:?usage: sandbox-vm root NAME [PROJECT-DIR] [-- COMMAND...]}"; shift 2
+        case "$name" in "" | .* | */*) echo "sandbox-vm root: bad VM name '$name'" >&2; exit 2 ;; esac
         id=main
         if [ "$#" -gt 0 ] && [ "$1" != -- ]; then
           dir="$(${pkgs.coreutils}/bin/realpath -- "$1")"; shift
@@ -94,7 +97,7 @@ let
         fi
         if [ "''${1:-}" = -- ]; then shift; fi
         rt="/run/sandbox-vm/$name/$id"
-        if [ ! -f "$rt/root/id_ed25519" ] || [ ! -f "$rt/meta/cid" ]; then
+        if [ ! -f "$rt/root/id_ed25519" ] || [ ! -f "$rt/root/cid" ] || [ ! -f "$rt/root/known_hosts" ]; then
           echo "sandbox-vm root: $name isn't running (or was started before root logins existed: restart it)" >&2; exit 1
         fi
         tty=-T
@@ -104,7 +107,7 @@ let
           -o User=root -o IdentityFile="$rt/root/id_ed25519" -o IdentitiesOnly=yes \
           -o UserKnownHostsFile="$rt/root/known_hosts" -o GlobalKnownHostsFile=/dev/null \
           -o HostKeyAlias=sandbox-vm -o StrictHostKeyChecking=yes -o CheckHostIP=no -o LogLevel=ERROR \
-          "$tty" -- "vsock/$(${pkgs.coreutils}/bin/cat "$rt/meta/cid")" "$@" ;;
+          "$tty" -- "vsock/$(${pkgs.coreutils}/bin/cat "$rt/root/cid")" "$@" ;;
       *) echo "usage: sandbox-vm list | stop NAME [PROJECT-DIR] | status NAME [PROJECT-DIR] | camera NAME [attach|detach] [PROJECT-DIR] | root NAME [PROJECT-DIR] [-- COMMAND...] (as root)" >&2; exit 2 ;;
     esac
   '';
@@ -143,6 +146,9 @@ let
   };
 in
 {
+  # The check that every root unit of the sandbox machinery is confined.
+  imports = [ ./sandbox-unit-audit.nix ];
+
   options.modules.sandbox.vm = {
     user = lib.mkOption {
       type = lib.types.str;

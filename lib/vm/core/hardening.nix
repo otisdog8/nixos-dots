@@ -23,6 +23,38 @@
     fi
   '';
 
+  # A root step (the VM's prep and cleanup, GPU socket handover, cameras, core
+  # scheduling: lib/vm/root.py). Never a "+" Exec line: a unit of its own, as
+  # root but bounded to `caps`, the host read-only (the unit names the one
+  # runtime dir it may write), no home, no network. The unit adds what it must
+  # leave open (devices, /sys, mount syscalls).
+  rootStep = caps: {
+    CapabilityBoundingSet = caps;
+    NoNewPrivileges = true;
+    ProtectSystem = "strict";
+    ProtectHome = true;
+    PrivateTmp = true;
+    PrivateIPC = true;
+    PrivateNetwork = true;
+    ProtectKernelModules = true;
+    ProtectKernelLogs = true;
+    ProtectControlGroups = true;
+    ProtectClock = true;
+    ProtectHostname = true;
+    RestrictNamespaces = true;
+    LockPersonality = true;
+    RestrictRealtime = true;
+    RestrictSUIDSGID = true;
+    MemoryDenyWriteExecute = true;
+    RestrictAddressFamilies = [ "AF_UNIX" ];
+    SystemCallArchitectures = "native";
+    SystemCallFilter = [ "@system-service" ];
+    SystemCallErrorNumber = "EPERM";
+    KeyringMode = "private";
+    UMask = "0077";
+    LimitCORE = 0;
+  };
+
   # The VMM (crosvm run). The unit adds what's per-VM: ExecStart, User/Group,
   # SystemCallFilter (jailedSyscallFilter + extras), the paths it may see,
   # DeviceAllow, MemoryMax.

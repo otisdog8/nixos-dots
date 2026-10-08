@@ -10,6 +10,11 @@
 #     bind-mounted (by systemd, as root, BindPaths=) into a per-tier tree inside the
 #     unit's private mount namespace, shared over crosvm's jailed virtio-fs device
 #     (sbx-<tier>), and grafted back onto ~/<path> in the guest (lib/vm/guest.nix).
+#     Stashes (root's folders all the way down) are bound from where they are;
+#     everything else is a path the user chooses (home entries, binds, projects,
+#     the project folder), which the prep's root step opens AS THE USER without
+#     following a symlink and mounts into a root-only stage first
+#     (lib/vm/root.py `stage`); the units bind from that.
 #     The guest user appears as that uid on the host (single-entry uidmap), so
 #     nothing is chowned when switching between container and vm.
 #   - perCwd instances are one VM per project directory: a template unit
@@ -56,6 +61,15 @@
 # sources are resolved against the host root, not the namespace being built —
 # systemd's namespace.c — so hiding /home and /persist from the unit doesn't hide
 # them from its binds.)
+#
+# Root's own steps follow one rule: root works only on paths whose every folder
+# is root's and writable by nobody else, or on objects opened by their owner;
+# inside another uid's folder it works as that uid; what it makes for another
+# uid it makes in a folder only root can write yet, and hands over last; and it
+# never takes a trust input (a key, known_hosts, the CID) back from a folder
+# that isn't root's. Each root step is a unit of its own, confined
+# (core.hardening.rootStep), never a "+" Exec line; the host checks that
+# (nixos/modules/system/sandbox-unit-audit.nix).
 {
   config,
   lib,
@@ -291,10 +305,19 @@ let
 
   # /run/sandbox-vm/<name>: <id>/ holds one launch's keys and sockets (root prep,
   # removed on stop); tree/ and cwd/ are mount points for the unit's private binds
-  # (empty on the host, so concurrent per-project instances can share them).
+  # (empty on the host, so concurrent per-project instances can share them);
+  # stage/<key>/ (root's alone, a private tmpfs) holds what the user chose,
+  # mounted by the prep for the units to bind from: per launch, keyed by what
+  # systemd can name in BindPaths= (the instance, %i; "main" otherwise).
   base = "/run/sandbox-vm/${name}";
   tree = "${base}/tree";
   cwdMount = "${base}/cwd";
+  stageKey = if perCwd then "%i" else "main";
+  stage = "${base}/stage/${stageKey}";
+  # The prep's (and cleanup's) arguments: the project path and the stage key.
+  prepArgs = lib.optionalString perCwd " \"%f\" \"%i\"";
+  # The root steps (lib/vm/root.py).
+  rootTool = "${import ./root.nix pkgs}/bin/sbx-vm-root";
 
   co = "${pkgs.coreutils}/bin";
   crosvm = "${crosvmPkg}/bin/crosvm";
@@ -320,7 +343,6 @@ let
   depth = p: lib.length (paths.components p);
   entries = lib.sort (a: b: depth a.path < depth b.path) (lib.concatMap (m: m.entries) members);
   tiers = lib.unique (map (e: e.tier) entries);
-  entrySource = e: if e.location == "stash" then e.stashPath else "${home}/${e.path}";
 
   expandHome = p: if lib.hasPrefix "~/" p then lib.removePrefix "~/" p else p;
   expandHome' = p: if lib.hasPrefix "~/" p then "${home}/${lib.removePrefix "~/" p}" else p;
@@ -381,14 +403,79 @@ let
   # spaces) — quoting the whole pair would make it one path. A leading "-" on the
   # source = skip if missing. Stash entries are hard: tmpfiles guarantees them,
   # and a missing one must fail the VM rather than silently run it without its data.
+  # Home entries and binds come from the stage (stageItems), where a missing
+  # (or refused) one is simply absent.
   bindPair = src: dst: ''"${src}":"${dst}"'';
+  indexedEntries = lib.imap0 (i: e: e // { stageName = "e${toString i}"; }) entries;
   storageBinds = map (
     e:
-    bindPair "${lib.optionalString (e.location == "home") "-"}${entrySource e}" "${tree}/${e.tier}/${e.path}"
-  ) entries;
+    if e.location == "stash" then
+      bindPair e.stashPath "${tree}/${e.tier}/${e.path}"
+    else
+      bindPair "-${stage}/${e.stageName}" "${tree}/${e.tier}/${e.path}"
+  ) indexedEntries;
   bindTarget = b: "${tree}/binds/${toString b.index}";
-  rwBinds = map (b: bindPair "-${b.source}" (bindTarget b)) (lib.filter (b: !b.ro) binds);
-  roBinds = map (b: bindPair "-${b.source}" (bindTarget b)) (lib.filter (b: b.ro) binds);
+  bindStage = b: "-${stage}/b${toString b.index}";
+  rwBinds = map (b: bindPair (bindStage b) (bindTarget b)) (lib.filter (b: !b.ro) binds);
+  roBinds = map (b: bindPair (bindStage b) (bindTarget b)) (lib.filter (b: b.ro) binds);
+
+  # What the prep's root step opens as the user and mounts into the stage
+  # (lib/vm/root.py `stage`; the project folder of a per-project VM comes from
+  # its instance). `under`: the folder it must be inside; `owned`: must be the
+  # user's (sockets).
+  stageItems =
+    map (e: {
+      name = e.stageName;
+      path = "${home}/${e.path}";
+      kind = e.type;
+      ro = false;
+      under = home;
+    }) (lib.filter (e: e.location == "home") indexedEntries)
+    ++ map (b: {
+      name = "b${toString b.index}";
+      path = b.source;
+      kind = "any";
+      inherit (b) ro;
+      under = if lib.hasPrefix "${home}/" b.source then home else null;
+    }) binds
+    ++ lib.optional docs {
+      name = "docs";
+      path = docsSource;
+      kind = "dir";
+      ro = false;
+      under = "${hostRuntimeDir}/doc";
+    }
+    ++ lib.optionals (restricted && broker) (
+      lib.optional audio {
+        name = "relay-pulse";
+        path = "${hostRuntimeDir}/sbx-broker/${brokerName}.pulse";
+        kind = "socket";
+        owned = true;
+        under = "${hostRuntimeDir}/sbx-broker";
+      }
+      ++ [
+        {
+          name = "relay-broker";
+          path = "${hostRuntimeDir}/sbx-broker/${brokerName}.sock";
+          kind = "socket";
+          owned = true;
+          under = "${hostRuntimeDir}/sbx-broker";
+        }
+      ]
+    );
+  staging = stageItems != [ ] || perCwd;
+  stageConfig = pkgs.writeText "${unit}-stage.json" (
+    builtins.toJSON {
+      user = {
+        name = username;
+        uid = hostUser.uid;
+        gid = config.users.groups.${hostUser.group}.gid;
+        inherit home;
+      };
+      items = stageItems;
+      cwd = perCwd;
+    }
+  );
 
   spec = pkgs.writeText "${unit}-spec.json" (
     builtins.toJSON {
@@ -583,17 +670,26 @@ let
   '';
 
   # ── Scripts ──────────────────────────────────────────────────────────────────
-  # Root: fresh per-launch runtime dir with this VM's SSH keys (guest host key +
-  # the user's client key, both new on every VM start) and, for per-project VMs,
-  # the project path for the guest. Everything is created in root-owned parents,
-  # so the user can't pre-plant anything the root steps would follow.
+  # Root (the -prep unit, confined: prepService): fresh per-launch runtime dir
+  # with this VM's SSH keys (guest host key + the user's client key, both new on
+  # every VM start) and, for per-project VMs, the project path for the guest;
+  # then the stage. Every folder is made root's in root's $rt and filled while
+  # still root's alone; only then is it handed to its owner (entries first), and
+  # root never goes back into it. Root's own copies (its login key, known_hosts
+  # from the host key it just made, the CID) stay in $rt/root.
   prepScript = pkgs.writeShellScript "${unit}-prep" ''
     set -euo pipefail
     dir="''${1:-}"
-    case "$dir" in "" | /*) ;; *) echo "${unit}: bad project path" >&2; exit 1 ;; esac
+    key="''${2:-main}"
     ${idPrelude}
     umask 077
-    ${co}/install -d -m 0711 /run/sandbox-vm ${base}
+    # A launch that never cleaned up (a crash, a power cut).
+    ${rootTool} cleanup ${base} "$key" "$rt"
+    ${lib.optionalString staging ''
+      # What the user chose (and checks the project path: canonical, a folder
+      # the user can open, no symlink on the way), before anything else.
+      ${rootTool} stage ${stageConfig} ${base} "$key"${lib.optionalString perCwd " \"$dir\""}
+    ''}
     ${co}/install -d -m 0755 ${
       lib.concatStringsSep " " (
         [ tree ]
@@ -602,39 +698,15 @@ let
         ++ lib.optional perCwd cwdMount
       )
     }
-    ${co}/rm -rf -- "$rt"
     ${co}/install -d -m 0711 "$rt"
-    ${co}/install -d -m 0700 -o ${principal} -g ${principalGroup} "$rt/meta" "$rt/ctl" "$rt/net"
-    ${co}/install -d -m 0700 -o ${username} -g ${hostUser.group} "$rt/client"
-    ${lib.optionalString gui ''
-      # The display socket: made by the user's security-context helper (the -wl
-      # unit), used by the GPU unit (the principal; ACL-granted when it differs).
-      ${co}/install -d -m 0711 -o ${username} -g ${hostUser.group} "$rt/wl"
-    ''}
-    ${lib.optionalString gpuDevice ''
-      ${co}/install -d -m 0700 -o ${gpuUser} -g ${gpuGroup} "$rt/gpu"
-    ''}
-    ${lib.optionalString bus ''
-      ${co}/install -d -m 0700 -o ${username} -g ${hostUser.group} "$rt/bus"
-      ${lib.optionalString restricted ''
-        # The relay runs as ${principal}: traverse only. Each socket in here is
-        # granted to it once it exists (grantBusSocket).
-        ${pkgs.acl}/bin/setfacl -m "u:${principal}:--x" "$rt/bus"
-      ''}
-    ''}
-    ${lib.optionalString capture ''
-      ${co}/install -d -m 0711 -o ${captureUserName} -g ${captureUserName} "$rt/capture"
-    ''}
-    ${lib.optionalString grants ''
-      ${co}/install -d -m 0700 -o ${username} -g ${hostUser.group} "$rt/grants"
-      # What the grants share serves: empty until a grant is mounted into it.
-      ${co}/install -d -m 0700 -o ${username} -g ${hostUser.group} "$rt/grants/view"
-    ''}
-    ${lib.optionalString docs ''
-      ${co}/install -d -m 0711 -o ${username} -g ${hostUser.group} "$rt/docs"
-    ''}
+    ${co}/install -d -m 0700 "$rt/root" "$rt/meta" "$rt/client"
     ${pkgs.openssh}/bin/ssh-keygen -q -t ed25519 -N "" -C "${unit}" -f "$rt/meta/ssh_host_ed25519_key"
     ${pkgs.openssh}/bin/ssh-keygen -q -t ed25519 -N "" -C "${username}@${unit}" -f "$rt/client/id_ed25519"
+    # Root's key into the guest (`sudo sandbox-vm root`), and what it trusts.
+    ${pkgs.openssh}/bin/ssh-keygen -q -t ed25519 -N "" -C "root@${unit}" -f "$rt/root/id_ed25519"
+    printf 'sandbox-vm %s\n' "$(${co}/cut -d' ' -f1,2 "$rt/meta/ssh_host_ed25519_key.pub")" > "$rt/root/known_hosts"
+    printf '%s' "$cid" > "$rt/root/cid"
+    ${co}/install -m 0644 "$rt/root/known_hosts" "$rt/client/known_hosts"
     ${
       if restricted then
         ''
@@ -646,23 +718,57 @@ let
           ${co}/install -m 0644 "$rt/client/id_ed25519.pub" "$rt/meta/authorized_keys"
         ''
     }
-    printf 'sandbox-vm %s\n' "$(${co}/cut -d' ' -f1,2 "$rt/meta/ssh_host_ed25519_key.pub")" > "$rt/client/known_hosts"
-    # Root's key into the guest (`sudo sandbox-vm root`): root-only on the host.
-    ${co}/install -d -m 0700 "$rt/root"
-    ${pkgs.openssh}/bin/ssh-keygen -q -t ed25519 -N "" -C "root@${unit}" -f "$rt/root/id_ed25519"
     ${co}/install -m 0644 "$rt/root/id_ed25519.pub" "$rt/meta/root_authorized_keys"
-    ${co}/cp "$rt/client/known_hosts" "$rt/root/known_hosts"
     if [ -n "$dir" ]; then printf '%s' "$dir" > "$rt/meta/cwd"; fi
     printf '%s' "$cid" > "$rt/meta/cid"
-    ${co}/chown ${principal}:${principalGroup} "$rt/meta"/*
-    ${co}/chown ${username}:${hostUser.group} "$rt/client"/*
+    # Handed over: what's in them first, then the folders themselves.
+    ${co}/chown -h ${principal}:${principalGroup} "$rt/meta"/*
+    ${co}/chown -h ${username}:${hostUser.group} "$rt/client"/*
+    ${co}/chown -h ${principal}:${principalGroup} "$rt/meta"
+    ${co}/chown -h ${username}:${hostUser.group} "$rt/client"
+    # Empty folders for the units that fill them, each its owner's from the start.
+    ${co}/install -d -m 0700 -o ${principal} -g ${principalGroup} "$rt/ctl" "$rt/net"
+    ${lib.optionalString gui ''
+      # The display socket: made by the user's security-context helper (the -wl
+      # unit), used by the GPU unit (the principal; ACL-granted when it differs).
+      ${co}/install -d -m 0711 -o ${username} -g ${hostUser.group} "$rt/wl"
+    ''}
+    ${lib.optionalString gpuDevice ''
+      ${co}/install -d -m 0700 -o ${gpuUser} -g ${gpuGroup} "$rt/gpu"
+    ''}
+    ${lib.optionalString bus ''
+      ${co}/install -d -m 0700 "$rt/bus"
+      ${lib.optionalString restricted ''
+        # The relay runs as ${principal}: traverse only. Each socket in here is
+        # granted to it once it exists (grantBusSocket).
+        ${pkgs.acl}/bin/setfacl -m "u:${principal}:--x" "$rt/bus"
+      ''}
+      ${co}/chown -h ${username}:${hostUser.group} "$rt/bus"
+    ''}
+    ${lib.optionalString capture ''
+      ${co}/install -d -m 0711 -o ${captureUserName} -g ${captureUserName} "$rt/capture"
+    ''}
+    ${lib.optionalString grants ''
+      # What the grants share serves (view/): empty until a grant is mounted
+      # into it. Made while grants/ is still root's.
+      ${co}/install -d -m 0700 "$rt/grants" "$rt/grants/view"
+      ${co}/chown -h ${username}:${hostUser.group} "$rt/grants/view"
+      ${co}/chown -h ${username}:${hostUser.group} "$rt/grants"
+    ''}
+    ${lib.optionalString docs ''
+      ${co}/install -d -m 0711 -o ${username} -g ${hostUser.group} "$rt/docs"
+    ''}
   '';
 
+  # Root, on stop (and after a failed start): the stage unmounted, then the
+  # launch's dir removed, each folder of someone else's emptied as its owner
+  # (lib/vm/root.py `cleanup`).
   cleanupScript = pkgs.writeShellScript "${unit}-cleanup" ''
     set -euo pipefail
     dir="''${1:-}"
+    key="''${2:-main}"
     ${idPrelude}
-    ${co}/rm -rf -- "$rt"
+    exec ${rootTool} cleanup ${base} "$key" "$rt"
   '';
 
   # Principal: the VMM. crosvm keeps its own sandbox on (per-device minijail
@@ -798,42 +904,12 @@ let
       ${guest.boot.kernelPackages.kernel}/${guest.system.boot.loader.kernelFile}
   '';
 
-  # Games (gameTuning): as root, once the VMM holds the cookie `coresched new`
-  # made for it, give the backend's whole thread group the same one (the fork's
-  # contrib/systemd/nvgpu-vmm-exec `join`). Until then, or if this fails, the
-  # backend has none: it may share a core with anything, as without the
-  # setting, and the guest never runs outside the VMM's cookie.
-  coreschedJoin = pkgs.writeShellScript "${unit}-coresched" ''
-    set -u
-    backendUnit="$1" vmm="$2"
-    PATH=${
-      lib.makeBinPath [
-        pkgs.util-linux
-        pkgs.coreutils
-        pkgs.systemd
-      ]
-    }
-    cookie() { c="$(coresched get -s "$1" 2>/dev/null)" || return 0; echo "''${c##* }"; }
-    be="$(systemctl show -P MainPID "$backendUnit")"
-    if [ -z "$be" ] || [ "$be" = 0 ]; then
-      echo "${unit}: $backendUnit has no main process; the backend keeps no core-scheduling cookie" >&2
-      exit 0
-    fi
-    for _ in $(seq 1 200); do
-      c="$(cookie "$vmm")"
-      if [ -n "$c" ] && [ "$c" != 0x0 ]; then
-        if coresched copy -s "$vmm" -d "$be" -t tgid && [ "$(cookie "$be")" = "$c" ]; then
-          echo "${unit}: the backend (pid $be) shares the VMM's core-scheduling cookie $c"
-        else
-          echo "${unit}: could not give the backend (pid $be) the VMM's core-scheduling cookie" >&2
-        fi
-        exit 0
-      fi
-      kill -0 "$vmm" 2>/dev/null || exit 0
-      sleep 0.05
-    done
-    echo "${unit}: the VMM (pid $vmm) has no core-scheduling cookie after 10 s" >&2
-  '';
+  # Games (gameTuning): the -coresched unit, as root (CAP_SYS_PTRACE alone),
+  # once the VMM holds the cookie `coresched new` made for it, gives the
+  # backend's whole thread group the same one (lib/vm/root.py `coresched`, the
+  # fork's contrib/systemd/nvgpu-vmm-exec `join`). Until then, or if this
+  # fails, the backend has none: it may share a core with anything, as without
+  # the setting, and the guest never runs outside the VMM's cookie.
 
   # ACPI power button → orderly guest shutdown; systemd kills whatever remains.
   stopScript = pkgs.writeShellScript "${unit}-stop" ''
@@ -955,8 +1031,10 @@ let
   # the user's but that view:
   #   -docs-portal (the user): activates the portal (D-Bus activated) and waits
   #     for the view, with the session bus;
-  #   -docs (the user): crosvm's jailed fs device on that view alone, bound in by
-  #     systemd as root (the portal's FUSE is allow_other:
+  #   -docs (the user): crosvm's jailed fs device on that view alone, staged by
+  #     the prep (opened as the user, without following a link: stageItems; the
+  #     prep runs after -docs-portal for it) and bound in by systemd from the
+  #     stage (the portal's FUSE is allow_other:
   #     overlays/custom-packages.nix). No runtime dir, home, session bus or host
   #     network namespace (abstract sockets), so escaping crosvm's jail reaches
   #     none of them. It stays the user's uid: the portal reports its own uid as
@@ -1001,56 +1079,21 @@ let
     wait "$pid"
   '';
 
-  # Root: attach every USB video-class device (a webcam, as the host's uvcvideo
-  # sees it) to the running VM, recording the xHCI ports; on stop, detach them
-  # and let the host's drivers take them back.
-  cameraAttach = pkgs.writeShellScript "${unit}-camera-attach" ''
-    set -euo pipefail
-    dir="''${1:-}"
-    ${idPrelude}
-    sock="$rt/ctl/crosvm.sock"
-    [ -S "$sock" ] || { echo "${unit}: the VM isn't running" >&2; exit 1; }
-    ${co}/install -d -m 0700 "$rt/camera"
-    : > "$rt/camera/ports"
-    found=0
-    for d in /sys/bus/usb/devices/*; do
-      name="$(${co}/basename "$d")"
-      case "$name" in *:* | usb*) continue ;; esac
-      [ -f "$d/busnum" ] || continue
-      video=0
-      for c in "$d"/"$name":*/bInterfaceClass; do
-        [ "$(${co}/cat "$c" 2>/dev/null)" = 0e ] && video=1
-      done
-      [ "$video" = 1 ] || continue
-      bus="$(${co}/cat "$d/busnum")"
-      num="$(${co}/cat "$d/devnum")"
-      node="$(printf '/dev/bus/usb/%03d/%03d' "$bus" "$num")"
-      out="$(${crosvm} usb attach "1:1:$bus:$num" "$node" "$sock" || true)"
-      case "$out" in
-        "ok "*)
-          echo "''${out#ok } $name" >> "$rt/camera/ports"
-          found=1
-          echo "attached $(${co}/cat "$d/product" 2>/dev/null || echo "$name") (xHCI port ''${out#ok })" ;;
-        *) echo "could not attach $node: $out" >&2 ;;
-      esac
-    done
-    [ "$found" = 1 ] || { echo "${unit}: no camera to attach" >&2; exit 1; }
-  '';
-  cameraDetach = pkgs.writeShellScript "${unit}-camera-detach" ''
-    set -uo pipefail
-    dir="''${1:-}"
-    ${idPrelude}
-    [ -f "$rt/camera/ports" ] || exit 0
-    while read -r port name; do
-      [ -S "$rt/ctl/crosvm.sock" ] && ${crosvm} usb detach "$port" "$rt/ctl/crosvm.sock" >/dev/null
-      # Its interfaces were claimed away from the host's drivers: probe again.
-      for i in /sys/bus/usb/devices/"$name":*; do
-        [ -e "$i" ] && ${co}/basename "$i" > /sys/bus/usb/drivers_probe 2>/dev/null
-      done
-    done < "$rt/camera/ports"
-    ${co}/rm -f "$rt/camera/ports"
-    exit 0
-  '';
+  # Root (the -camera unit, confined: cameraService): attach every USB
+  # video-class device (a webcam, as the host's uvcvideo sees it) to the running
+  # VM, recording the xHCI ports in root's $rt/camera; on stop, detach them and
+  # let the host's drivers take them back. The VMM's control socket is in the
+  # VMM's own folder: opened without following a link, checked to be a socket
+  # of ${principal}'s, and reached through that descriptor (lib/vm/root.py
+  # `camera`).
+  cameraStep =
+    action:
+    pkgs.writeShellScript "${unit}-camera-${action}" ''
+      set -euo pipefail
+      dir="''${1:-}"
+      ${idPrelude}
+      exec ${rootTool} camera ${action} "$rt" ${principal} ${crosvm}
+    '';
 
   # The user (and the broker, as the user): attach or detach the cameras of the
   # running VM(s). Per-project VMs share one broker socket, so every running one.
@@ -1106,40 +1149,19 @@ let
     if [ "$ok" != 1 ]; then echo "${label} isn't running, or the grant failed" >&2; exit 1; fi
   '';
 
-  # Root, once the backend has bound its socket (virtio-nvgpu's
-  # contrib/systemd/nvgpu-socket-open, with an ACL for the VMM's uid instead of
-  # a group: the VMM's group may be the shared `users`). The directory becomes
-  # root's, so the backend can no longer swap what's in it.
-  gpuSocketOpen = pkgs.writeShellScript "${unit}-gpu-socket" ''
-    set -eu
+  # Root (the -gpu-open unit, confined: gpuOpenService), once the backend has
+  # bound its socket (virtio-nvgpu's contrib/systemd/nvgpu-socket-open, with an
+  # ACL for the VMM's uid instead of a group: the VMM's group may be the shared
+  # `users`). Waited for as the backend; then the directory becomes root's, so
+  # the backend can no longer swap what's in it, and each socket is opened
+  # without following a link, checked to be the backend's, and granted through
+  # that descriptor (lib/vm/root.py `gpu-open`). The inject socket: to this
+  # VM's capture helper alone.
+  gpuOpenScript = pkgs.writeShellScript "${unit}-gpu-open" ''
+    set -euo pipefail
     dir="''${1:-}"
     ${idPrelude}
-    d="$rt/gpu"
-    sock="$d/gpu.sock"
-    owner="$(${co}/stat -c %u -- "$d")"
-    i=0
-    while [ ! -S "$sock" ]; do
-      i=$((i + 1))
-      [ "$i" -le 100 ] || { echo "${unit}: no backend socket after 10 s" >&2; exit 1; }
-      ${co}/sleep 0.1
-    done
-    ${co}/chown root:root -- "$d"
-    ${co}/chmod 0711 -- "$d"
-    [ ! -L "$sock" ] && [ -S "$sock" ] || { echo "${unit}: $sock is not a socket" >&2; exit 1; }
-    [ "$(${co}/stat -c %u -- "$sock")" = "$owner" ] || { echo "${unit}: $sock is not the backend's" >&2; exit 1; }
-    ${pkgs.acl}/bin/setfacl -m "u:${principal}:rw" -- "$sock"
-    ${lib.optionalString capture ''
-      # The inject socket: to this VM's capture helper alone.
-      inj="$d/inject.sock"
-      i=0
-      while [ ! -S "$inj" ]; do
-        i=$((i + 1))
-        [ "$i" -le 100 ] || { echo "${unit}: no inject socket after 10 s" >&2; exit 1; }
-        ${co}/sleep 0.1
-      done
-      [ ! -L "$inj" ] && [ "$(${co}/stat -c %u -- "$inj")" = "$owner" ] || { echo "${unit}: $inj is not the backend's" >&2; exit 1; }
-      ${pkgs.acl}/bin/setfacl -m "u:${captureUserName}:rw" -- "$inj"
-    ''}
+    exec ${rootTool} gpu-open "$rt" ${gpuUser} ${principal}${lib.optionalString capture " ${captureUserName}"} ${pkgs.acl}/bin/setfacl
   '';
 
   # Host-GPU device nodes for the virtio-nvgpu backend: the host's
@@ -1185,9 +1207,10 @@ let
 
   # Where the relay finds the broker's sockets for this VM. A relay running as
   # the user reaches them in the user's runtime dir; one running as the
-  # principal (restricted) can't traverse that, so systemd binds the two sockets
-  # into its unit (relayService), and the broker ACLs them for the principal
-  # (brokerEntry.uid).
+  # principal (restricted) can't traverse that, so the prep stages the two
+  # sockets (opened as the user, without following a link, checked to be the
+  # user's: stageItems), systemd binds them into its unit from the stage
+  # (relayService), and the broker ACLs them for the principal (brokerEntry.uid).
   relayBrokerSocks =
     if restricted then
       {
@@ -1510,6 +1533,7 @@ let
   ]
   ++ lib.optional network' (ref "${unit}-net")
   ++ lib.optional gpuDevice (ref "${unit}-gpu")
+  ++ lib.optional nvgpu (ref "${unit}-gpu-open")
   ++ lib.optional grants (ref "${unit}-grantsfs")
   # Bound before the VM starts, so nothing else can hold the relay's port.
   ++ lib.optional relay (ref "${unit}-relay");
@@ -1517,7 +1541,8 @@ let
     description = "Sandbox VM: ${label}";
     requires = vmmDeps;
     # Wanted, not required: without a document portal the VM still starts.
-    wants = lib.optional docs (ref "${unit}-docs");
+    # (-coresched orders itself after this unit: it needs the VMM running.)
+    wants = lib.optional docs (ref "${unit}-docs") ++ lib.optional gameTuning (ref "${unit}-coresched");
     after = vmmDeps ++ lib.optional docs (ref "${unit}-docs");
     # Like the systemd backend: a rebuild must not kill a running app. A changed
     # definition takes effect on the next launch.
@@ -1526,7 +1551,6 @@ let
     serviceConfig = {
       Type = "simple";
       ExecStart = "${runScript}${instArg}";
-      ExecStartPost = lib.optional gameTuning "+${coreschedJoin} ${ref "${unit}-gpu"} $MAINPID";
       ExecStop = "-${stopScript}${instArg}";
       TimeoutStopSec = 20;
       KillMode = "mixed";
@@ -1541,8 +1565,8 @@ let
       SystemCallFilter = core.hardening.jailedSyscallFilter ++ lib.optional (nvgpu && gpuCap) "mincore";
 
       # The host filesystem is read-only and the user's data invisible, apart from
-      # the members' storage/binds (BindPaths, set up by systemd as root) and the
-      # runtime dir.
+      # the members' storage/binds (BindPaths, set up by systemd as root: the
+      # stashes, and everything else from the stage) and the runtime dir.
       InaccessiblePaths = [
         "-/persist"
         "-/large"
@@ -1550,7 +1574,7 @@ let
       ]
       # The pool check's access() goes through /proc/self/fd, not this path.
       ++ lib.optional (nvgpu && gpuCap) "-/dev/nvidia-uvm";
-      BindPaths = storageBinds ++ rwBinds ++ lib.optional perCwd (bindPair "%f" cwdMount);
+      BindPaths = storageBinds ++ rwBinds ++ lib.optional perCwd (bindPair "${stage}/cwd" cwdMount);
       BindReadOnlyPaths = roBinds;
       ReadWritePaths = [ base ];
 
@@ -1587,16 +1611,46 @@ let
     }
     // attrs;
 
+  # Root: keys, runtime dir and the stage (prepScript), and their removal.
+  # Writes only its own runtime dir (made by systemd: RuntimeDirectory=, kept,
+  # since per-project instances share it). The stage is mounted in the host's
+  # mount namespace (where systemd resolves the other units' BindPaths=), which
+  # needs CAP_SYS_ADMIN and CAP_SYS_CHROOT to enter and CAP_SYS_PTRACE to open
+  # (dropped right after: lib/vm/root.py `enter_host_mount_ns`); it opens
+  # nothing there but the user's paths, as the user, and root's own stage.
   prepService = helper {
     description = "Sandbox VM keys and runtime dir: ${label}";
-    serviceConfig = {
-      Type = "oneshot";
-      RemainAfterExit = true;
-      ExecStart = "${prepScript}${instArg}";
-      ExecStop = "${cleanupScript}${instArg}";
-      PrivateNetwork = true;
-      ProtectHome = true;
-    };
+    # The document portal's view must exist before it can be staged.
+    wants = lib.optional docs (ref "${unit}-docs-portal");
+    after = lib.optional docs (ref "${unit}-docs-portal");
+    serviceConfig =
+      core.hardening.rootStep [
+        "CAP_CHOWN"
+        "CAP_FOWNER"
+        "CAP_DAC_OVERRIDE"
+        "CAP_SETUID"
+        "CAP_SETGID"
+        "CAP_SYS_ADMIN"
+        "CAP_SYS_CHROOT"
+        "CAP_SYS_PTRACE"
+      ]
+      // {
+        Type = "oneshot";
+        RemainAfterExit = true;
+        ExecStart = "${prepScript}${prepArgs}";
+        # Also after a failed start (ExecStop wouldn't run).
+        ExecStopPost = "${cleanupScript}${prepArgs}";
+        RuntimeDirectory = "sandbox-vm/${name}";
+        RuntimeDirectoryMode = "0711";
+        RuntimeDirectoryPreserve = true;
+        PrivateDevices = true;
+        ProtectKernelTunables = true;
+        RestrictNamespaces = "mnt";
+        SystemCallFilter = [
+          "@system-service"
+          "@mount"
+        ];
+      };
   };
 
   afterPrep = extra: {
@@ -1697,7 +1751,6 @@ let
       # The rest of virtio-nvgpu's own unit (contrib/systemd/vhost-user-nvgpu@.service).
       // lib.optionalAttrs nvgpu {
         Type = "exec";
-        ExecStartPost = "+${gpuSocketOpen}${instArg}";
         SupplementaryGroups = [
           "video"
           "render"
@@ -1714,6 +1767,53 @@ let
     }
   );
 
+  # Root: the backend's sockets handed over (gpuOpenScript). Its own unit, so
+  # the backend's stays without capabilities; the VMM (and the capture helper)
+  # start after it.
+  gpuOpenService = helper {
+    description = "Sandbox VM GPU sockets (handover): ${label}";
+    requires = [
+      (ref "${unit}-prep")
+      (ref "${unit}-gpu")
+    ];
+    after = [
+      (ref "${unit}-prep")
+      (ref "${unit}-gpu")
+    ];
+    serviceConfig =
+      core.hardening.rootStep [
+        "CAP_CHOWN"
+        "CAP_FOWNER"
+        "CAP_SETUID"
+        "CAP_SETGID"
+      ]
+      // {
+        Type = "oneshot";
+        RemainAfterExit = true;
+        ExecStart = "${gpuOpenScript}${instArg}";
+        ReadWritePaths = [ base ];
+        PrivateDevices = true;
+        ProtectKernelTunables = true;
+      };
+  };
+
+  # Root: the backend joins the VMM's core-scheduling cookie (games). Needs
+  # both units' main processes, so it runs once the VMM has started.
+  coreschedService = helper {
+    description = "Sandbox VM core scheduling (backend joins the VMM): ${label}";
+    after = [
+      (ref unit)
+      (ref "${unit}-gpu")
+    ];
+    serviceConfig = core.hardening.rootStep [ "CAP_SYS_PTRACE" ] // {
+      Type = "oneshot";
+      RemainAfterExit = true;
+      ExecStart = "${rootTool} coresched ${ref "${unit}-gpu"} ${ref unit} ${systemctl}";
+      PrivateDevices = true;
+      ProtectKernelTunables = true;
+    };
+  };
+
   relayService = helper (
     afterPrep (
       lib.optional bus (ref "${unit}-bus")
@@ -1729,13 +1829,13 @@ let
         ExecStart = "${relayScript}${instArg}";
         User = if restricted then principal else username;
         Group = if restricted then principalGroup else hostUser.group;
-        # Restricted: the broker's sockets for this VM, bound in by systemd (as
-        # root) from the user's runtime dir, which the principal can't traverse.
-        # Soft: absent while the broker isn't running. A bind pins the socket, so
-        # a broker restart needs a VM restart (as for containers).
+        # Restricted: the broker's sockets for this VM, from the stage (the
+        # prep took them from the user's runtime dir, which the principal can't
+        # traverse). Soft: absent while the broker isn't running. A bind pins
+        # the socket, so a broker restart needs a VM restart (as for containers).
         BindPaths = lib.optionals (restricted && broker) (
-          lib.optional audio "-${hostRuntimeDir}/sbx-broker/${brokerName}.pulse:${relayBrokerSocks.pulse}"
-          ++ [ "-${hostRuntimeDir}/sbx-broker/${brokerName}.sock:${relayBrokerSocks.broker}" ]
+          lib.optional audio (bindPair "-${stage}/relay-pulse" relayBrokerSocks.pulse)
+          ++ [ (bindPair "-${stage}/relay-broker" relayBrokerSocks.broker) ]
         );
         NoNewPrivileges = true;
         CapabilityBoundingSet = "";
@@ -1787,7 +1887,10 @@ let
   );
 
   captureBrokerService = helper (
-    afterPrep [ (ref "${unit}-gpu") ]
+    afterPrep [
+      (ref "${unit}-gpu")
+      (ref "${unit}-gpu-open")
+    ]
     // {
       description = "Sandbox VM screen-capture injection helper: ${label}";
       environment.__EGL_VENDOR_LIBRARY_FILENAMES = "/run/opengl-driver/share/glvnd/egl_vendor.d/10_nvidia.json";
@@ -1934,65 +2037,64 @@ let
     partOf = [ (ref unit) ];
     restartIfChanged = false;
     stopIfChanged = false;
-    serviceConfig = {
+    # Root, confined: the USB device nodes (opened and handed to the VMM), the
+    # VMM's control socket in its 0700 folder (CAP_DAC_OVERRIDE: search and
+    # connect, nothing else), /sys/bus/usb/drivers_probe on detach (so not
+    # ProtectKernelTunables), its own runtime dir.
+    serviceConfig = core.hardening.rootStep [ "CAP_DAC_OVERRIDE" ] // {
       Type = "oneshot";
       RemainAfterExit = true;
-      ExecStart = "${cameraAttach}${instArg}";
-      ExecStop = "${cameraDetach}${instArg}";
-      PrivateNetwork = true;
-      ProtectHome = true;
-      NoNewPrivileges = true;
+      ExecStart = "${cameraStep "attach"}${instArg}";
+      ExecStop = "-${cameraStep "detach"}${instArg}";
+      ReadWritePaths = [ base ];
       DevicePolicy = "closed";
       DeviceAllow = [ "char-usb_device rw" ];
-      RestrictAddressFamilies = [ "AF_UNIX" ];
     };
   };
 
-  docsPortalService = helper (
-    afterPrep [ ]
-    // {
-      description = "Sandbox VM documents (portal activation): ${label}";
-      environment = {
-        XDG_RUNTIME_DIR = hostRuntimeDir;
-        DBUS_SESSION_BUS_ADDRESS = "unix:path=${hostRuntimeDir}/bus";
-      };
-      serviceConfig = {
-        Type = "oneshot";
-        RemainAfterExit = true;
-        ExecStart = "${docsPortalScript}";
-        User = username;
-        Group = hostUser.group;
-        NoNewPrivileges = true;
-        CapabilityBoundingSet = "";
-        AmbientCapabilities = "";
-        ProtectSystem = "strict";
-        ProtectHome = "tmpfs";
-        # ProtectHome also hides /run/user: the session bus and the portal's
-        # FUSE mount (which may appear only once GetMountPoint has activated
-        # the portal) are in this user's runtime dir. Nothing here reads the
-        # guest's input; the device that does is -docs.
-        BindPaths = [ hostRuntimeDir ];
-        PrivateTmp = true;
-        PrivateIPC = true;
-        PrivateDevices = true;
-        ProtectKernelTunables = true;
-        ProtectKernelModules = true;
-        ProtectKernelLogs = true;
-        ProtectControlGroups = true;
-        ProtectClock = true;
-        ProtectHostname = true;
-        RestrictNamespaces = true;
-        LockPersonality = true;
-        RestrictRealtime = true;
-        RestrictSUIDSGID = true;
-        RestrictAddressFamilies = [ "AF_UNIX" ];
-        SystemCallArchitectures = "native";
-        SystemCallFilter = [ "@system-service" ];
-        SystemCallErrorNumber = "EPERM";
-        LimitCORE = 0;
-      };
-    }
-  );
+  # Before the prep (which stages the view it waits for), so not afterPrep.
+  docsPortalService = helper {
+    description = "Sandbox VM documents (portal activation): ${label}";
+    environment = {
+      XDG_RUNTIME_DIR = hostRuntimeDir;
+      DBUS_SESSION_BUS_ADDRESS = "unix:path=${hostRuntimeDir}/bus";
+    };
+    serviceConfig = {
+      Type = "oneshot";
+      RemainAfterExit = true;
+      ExecStart = "${docsPortalScript}";
+      User = username;
+      Group = hostUser.group;
+      NoNewPrivileges = true;
+      CapabilityBoundingSet = "";
+      AmbientCapabilities = "";
+      ProtectSystem = "strict";
+      ProtectHome = "tmpfs";
+      # ProtectHome also hides /run/user: the session bus and the portal's
+      # FUSE mount (which may appear only once GetMountPoint has activated
+      # the portal) are in this user's runtime dir. Nothing here reads the
+      # guest's input; the device that does is -docs.
+      BindPaths = [ hostRuntimeDir ];
+      PrivateTmp = true;
+      PrivateIPC = true;
+      PrivateDevices = true;
+      ProtectKernelTunables = true;
+      ProtectKernelModules = true;
+      ProtectKernelLogs = true;
+      ProtectControlGroups = true;
+      ProtectClock = true;
+      ProtectHostname = true;
+      RestrictNamespaces = true;
+      LockPersonality = true;
+      RestrictRealtime = true;
+      RestrictSUIDSGID = true;
+      RestrictAddressFamilies = [ "AF_UNIX" ];
+      SystemCallArchitectures = "native";
+      SystemCallFilter = [ "@system-service" ];
+      SystemCallErrorNumber = "EPERM";
+      LimitCORE = 0;
+    };
+  };
 
   docsService = helper (
     afterPrep [ (ref "${unit}-docs-portal") ]
@@ -2007,9 +2109,9 @@ let
         AmbientCapabilities = "";
         ProtectSystem = "strict";
         # Nothing of /home or /run/user: only this app's document view, bound by
-        # systemd (as root, from the host root) at docsView.
+        # systemd at docsView from the stage (opened there as the user).
         ProtectHome = true;
-        BindPaths = [ "${docsSource}:${docsView}" ];
+        BindPaths = [ (bindPair "${stage}/docs" docsView) ];
         ReadWritePaths = [ base ];
         # Own network namespace: no abstract unix sockets of the host's (the
         # fs device talks to the VMM over the vhost-user socket in base).
@@ -2092,6 +2194,8 @@ in
   // lib.optionalAttrs network' { "${unit}-net${tmpl}" = netService; }
   // lib.optionalAttrs gui { "${unit}-wl${tmpl}" = wlService; }
   // lib.optionalAttrs gpuDevice { "${unit}-gpu${tmpl}" = gpuService; }
+  // lib.optionalAttrs nvgpu { "${unit}-gpu-open${tmpl}" = gpuOpenService; }
+  // lib.optionalAttrs gameTuning { "${unit}-coresched${tmpl}" = coreschedService; }
   // lib.optionalAttrs relay { "${unit}-relay${tmpl}" = relayService; }
   // lib.optionalAttrs bus { "${unit}-bus${tmpl}" = busService; }
   // lib.optionalAttrs capture {
