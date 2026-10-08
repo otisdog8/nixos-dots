@@ -76,25 +76,42 @@ let
     case "$__wd" in /*) __up="$__wd" ;; *) __up="$__rt/$__wd" ;; esac
     ${cameraRequest}
     if [ -z "$__wd" ] || [ -z "$__rt" ] || [ ! -S "$__up" ]; then
-      WAYLAND_DISPLAY=sandbox-${appName}-no-display exec ${inner.package}/bin/${binName} "$@"
+      WAYLAND_DISPLAY=sandbox-${appName}-no-display exec ${lockHold} ${inner.package}/bin/${binName} "$@"
     fi
-    exec ${wlSecure}/bin/wayland-security-context run \
+    exec ${lockHold} ${wlSecure}/bin/wayland-security-context run \
       "$__rt/sandbox-${appName}-wayland-$$" ${lib.escapeShellArg inner.appId} \
       -- ${inner.package}/bin/${binName} "$@"
   '';
 
-  # The app's own sandbox (and, for Wayland apps, its security-context wrapper).
+  # While the sandbox runs, the app's VM can't start, and the other way round
+  # (lib/impl-lock.nix). The launcher holds the lock (nixpak's waits for the
+  # sandbox); a second launch shares it.
+  implLock = import ../impl-lock.nix { inherit lib pkgs; };
+  lockHold = implLock.hold {
+    cls = "container";
+    apps = lib.optional (implLock.wanted {
+      backend = "nixpak";
+      inherit (storage) entries;
+    }) appName;
+    notify = true;
+  };
+  lockedLauncher = pkgs.writeShellScript "${appName}-locked" ''
+    exec ${lockHold} ${inner.package}/bin/${binName} "$@"
+  '';
+
+  # The app's own sandbox (and, for Wayland apps, its security-context wrapper;
+  # otherwise, with data to lock, the lock's).
   perAppPackage =
-    if inner.usesWayland then
+    if inner.usesWayland || lockHold != "" then
       pkgs.symlinkJoin {
         inherit (inner.package) name;
         paths = [ inner.package ];
         postBuild = ''
           rm "$out/bin/${binName}"
-          ln -s ${launcher} "$out/bin/${binName}"
+          ln -s ${if inner.usesWayland then launcher else lockedLauncher} "$out/bin/${binName}"
           # nixpak rewrites absolute Exec=/D-Bus service paths in share/ to its
           # inner script; point them at this wrapper so no entry point bypasses
-          # the security-context socket.
+          # the security-context socket (or the lock).
           if [ -d "$out/share" ]; then
             { grep -RlF "${inner.script}/bin/" "$out/share" || true; } | while IFS= read -r f; do
               t="$(readlink -f "$f")"

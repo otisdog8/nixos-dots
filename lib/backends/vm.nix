@@ -100,6 +100,12 @@ let
       ;
     package = if nested then nestedPkg else cfg.package;
     inherit (appCfg) environment;
+    # Its VM and its container lock each other out (lib/impl-lock.nix): the
+    # VMM holds this app's lock.
+    implLock = (import ../impl-lock.nix { inherit lib pkgs; }).wanted {
+      backend = appCfg.defaultBackend;
+      inherit (storage) entries;
+    };
     # Shared downloads (sandbox.sharedDownloads; dedicated uids, as for the
     # container): the subfolder of the user's ~/Downloads that is its ~/Downloads.
     downloads = if cfg.sandbox.sharedDownloads && principal != username then appName else null;

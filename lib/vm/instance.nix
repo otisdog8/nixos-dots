@@ -696,9 +696,24 @@ let
         "${guestRuntimeDir}/${guestWaylandDisplay}"
     }"
   );
+  # While the VM runs, its members' containers can't start, and the other way
+  # round (lib/impl-lock.nix): the VMM unit holds a lock per member with data,
+  # in a process of its own beside crosvm, never anything in the guest.
+  implLock = import ../impl-lock.nix { inherit lib pkgs; };
+  lockApps = map (m: m.appName) (lib.filter (m: m.implLock or false) members);
+  lockCheck = implLock.check {
+    cls = "vm";
+    apps = lockApps;
+  };
+
   runScript = pkgs.writeShellScript "${unit}-run" ''
     set -euo pipefail
     ${core.hardening.vsockNsCheck}
+    ${implLock.holdFor {
+      cls = "vm";
+      apps = lockApps;
+      pid = "$$";
+    }}
     dir="''${1:-}"
     ${idPrelude}
     eu="$(${co}/id -u)"
@@ -1349,6 +1364,14 @@ let
         if [ -d ${lib.escapeShellArg downloadsDir} ] && [ ! -L ${lib.escapeShellArg downloadsDir} ]; then
           ${pkgs.acl}/bin/setfacl -R -m "u:${principal}:rwX" ${lib.escapeShellArg downloadsDir} 2>/dev/null || true
           ${pkgs.acl}/bin/setfacl -d -m "u:${principal}:rwX" ${lib.escapeShellArg downloadsDir} 2>/dev/null || true
+        fi
+      ''}
+      ${lib.optionalString (lockApps != [ ]) ''
+        # A member's container is running: say so here, in the session (the
+        # VMM's own lock would refuse too, but only to the journal). A running
+        # VM is joined as is.
+        if ! ${systemctl} is-active --quiet "$unit" && ! ${lockCheck}; then
+          finish 1
         fi
       ''}
       if ! ${systemctl} start "$unit"; then

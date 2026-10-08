@@ -136,7 +136,25 @@ in
     # The session's environment (display, bus) comes from the user manager.
     partOf = [ "graphical-session.target" ];
     serviceConfig = {
-      ExecStart = start;
+      # Holds every member's container lock while it runs, so none of their
+      # VMs can start meanwhile, nor it while one runs (lib/impl-lock.nix).
+      ExecStart =
+        let
+          implLock = import ../impl-lock.nix { inherit lib pkgs; };
+          hold = implLock.hold {
+            cls = "container";
+            apps = map (m: m.appName) (
+              lib.filter (
+                m:
+                implLock.wanted {
+                  backend = "nixpak";
+                  inherit (m.storage) entries;
+                }
+              ) members
+            );
+          };
+        in
+        "${lib.optionalString (hold != "") "${hold} "}${start}";
       Restart = "no";
       KillMode = "mixed";
     };

@@ -226,6 +226,24 @@ let
   needsWaylandDisplay = dedicated || cfg.sandbox.envMode == "defaults";
   waylandSocket = "wayland-1";
 
+  # While the sandbox runs, the app's VM can't start, and the other way round
+  # (lib/impl-lock.nix). Taken by the unit as root, just before the privilege
+  # drop (the lock file sits in a root-owned dir), and inherited by the sandbox.
+  # The unit runs one instance, so later launches never take it.
+  implLock = import ../impl-lock.nix { inherit lib pkgs; };
+  lockApps = lib.optional (implLock.wanted {
+    backend = "systemd";
+    inherit (storage) entries;
+  }) appName;
+  lockHold = implLock.hold {
+    cls = "container";
+    apps = lockApps;
+  };
+  lockCheck = implLock.check {
+    cls = "container";
+    apps = lockApps;
+  };
+
   runScript = pkgs.writeShellScript "sandbox-run-${appName}" ''
     set -eu
     ${lib.optionalString dedicated ''
@@ -371,11 +389,11 @@ let
             export DBUS_SESSION_BUS_ADDRESS="unix:path=${jrtRuntime}/bus"
             export PULSE_SERVER="unix:${jrtRuntime}/pulse/native"
           ''}
-          exec ${ul}/setpriv --reuid="$__u" --regid="$__g" --init-groups ${innerPkg}/bin/${binName}
+          exec ${lockHold} ${ul}/setpriv --reuid="$__u" --regid="$__g" --init-groups ${innerPkg}/bin/${binName}
         ''
       else
         ''
-          exec ${ul}/setpriv --reuid=${uid} --regid=${gid} --init-groups ${innerPkg}/bin/${binName}
+          exec ${lockHold} ${ul}/setpriv --reuid=${uid} --regid=${gid} --init-groups ${innerPkg}/bin/${binName}
         ''
     }
   '';
@@ -505,6 +523,11 @@ let
       # Not running: fall through to start the service. Cold-launch URL/file args are
       # intentionally NOT forwarded — the old jrt-owned .args stash was a root-read
       # oracle (see runScript). The app opens; click the link again once it's up.
+    ''}
+    ${lib.optionalString (lockCheck != "") ''
+      # Its VM is running: say so here, in the session (the unit's own lock,
+      # runScript, would refuse too, but only to the journal).
+      ${lockCheck}
     ''}
     # Teardown trap, installed BEFORE any grant below: if the launcher dies (set -e,
     # SIGINT) between granting ACLs / starting the bridge and `systemctl start`,

@@ -379,6 +379,12 @@
             inherit (backendResult) dbusArgs flatpakInfoFile appId;
           };
 
+          implLock = import ./impl-lock.nix { inherit lib pkgs; };
+          lockArgs = {
+            backend = effectiveBackend;
+            inherit (storage) entries;
+          };
+
           variants = import ./variants.nix { inherit lib pkgs; };
           variantsOn = config.modules.sandbox.variants.enable;
           vmWanted = cfg.sandbox.mode == "vm" || variantsOn;
@@ -448,6 +454,12 @@
             ]
             ++ variantPkgs
             ++ lib.optionals variantsOn implVariants;
+          })
+
+          # The container and the VM share the app's data: whichever runs locks
+          # the other out (lib/impl-lock.nix).
+          (lib.mkIf (cfg.enable && implLock.wanted lockArgs) {
+            systemd.tmpfiles.settings."10-sandbox-impl" = implLock.tmpfiles appName;
           })
 
           # Backend-emitted system config (tmpfiles, persistence, units).
