@@ -342,7 +342,7 @@
               effectiveBackend == "none" || ((config.modules.sandbox.forceHomeLocation or false) && !dedicated);
           };
           # The container implementation (app.defaultBackend). It owns the app's
-          # storage lowering (tmpfiles, persistence, stash migration, and the
+          # storage lowering (tmpfiles, persistence, and the
           # dedicated uid), which the VM implementation then reuses as-is.
           backendResult = (import ./backends/default.nix).${effectiveBackend} {
             inherit

@@ -772,13 +772,6 @@ in
       units = [ "${unitName}.service" ];
       inherit (netPolicy) names;
     };
-    modules.sandbox.stashMigrations = lib.optional (storage.stashEntries != [ ]) {
-      app = appName;
-      bin = binName;
-      user = username; # old-layout source is always under the human user's home
-      owner = appUser; # target ownership: jrt (same-uid) or app-<name> (dedicated)
-      entries = map (e: { inherit (e) tier path; }) storage.stashEntries;
-    };
 
     users.groups = lib.optionalAttrs dedicated { "app-${appName}" = { }; };
     users.users = lib.optionalAttrs dedicated {

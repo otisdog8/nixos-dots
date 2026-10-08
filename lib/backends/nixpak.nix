@@ -179,12 +179,5 @@ in
           ])
         )
         "sandbox app '${appName}': network mode \"${cfg.sandbox.network.mode}\" isn't enforced by the nixpak backend (it runs in your session); use the systemd backend or the VM.";
-    modules.sandbox.stashMigrations = lib.optional (storage.stashEntries != [ ]) {
-      app = appName;
-      bin = binName;
-      user = builtins.head appCfg.defaultUsernames; # old-layout source (jrt)
-      owner = builtins.head appCfg.defaultUsernames; # target ownership (jrt)
-      entries = map (e: { inherit (e) tier path; }) storage.stashEntries;
-    };
   };
 }
