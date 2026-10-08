@@ -1,4 +1,5 @@
-"""sbx-attach: bind a folder or the camera into a RUNNING container sandbox.
+"""sbx-attach: bind a folder or the camera into a RUNNING container sandbox
+(and a VM's grants share), or widen a running sandbox's IP filter (grant-net).
 
 A bwrap sandbox's mount namespace is fixed when it starts, so a folder the user
 grants later (sbx-broker's grant-path) or a camera the user allows (camera)
@@ -12,6 +13,7 @@ the peer is checked again here. One JSON request line, one JSON reply line:
   {"op": "path", "sandbox": NAME, "path": "/home/<user>/...", "write": bool}
   {"op": "camera", "sandbox": NAME}
   {"op": "vm-path", "vm": NAME, "rtdir": "/run/sandbox-vm/NAME/ID", "path": ..., "write": bool}
+  {"op": "allow-ip", "sandbox": NAME, "unit": UNIT, "addr": "IP or CIDR"}
   → {"ok": true, "attached": N} | {"ok": false, "error": "..."}
 
 What it will do, whoever asks (the user is the only one who can):
@@ -20,6 +22,10 @@ What it will do, whoever asks (the user is the only one who can):
     has dropped to the user's uid, gids and groups, so no permission (path
     traversal included) is bypassed by root resolving it. The user could reach
     every such file anyway; this changes what one of their own sandboxes sees.
+    The path must be canonical, and is opened as it is named: no symlink in any
+    component (openat2 RESOLVE_NO_SYMLINKS), so a sandbox that can write the
+    folder's parent can't swap in a link elsewhere between the user's approval
+    (of exactly this path) and the mount.
     Read-only is enforced on the mount (MOUNT_ATTR_RDONLY), but like a VM's
     read-only grant it's a guard, not a boundary: the sandbox runs as the user.
   - vm-path: the same, for a sandbox VM's folder grants: into the VM's grants
@@ -32,6 +38,11 @@ What it will do, whoever asks (the user is the only one who can):
     cards) as device nodes at their own paths, into any configured sandbox. A
     dedicated-uid sandbox also gets an ACL for its uid on those nodes, which its
     unit removes when it stops.
+  - allow-ip: sbx-broker's grant-net. Adds one address or prefix to the
+    IPAddressAllow= of a running unit the sandbox registered as its network
+    units (`systemctl set-property --runtime`), and nothing else: never
+    IPAddressDeny=, never a reset, no other unit or property. (Not polkit:
+    polkit can't tell which property a set-property call changes.)
 A sandbox is found from the record the host side of its launcher wrote
 (nixpak's bwrapinfo.json, which the sandbox can't reach), and, for systemd
 units, the unit's cgroup; the process must still be the one named there, run
@@ -40,9 +51,13 @@ without following symlinks, and only on the sandbox's own tmpfs.
 """
 
 import ctypes
+import errno
+import fnmatch
+import ipaddress
 import json
 import os
 import pwd
+import re
 import socket
 import stat
 import struct
@@ -58,10 +73,12 @@ libc.syscall.restype = ctypes.c_long
 # Same numbers on every architecture (asm-generic, added after the split).
 SYS_open_tree = 428
 SYS_move_mount = 429
+SYS_openat2 = 437
 SYS_mount_setattr = 442
 
 OPEN_TREE_CLONE = 1
 OPEN_TREE_CLOEXEC = os.O_CLOEXEC
+AT_FDCWD = -100
 AT_EMPTY_PATH = 0x1000
 AT_RECURSIVE = 0x8000
 MOVE_MOUNT_F_EMPTY_PATH = 0x4
@@ -69,6 +86,8 @@ MOVE_MOUNT_T_EMPTY_PATH = 0x40
 MOUNT_ATTR_RDONLY = 0x1
 MOUNT_ATTR_NOSUID = 0x2
 MOUNT_ATTR_NODEV = 0x4
+RESOLVE_NO_MAGICLINKS = 0x02
+RESOLVE_NO_SYMLINKS = 0x04
 CLONE_NEWNS = 0x20000
 NS_GET_OWNER_UID = 0xB704  # _IO(0xb7, 0x4)
 TMPFS_MAGIC = 0x01021994
@@ -313,8 +332,45 @@ def attach(pidfd, tree, path, is_dir, owner):
         raise Refused(msg or "attach failed")
 
 
+def canonical(path):
+    """`path` if it's absolute and canonical (what realpath gives: no ".", "..",
+    empty or trailing components); otherwise Refused. Nothing resolves it again
+    here, so it has to be the path the user approved."""
+    if (
+        not isinstance(path, str)
+        or not path.startswith("/")
+        or path.startswith("//")
+        or "\0" in path
+        or os.path.normpath(path) != path
+    ):
+        raise Refused("path must be absolute and canonical")
+    return path
+
+
+def open_exact(path):
+    """O_PATH fd for the folder at exactly `path` (canonical): no symlink is
+    followed in any component, and the kernel's name for what was opened is
+    `path` itself."""
+    how = struct.pack("QQQ", os.O_PATH | os.O_DIRECTORY | os.O_CLOEXEC, 0, RESOLVE_NO_SYMLINKS | RESOLVE_NO_MAGICLINKS)
+    buf = ctypes.create_string_buffer(how, len(how))
+    fd = libc.syscall(SYS_openat2, ctypes.c_long(AT_FDCWD), os.fsencode(path), buf, ctypes.c_size_t(len(how)))
+    if fd < 0:
+        e = ctypes.get_errno()
+        if e == errno.ELOOP:
+            raise Refused(f"{path}: a symlink is in the way")
+        raise OSError(e, f"{path}: {os.strerror(e)}")
+    try:
+        if os.readlink(f"/proc/self/fd/{fd}") != path:
+            raise Refused(f"{path} isn't where it was asked for")
+    except BaseException:
+        os.close(fd)
+        raise
+    return fd
+
+
 def open_as_user(user, path):
-    """O_PATH fd for `path`, opened with the user's credentials."""
+    """O_PATH fd for the folder at exactly `path` (open_exact), opened with the
+    user's credentials."""
     a, b = socket.socketpair(socket.AF_UNIX, socket.SOCK_DGRAM)
     child = os.fork()
     if child == 0:
@@ -323,7 +379,7 @@ def open_as_user(user, path):
             os.setgroups(os.getgrouplist(user["name"], user["gid"]))
             os.setresgid(user["gid"], user["gid"], user["gid"])
             os.setresuid(user["uid"], user["uid"], user["uid"])
-            fd = os.open(path, os.O_PATH | os.O_DIRECTORY | os.O_CLOEXEC)
+            fd = open_exact(path)
             socket.send_fds(b, [b"ok"], [fd])
             os._exit(0)
         except BaseException as e:
@@ -338,18 +394,20 @@ def open_as_user(user, path):
     return fds[0]
 
 
+def home_path(user, path):
+    path = canonical(path)
+    if not path.startswith(user["home"] + "/"):
+        raise Refused("only folders inside your home can be granted")
+    return path
+
+
 def op_path(cfg, sb, name, req):
     if not sb.get("paths"):
         raise Refused("this sandbox can't take folders while running")
     user = cfg["user"]
-    path = req.get("path")
-    if not isinstance(path, str) or not path.startswith("/") or "\0" in path:
-        raise Refused("path must be absolute")
+    path = home_path(user, req.get("path"))
     fd = open_as_user(user, path)
     try:
-        real = os.readlink(f"/proc/self/fd/{fd}")
-        if not real.startswith(user["home"] + "/"):
-            raise Refused("only folders inside your home can be granted")
         tree = open_tree(fd, recursive=True)
     finally:
         os.close(fd)
@@ -363,7 +421,7 @@ def op_path(cfg, sb, name, req):
             raise Refused(f"{name} isn't running")
         for pidfd in pidfds:
             try:
-                attach(pidfd, tree, real, True, user["uid"])
+                attach(pidfd, tree, path, True, user["uid"])
             finally:
                 os.close(pidfd)
         return len(pidfds)
@@ -416,14 +474,9 @@ def op_vm_path(cfg, req):
     if vm not in cfg.get("vms", []) or not isinstance(rtdir, str):
         raise Refused("unknown VM")
     user = cfg["user"]
-    path = req.get("path")
-    if not isinstance(path, str) or not path.startswith("/") or "\0" in path:
-        raise Refused("path must be absolute")
+    path = home_path(user, req.get("path"))
     fd = open_as_user(user, path)
     try:
-        real = os.readlink(f"/proc/self/fd/{fd}")
-        if not real.startswith(user["home"] + "/"):
-            raise Refused("only folders inside your home can be granted")
         tree = open_tree(fd, recursive=True)
     finally:
         os.close(fd)
@@ -435,7 +488,7 @@ def op_vm_path(cfg, req):
         pidfds = vm_targets(cfg, vm, rtdir)
         if not pidfds:
             raise Refused(f"{vm}'s grants share isn't running")
-        rel = real[len(user["home"]) :]
+        rel = path[len(user["home"]) :]
         for pidfd in pidfds:
             try:
                 attach(pidfd, tree, rel, True, user["uid"])
@@ -497,6 +550,50 @@ def op_camera(cfg, sb, name, req):
             os.close(pidfd)
 
 
+# ── Network grants ───────────────────────────────────────────────────────────
+
+UNIT_NAME = re.compile(r"[A-Za-z0-9:_.\\@-]{1,255}")
+
+
+def op_allow_ip(cfg, req):
+    """grant-net: one more address or prefix in IPAddressAllow= of a running unit
+    the sandbox registered (an exact name or a glob, e.g. "...-net@*.service").
+    A non-empty IPAddressAllow= assignment only ever adds; nothing else is set."""
+    name = req.get("sandbox")
+    patterns = cfg.get("netUnits", {}).get(name) if isinstance(name, str) else None
+    if not patterns:
+        raise Refused("this sandbox's network isn't filtered per sandbox")
+    unit = req.get("unit")
+    if (
+        not isinstance(unit, str)
+        or not UNIT_NAME.fullmatch(unit)
+        or not any(fnmatch.fnmatchcase(unit, p) for p in patterns)
+    ):
+        raise Refused("not one of the sandbox's network units")
+    try:
+        net = ipaddress.ip_network(str(req.get("addr")), strict=False)
+    except ValueError:
+        raise Refused("addr must be an IP address or prefix")
+    systemctl = cfg["systemctl"]
+    r = subprocess.run(
+        [systemctl, "show", "--property=ActiveState", "--value", "--", unit],
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    if r.stdout.strip() != "active":
+        raise Refused(f"{unit} isn't running")
+    r = subprocess.run(
+        [systemctl, "set-property", "--runtime", "--", unit, f"IPAddressAllow={net}"],
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    if r.returncode != 0:
+        raise Refused(f"could not update {unit}: {r.stderr.strip()}")
+    return net
+
+
 # ── Entry ────────────────────────────────────────────────────────────────────
 
 
@@ -530,6 +627,10 @@ def main():
             n = op_vm_path(cfg, req)
             log(f"vm {req.get('vm')}: {req.get('path')} → {n} device(s)")
             return reply({"ok": True, "attached": n})
+        if req.get("op") == "allow-ip":
+            net = op_allow_ip(cfg, req)
+            log(f"{req.get('sandbox')}: {req.get('unit')}: IPAddressAllow+={net}")
+            return reply({"ok": True, "attached": 1})
         name = req.get("sandbox")
         sb = cfg["sandboxes"].get(name) if isinstance(name, str) else None
         if sb is None:
@@ -543,23 +644,30 @@ def main():
             raise Refused("unknown op")
         log(f"{name}: {op} {req.get('path', '')} → {n} sandbox(es)")
         reply({"ok": True, "attached": n})
-    except (Refused, OSError, ValueError, KeyError) as e:
+    except (Refused, OSError, ValueError, KeyError, subprocess.TimeoutExpired) as e:
         log(f"{req if req is not None else data[:200]!r}: {e}")
         reply({"ok": False, "error": str(e)})
 
 
 def client():
     """sbx-attach-client SANDBOX PATH rw|ro | SANDBOX attach (camera)
-    | vm NAME RTDIR PATH rw|ro (a VM's folder grant)."""
+    | vm NAME RTDIR PATH rw|ro (a VM's folder grant)
+    | allow-ip SANDBOX UNIT ADDR (grant-net)."""
     a = sys.argv[1:]
     if len(a) == 5 and a[0] == "vm" and a[4] in ("rw", "ro"):
         req = {"op": "vm-path", "vm": a[1], "rtdir": a[2], "path": a[3], "write": a[4] == "rw"}
+    elif len(a) == 4 and a[0] == "allow-ip":
+        req = {"op": "allow-ip", "sandbox": a[1], "unit": a[2], "addr": a[3]}
     elif len(a) == 3 and a[2] in ("rw", "ro"):
         req = {"op": "path", "sandbox": a[0], "path": a[1], "write": a[2] == "rw"}
     elif len(a) == 2 and a[1] == "attach":
         req = {"op": "camera", "sandbox": a[0]}
     else:
-        print("usage: sbx-attach-client SANDBOX PATH rw|ro | SANDBOX attach", file=sys.stderr)
+        print(
+            "usage: sbx-attach-client SANDBOX PATH rw|ro | SANDBOX attach"
+            " | vm NAME RTDIR PATH rw|ro | allow-ip SANDBOX UNIT ADDR",
+            file=sys.stderr,
+        )
         sys.exit(2)
     s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     s.connect(os.environ.get("SBX_ATTACH_SOCKET", "/run/sbx-attach.sock"))

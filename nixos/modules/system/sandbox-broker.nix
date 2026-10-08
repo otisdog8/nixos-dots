@@ -8,7 +8,8 @@
 #   exec [--root] CMD…     run CMD outside the sandbox as the user (root: through
 #                          run0/polkit, never remembered for the session)
 #   grant-net ADDR         let the sandbox reach an address its network policy
-#                          blocks (VMs and systemd-backend apps; until it stops)
+#                          blocks (VMs and systemd-backend apps; through the
+#                          root attach helper; until the host reboots)
 #   grant-path [--write] P give a running VM a folder (see the VM instances)
 #   camera                 attach the host's camera(s) to a running VM
 #   fido                   (VMs' virtual security key, not sbx-request) relay
@@ -109,9 +110,13 @@ let
     "#!${python}\n" + builtins.readFile ../../../lib/broker/request.py
   );
 
-  # The root side of container grants and camera attach (lib/broker/attach.py).
+  # The root side of container grants, camera attach and grant-net
+  # (lib/broker/attach.py).
   attach = import ../../../lib/broker/attach.nix pkgs;
   hostUser = config.users.users.${user};
+  # grant-net: the units (or globs) each sandbox's IPAddressAllow= extends.
+  netUnits = lib.filterAttrs (_: u: u != [ ]) (lib.mapAttrs (_: sb: sb.netUnits) cfg.sandboxes);
+  attachOn = cfg.attach != { } || cfg.attachVms != [ ] || netUnits != { };
   attachConfig = pkgs.writeText "sbx-attach.json" (
     builtins.toJSON {
       user = {
@@ -122,8 +127,10 @@ let
         runtimeDir = "/run/user/${toString hostUser.uid}";
       };
       setfacl = "${pkgs.acl}/bin/setfacl";
+      systemctl = "${pkgs.systemd}/bin/systemctl";
       sandboxes = cfg.attach;
       vms = cfg.attachVms;
+      inherit netUnits;
     }
   );
 
@@ -134,6 +141,7 @@ let
       systemctl = "${pkgs.systemd}/bin/systemctl";
       setfacl = "${pkgs.acl}/bin/setfacl";
       pkcheck = "${config.security.polkit.package.bin}/bin/pkcheck";
+      attach = "${attach.client}/bin/sbx-attach-client";
       sandboxes = lib.mapAttrs (
         name: sb:
         sb
@@ -235,7 +243,7 @@ in
             netUnits = lib.mkOption {
               type = lib.types.listOf lib.types.str;
               default = [ ];
-              description = "Units (or unit globs) whose IPAddressAllow= grant-net extends.";
+              description = "Units (or unit globs) whose IPAddressAllow= grant-net extends (through the attach helper).";
             };
             grantPaths = lib.mkOption {
               type = lib.types.nullOr lib.types.str;
@@ -328,9 +336,12 @@ in
 
     # The attach helper: root, one process per request, on a socket only the
     # user can connect to. Root because cloning a host mount into another
-    # namespace needs it; what it agrees to do is in attach.py's header.
-    systemd.sockets.sbx-attach = lib.mkIf (cfg.attach != { } || cfg.attachVms != [ ]) {
-      description = "Sandbox attach helper (folders and cameras into running containers)";
+    # namespace needs it, and so does a unit property (grant-net), which the
+    # user can't be allowed to set through polkit (it can't tell which
+    # property: IPAddressDeny= would lift a sandbox's network policy). What it
+    # agrees to do is in attach.py's header.
+    systemd.sockets.sbx-attach = lib.mkIf attachOn {
+      description = "Sandbox attach helper (folders, cameras and network grants into running sandboxes)";
       wantedBy = [ "sockets.target" ];
       listenStreams = [ "/run/sbx-attach.sock" ];
       socketConfig = {
@@ -340,7 +351,7 @@ in
         MaxConnections = 16;
       };
     };
-    systemd.services."sbx-attach@" = lib.mkIf (cfg.attach != { } || cfg.attachVms != [ ]) {
+    systemd.services."sbx-attach@" = lib.mkIf attachOn {
       description = "Sandbox attach request";
       serviceConfig = {
         ExecStart = "${attach.daemon}/bin/sbx-attach ${attachConfig}";
@@ -351,6 +362,7 @@ in
         # open_tree/setns/move_mount, setns's chroot check, dropping to the user
         # to open the source, reading other uids' /proc entries and runtime
         # dirs, pidfd signal 0, the device ACL, chown of new mount points.
+        # (systemctl set-property needs none: root on systemd's private bus.)
         CapabilityBoundingSet = [
           "CAP_SYS_ADMIN"
           "CAP_SYS_CHROOT"
@@ -375,14 +387,5 @@ in
         LimitCORE = 0;
       };
     };
-
-    # grant-net extends a running unit's IPAddressAllow= (systemctl set-property):
-    # allowed for exactly the registered units, and nothing else.
-    modules.sandbox.propertyUnits = lib.concatMap (
-      sb: lib.filter (u: !(lib.hasInfix "*" u)) sb.netUnits
-    ) (lib.attrValues cfg.sandboxes);
-    modules.sandbox.propertyTemplates = lib.concatMap (
-      sb: map (u: lib.head (lib.splitString "*" u)) (lib.filter (u: lib.hasInfix "*" u) sb.netUnits)
-    ) (lib.attrValues cfg.sandboxes);
   };
 }

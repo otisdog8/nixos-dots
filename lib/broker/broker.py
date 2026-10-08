@@ -205,14 +205,23 @@ class Broker:
         running = self.running_units(units)
         if not running:
             return send({"type": "denied", "reason": "the sandbox isn't running"})
+        # The root attach helper extends the unit's IPAddressAllow= (and does
+        # nothing else): the user may not set unit properties themselves.
+        attach = self.cfg.get("attach")
+        if not attach:
+            return send({"type": "error", "message": "no attach helper to update the sandbox's network"})
         for u in running:
-            r = subprocess.run(
-                [self.systemctl, "set-property", "--runtime", u, f"IPAddressAllow={net}"],
-                capture_output=True,
-                text=True,
-            )
+            try:
+                r = subprocess.run(
+                    [attach, "allow-ip", sandbox, u, str(net)],
+                    capture_output=True,
+                    text=True,
+                    timeout=60,
+                )
+            except subprocess.TimeoutExpired:
+                r = subprocess.CompletedProcess([], 1, "", "timed out")
             if r.returncode != 0:
-                log(f"set-property {u}: {r.stderr.strip()}")
+                log(f"allow-ip {u}: {r.stderr.strip()}")
                 return send({"type": "error", "message": f"could not update {u}"})
         send({"type": "granted"})
 

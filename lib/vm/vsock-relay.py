@@ -8,6 +8,9 @@ the host hands the guest), prefixed with one line naming the service
 Host side (`host`): listen on vsock port = the VM's CID; accept only connections
 whose peer CID is that VM's; read the service line; connect to the unix socket
 mapped to that name; splice both ways. A service the VM wasn't given is refused.
+"grants" (the guest's root folder-grant agent, which dials the host itself,
+lib/vm/grants.py) is taken only from a privileged source port (< 1024), which
+only the guest's root can bind, so no other guest process can stand in for it.
 
 File descriptors (SCM_RIGHTS) cannot cross vsock. The host side therefore
 mediates D-Bus authentication and rejects Unix fd negotiation before splicing
@@ -27,6 +30,10 @@ import threading
 HOST_CID = 2
 MAX_NAME = 64
 MAX_AUTH_LINE = 16384
+# Services only the guest's root may reach: vsock ports below 1024 need
+# CAP_NET_BIND_SERVICE in the guest (af_vsock's LAST_RESERVED_PORT).
+PRIVILEGED = {"grants"}
+LAST_RESERVED_PORT = 1023
 
 
 def read_auth_line(conn):
@@ -180,6 +187,17 @@ def read_name(conn):
     return None
 
 
+def service_path(services, name, port):
+    """The unix socket for service `name` asked for from guest port `port`, or
+    None if the VM wasn't given it (or a privileged one, from an unprivileged
+    port)."""
+    if not name:
+        return None
+    if name in PRIVILEGED and not 0 <= port <= LAST_RESERVED_PORT:
+        return None
+    return services.get(name)
+
+
 def serve_host(cid, services):
     s = socket.socket(socket.AF_VSOCK, socket.SOCK_STREAM | socket.SOCK_CLOEXEC)
     # Port = the VM's CID: unique per running VM. Binding fails if anything else
@@ -189,16 +207,16 @@ def serve_host(cid, services):
     log(f"serving {', '.join(sorted(services))} to CID {cid}")
     notify_ready()
 
-    def handle(conn, peer):
+    def handle(conn, peer, port):
         try:
             conn.settimeout(10)
             name = read_name(conn)
             conn.settimeout(None)
         except (OSError, UnicodeDecodeError):
             name = None
-        path = services.get(name) if name else None
+        path = service_path(services, name, port)
         if path is None:
-            log(f"CID {peer}: refused service {name!r}")
+            log(f"CID {peer} port {port}: refused service {name!r}")
             conn.close()
             return
         try:
@@ -226,12 +244,12 @@ def serve_host(cid, services):
         splice(conn, down)
 
     while True:
-        conn, (peer, _) = s.accept()
+        conn, (peer, port) = s.accept()
         if peer != cid:
             log(f"refused a connection from CID {peer}")
             conn.close()
             continue
-        threading.Thread(target=handle, args=(conn, peer), daemon=True).start()
+        threading.Thread(target=handle, args=(conn, peer, port), daemon=True).start()
 
 
 def main():

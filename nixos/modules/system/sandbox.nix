@@ -409,24 +409,6 @@ in
       '';
     };
 
-    propertyUnits = lib.mkOption {
-      internal = true;
-      default = [ ];
-      type = lib.types.listOf lib.types.str;
-      description = ''
-        Exact units whose properties the user may change at runtime (only the
-        set-property verb): the sandbox broker's grant-net extends their
-        IPAddressAllow= (modules/system/sandbox-broker.nix).
-      '';
-    };
-
-    propertyTemplates = lib.mkOption {
-      internal = true;
-      default = [ ];
-      type = lib.types.listOf lib.types.str;
-      description = "Template prefixes (\"sandbox-vm-<app>-net@\") like propertyUnits.";
-    };
-
     unitTemplates = lib.mkOption {
       internal = true;
       default = [ ];
@@ -533,7 +515,10 @@ in
     #     (start) AND RefUnit (ref, to hold the result until the unit exits); stop is
     #     teardown. Everything else manage-units gates — set-property, kill, freeze,
     #     clean, thaw, … — is denied (falls through to the admin default), so this
-    #     grant is no broader than the launcher requires.
+    #     grant is no broader than the launcher requires. Not set-property even on
+    #     sandbox units: polkit can't see which property, so it would let any of
+    #     the user's processes reset IPAddressDeny=. The broker's grant-net goes
+    #     through the root attach helper instead (lib/broker/attach.py, allow-ip).
     security.polkit.extraConfig = ''
       polkit.addRule(function(action, subject) {
         if (action.id == "org.freedesktop.systemd1.manage-units" &&
@@ -549,19 +534,6 @@ in
               unit.lastIndexOf(".service") == unit.length - 8;
           }
           if (ok && (verb == "start" || verb == "stop" || verb == "ref")) {
-            return polkit.Result.YES;
-          }
-          // The sandbox broker's grant-net: runtime property changes only, only on
-          // the registered network units.
-          var props = ${builtins.toJSON cfg.propertyUnits};
-          var propTemplates = ${builtins.toJSON cfg.propertyTemplates};
-          var okProp = unit && props.indexOf(unit) >= 0;
-          for (var j = 0; unit && !okProp && j < propTemplates.length; j++) {
-            var q = propTemplates[j];
-            okProp = unit.length > q.length + 8 && unit.indexOf(q) == 0 &&
-              unit.lastIndexOf(".service") == unit.length - 8;
-          }
-          if (okProp && verb == "set-property") {
             return polkit.Result.YES;
           }
         }

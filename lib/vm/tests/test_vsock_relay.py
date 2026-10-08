@@ -164,6 +164,27 @@ class AuthTests(unittest.TestCase):
         self.assertIsInstance(self.errors.get(timeout=2), EOFError)
 
 
+class ServiceTests(unittest.TestCase):
+    services = {"pulse": "/p", "grants": "/g"}
+
+    def test_given_services_only(self):
+        self.assertEqual(relay.service_path(self.services, "pulse", 49152), "/p")
+        self.assertIsNone(relay.service_path(self.services, "dbus", 49152))
+        self.assertIsNone(relay.service_path(self.services, None, 49152))
+        self.assertIsNone(relay.service_path(self.services, "", 49152))
+
+    def test_grants_only_from_a_privileged_port(self):
+        # Only the guest's root can bind below 1024: the grant agent does, any
+        # other guest process connects from an ephemeral port.
+        self.assertEqual(relay.service_path(self.services, "grants", 1023), "/g")
+        self.assertEqual(relay.service_path(self.services, "grants", 600), "/g")
+        for port in (1024, 49152, 0xFFFFFFFF):
+            self.assertIsNone(relay.service_path(self.services, "grants", port))
+
+    def test_privileged_port_needs_the_service_too(self):
+        self.assertIsNone(relay.service_path({"pulse": "/p"}, "grants", 1000))
+
+
 @unittest.skipUnless(shutil.which("dbus-daemon") and shutil.which("dbus-send"),
                      "requires dbus-daemon and dbus-send")
 class RealBusTests(unittest.TestCase):
