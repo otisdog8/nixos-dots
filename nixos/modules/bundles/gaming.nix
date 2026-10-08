@@ -62,11 +62,12 @@ in
 
   config = lib.mkIf cfg.enable {
     # Steam and its mod tools share files (game folders, r2modman's profiles and
-    # its launch wrapper, Steam's launch options): as containers through binds
-    # into each other's homes, in VM mode as one group VM with one guest home.
-    # The group only takes effect for members in VM mode (sandbox.mode = "vm",
-    # or their "(vm)" variants); with no projects it changes nothing about the
-    # containers. Sized as Steam's own VM (apps/steam.nix).
+    # its launch wrapper, Steam's launch options): as containers, one shared
+    # container (the user service sbx-group-games, lib/backends/nixpak-group.nix;
+    # it stops a minute after the last of them exits), each started in its home
+    # there (none takes $PWD); in VM mode (sandbox.mode = "vm", or their "(vm)"
+    # variants), one group VM with one guest home. Sized as Steam's own VM
+    # (apps/steam.nix).
     modules.sandbox.groups.games = lib.mkIf cfg.steam.enable {
       apps = [
         "steam"

@@ -6,14 +6,25 @@
 # point is `sbx-exec agent` (lib/sbx-exec.py). It runs as the user service
 # sbx-group-<g>, started by the first launch; each member's command then runs
 # inside it through the agent, on the launcher's own terminal (fds passed over
-# the socket). A group with projects shares only launches started inside one of
-# them (the others run the member's ordinary per-app sandbox: the shared one
-# doesn't see that directory); a group without projects shares every launch.
+# the socket).
+#
+# Where a command runs (launcherFor), as a group VM's launcher does (grantCwd):
+# a member that takes $PWD (capabilities.cwd) runs in the caller's directory,
+# which the shared sandbox has to have as the same folder: a declared project,
+# a folder granted earlier, or, anywhere else in ~, the folder the launcher has
+# the root attach helper (lib/broker/attach.py, op path) mount in now (no
+# prompt: the user started it there). Started in ~ itself it runs in the
+# sandbox's home. A folder outside ~ the sandbox doesn't have, or one it can't
+# be given, runs the member's own per-app sandbox instead (which binds $PWD),
+# saying so; never somewhere else than asked. Members without $PWD (the games)
+# run in the sandbox's home. Inside the group's sandbox already (one agent
+# running another) a member runs right there.
 #
 # Differences from the members' own sandboxes: no $PWD bind (the agent's start
-# directory isn't the caller's) and no ./-relative binds; one flatpak identity
-# (sbx.group.<g>) and one broker socket (group-<g>) for the whole group; each
-# member's app.environment is set on its own commands only, not sandbox-wide.
+# directory isn't the caller's; see above) and no ./-relative binds; one flatpak
+# identity (sbx.group.<g>) and one broker socket (group-<g>) for the whole
+# group; each member's app.environment is set on its own commands only, not
+# sandbox-wide.
 {
   lib,
   pkgs,
@@ -22,6 +33,9 @@
   # Container member records (lib/backends/nixpak.nix `member`).
   members,
   persistent,
+  # modules.sandbox.broker.enable: without it there is no broker socket to
+  # relay audio through or to bind, and members use the user's PulseAudio.
+  brokerOn,
 }:
 let
   paths = import ../paths.nix { inherit lib; };
@@ -48,7 +62,7 @@ let
       inherit (m) gpuDevices;
       # The group's one broker socket for audio too (bound by every member's
       # module at the same place).
-      pulseSocketName = "sbx-broker/group-${name}.pulse";
+      pulseSocketName = if brokerOn then "sbx-broker/group-${name}.pulse" else null;
     }).appModule;
 
   first = lib.head members;
@@ -75,11 +89,12 @@ let
         app.binPath = "bin/sbx-group-agent";
         flatpak.appId = lib.mkForce appId;
         bubblewrap.bind.rw = [
+          # rw: the agent makes its socket here (replacing a stale one).
           (sloth.concat' sloth.runtimeDir "/${runDir}")
-          [
-            (sloth.concat' sloth.runtimeDir "/sbx-broker/group-${name}.sock")
-            "/run/sbx/broker.sock"
-          ]
+        ]
+        ++ lib.optional brokerOn [
+          (sloth.concat' sloth.runtimeDir "/sbx-broker/group-${name}.sock")
+          "/run/sbx/broker.sock"
         ];
       };
   };
@@ -127,42 +142,69 @@ in
     };
   };
 
-  # A member's command: into the group's sandbox when the group has no projects
-  # or it's started inside one of them, else its own sandbox (`fallback`, the
-  # per-app wrapper).
+  # A member's command (see the top of this file for where it runs), else its
+  # own sandbox (`fallback`, the per-app wrapper). The group's projects (which
+  # nixpak.nix passes) aren't needed here: the sandbox itself says whether it
+  # has the folder (`sbx-exec probe`).
   launcherFor =
     {
       bin,
       package,
       fallback,
-      projects,
       environment ? { },
+      ...
     }:
-    pkgs.writeShellScript "sbx-group-${name}-${bin}" ''
-      here="$(pwd -P)"
-      shared=${if projects == [ ] then "1" else "0"}
-      for p in ${lib.escapeShellArgs projects}; do
-        case "$here/" in "$p"/*) shared=1 ;; esac
-      done
-      [ "$shared" = 1 ] || exec ${fallback} "$@"
-      sock="''${XDG_RUNTIME_DIR:?}/${runDir}/agent.sock"
-      if ! ${pkgs.systemd}/bin/systemctl --user --quiet is-active sbx-group-${name}.service; then
-        # A socket left by a stopped sandbox would answer nothing.
-        ${pkgs.coreutils}/bin/rm -f "$sock"
-        ${pkgs.systemd}/bin/systemctl --user start sbx-group-${name}.service
-        for _ in $(${pkgs.coreutils}/bin/seq 1 100); do
-          [ -S "$sock" ] && break
-          ${pkgs.coreutils}/bin/sleep 0.1
-        done
-      fi
-      if [ ! -S "$sock" ]; then
-        echo "${bin}: the ${name} group sandbox didn't start (journalctl --user -u sbx-group-${name}); using ${bin}'s own sandbox" >&2
-        exec ${fallback} "$@"
-      fi
-      exec ${sbxExec}/bin/sbx-exec run --socket "$sock" --cwd "$here" -- ${
+    let
+      member = lib.findFirst (m: m.bin == bin) null members;
+      takesCwd = member != null && member.appCfg.capabilities.cwd;
+      cmd = "${
         lib.optionalString (environment != { }) "${pkgs.coreutils}/bin/env ${
           lib.escapeShellArgs (lib.mapAttrsToList (k: v: "${k}=${v}") environment)
         } "
-      }${package}/bin/${bin} "$@"
+      }${package}/bin/${bin}";
+      systemctl = "${pkgs.systemd}/bin/systemctl --user";
+      attachProg = (import ../broker/attach.nix pkgs).forSandbox "group-${name}";
+    in
+    pkgs.writeShellScript "sbx-group-${name}-${bin}" ''
+      # Inside a sandbox already (an agent running another, agent-peers): there's
+      # no systemd user manager, and the group's socket directory there is the
+      # host's, so leave both alone. In the group's own sandbox the command is
+      # right here; in another one, its own sandbox nests.
+      if [ -e /.flatpak-info ]; then
+        if ${pkgs.gnugrep}/bin/grep -qxF ${lib.escapeShellArg "name=${appId}"} /.flatpak-info; then
+          exec ${cmd} "$@"
+        fi
+        exec ${fallback} "$@"
+      fi
+      sock="''${XDG_RUNTIME_DIR:?}/${runDir}/agent.sock"
+      # Started on first use. A socket a stopped sandbox left behind is the
+      # agent's to replace (sbx-exec probe waits for it to answer).
+      ${systemctl} --quiet is-active sbx-group-${name}.service \
+        || ${systemctl} start sbx-group-${name}.service \
+        || true
+      here="$(pwd -P)"
+      where=(--home)
+      probe=()
+      ${lib.optionalString takesCwd ''
+        home="$(cd "''${HOME:-/}" 2>/dev/null && pwd -P)"
+        if [ "$here" != "$home" ]; then
+          where=(--cwd "$here")
+          probe=(--dir "$here")
+          case "$here" in "$home"/*) probe+=(--grant ${attachProg}) ;; esac
+        fi
+      ''}
+      ${sbxExec}/bin/sbx-exec probe --socket "$sock" --wait 10 "''${probe[@]}"
+      case $? in
+        0) ;;
+        3)
+          echo "${bin}: the ${name} group sandbox isn't answering (journalctl --user -u sbx-group-${name}); using ${bin}'s own sandbox" >&2
+          exec ${fallback} "$@"
+          ;;
+        *)
+          echo "${bin}: $here isn't shared with the ${name} group sandbox; using ${bin}'s own sandbox" >&2
+          exec ${fallback} "$@"
+          ;;
+      esac
+      exec ${sbxExec}/bin/sbx-exec run --socket "$sock" "''${where[@]}" -- ${cmd} "$@"
     '';
 }

@@ -6,8 +6,15 @@
 # VM mode: ONE persistent VM (sandbox-vm-group-agents) with every agent's own
 # storage (their logins included), the declared projects at their real paths,
 # and the shared home paths. An agent started inside a project starts there.
-# Container mode: each agent keeps its own sandbox (agent-peers already lets
-# them run each other) and gets the projects and shared paths as extra binds.
+# Container mode: likewise ONE persistent container (the user service
+# sbx-group-agents, lib/backends/nixpak-group.nix) with every agent's storage,
+# the projects and the shared paths.
+# In both, an agent started in another folder of ~ gets that folder added to
+# the running sandbox (until it stops; the broker's grant-path adds more on
+# request) and starts there; started in ~ itself, it starts in the sandbox's
+# home. A container agent started in a folder outside ~ it doesn't have runs in
+# its own per-app sandbox instead (which also gets the projects and shared
+# paths, and agent-peers' stashes to run the others).
 #
 # Less confined than one sandbox per agent by design: any agent here can read
 # and change every declared project and every other agent's credentials.

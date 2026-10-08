@@ -14,6 +14,12 @@
 # nested agent still runs with its own confinement (private /tmp, own binds). rw,
 # not ro — agent CLIs write session/state/log files under their stash on startup.
 #
+# In the agents group's shared container (nixpak-group.nix) none of this is
+# needed: every agent's storage is already there, and a nested launch's wrapper
+# sees it's inside that sandbox and runs the agent directly. This is for the
+# per-app sandboxes (an agent started outside the group's container, or not in
+# the group at all).
+#
 # Soft binds (--bind-try): on a host where a peer app is disabled its stash root
 # doesn't exist and the bind is skipped (the peer's wrapper isn't in sw/bin there
 # either).

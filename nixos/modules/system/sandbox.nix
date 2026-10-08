@@ -231,6 +231,7 @@ in
                 name
                 ;
               inherit (g) persistent;
+              brokerOn = cfg.broker.enable;
               members = containerMembersOf g;
             }
           )
@@ -251,8 +252,9 @@ in
         storage and capabilities plus the group's projects and shared home paths;
         each member's command runs in it. In container mode every member gets
         the group's projects and shared home paths as extra binds, and (with
-        sharedContainer) a launch inside one of the projects runs in ONE shared
-        container instead of the member's own (lib/backends/nixpak-group.nix).
+        sharedContainer) their launches run in ONE shared container instead of
+        the member's own; one started in another folder of ~ gets that folder
+        mounted in (lib/backends/nixpak-group.nix).
       '';
       type = lib.types.attrsOf (
         lib.types.submodule {
@@ -269,7 +271,7 @@ in
             sharedContainer = lib.mkOption {
               type = lib.types.bool;
               default = true;
-              description = "Container mode: the members' launches share one container (the user service sbx-group-<name>): those started inside the group's projects, or every launch for a group without projects. nixpak-backend members only.";
+              description = "Container mode: the members' launches share one container (the user service sbx-group-<name>): a launch in a folder of ~ it lacks gets that folder attached, and one outside ~ it lacks runs the member's own sandbox. nixpak-backend members only.";
             };
             projects = lib.mkOption {
               type = lib.types.listOf lib.types.str;
