@@ -105,15 +105,17 @@ let
 
   # Who connects for a sandboxed app: its dedicated uid if it has one, else the
   # user. Container: the app itself. VM: the per-VM relay, a system unit the
-  # user can't move processes into, which runs as that same uid
-  # (lib/vm/instance.nix relayService).
+  # user can't move processes into, which runs as the dedicated uid, or else
+  # as the VM's own (lib/vm/instance.nix vmUser, relayService).
   appUid = a: if apps.${a}.sandbox.dedicatedUser then "app-${a}" else user;
+  vmUid = a: if apps.${a}.sandbox.dedicatedUser then "app-${a}" else vmCore.vmUserName a;
+  vmCore = import ../../../lib/vm/core { inherit lib pkgs; };
   # The 1Password VM's relay (uplink mode).
-  uplinkUser = if onepw != null then appUid "onepassword" else user;
+  uplinkUser = if onepw != null then vmUid "onepassword" else user;
 
   browserClient = vm: b: {
     label = (cfg.labels.${b} or defaultLabels.${b}) + lib.optionalString vm " (VM)";
-    users = [ (appUid b) ];
+    users = [ (if vm then vmUid b else appUid b) ];
     cgroup =
       if vm then "/system\\.slice/sandbox-vm-${lib.escapeRegex b}-relay(@[^/]*)?\\.service" else null;
   };

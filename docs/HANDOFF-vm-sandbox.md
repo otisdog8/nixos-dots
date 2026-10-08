@@ -5,6 +5,36 @@ end of a long session. Read this whole file before changing anything; then read
 the design comments at the top of the files named below — they are the real
 documentation, kept current, and more precise than this summary.
 
+## Update 2026-10-08: per-VM uids, idmapped data, confined host units
+
+Design and per-unit reasoning: `lib/vm/instance.nix` header ("Security shape")
+and the comments on each unit. **Not run on hardware.**
+- Each app VM's guest-facing host side runs as its own uid `sbx-vm-<name>`
+  (`core.vmUserName`; one per per-project template): the VMM and its jailed
+  devices, passt, cross-domain -gpu, the relay, -capture-bus, -grantsfs.
+  Restricted VMs keep `app-<name>` (already the VM's alone, owns the stash).
+  Still the desktop user: -wl, -bus, -bus-info (new: writes the portal's
+  bwrapinfo.json), -docs-portal, -docs (the portal's FUSE can't be idmapped),
+  the grants hub. `sandbox-unit-audit.nix` now also fails evaluation if any
+  other VM unit runs as the desktop user.
+- Data stays the user's on disk: `sbx-vm-root stage` stages stashes too (opened
+  by root) and idmaps every data item onto the VM's uid (MOUNT_ATTR_IDMAP, a
+  one-uid/one-gid user namespace); other owners show as nobody; a tree with a
+  FUSE/NFS mount under it is not shared (required items fail the prep). Folder
+  grants (attach.py vm-path) are idmapped the same way, into `$rt/grantsfs/view`.
+  `stage` drops every capability but SYS_ADMIN/SYS_CHROOT/SETUID/SETGID (all
+  sets, bounding included; the prep gets CAP_SETPCAP for that) before entering
+  PID 1's mount namespace.
+- Every non-root VM unit: `core.hardening.userStep` (PrivatePIDs, no caps,
+  no network, ...) + instance.nix `view`: /run/sandbox-vm is a tmpfs with only
+  the launch's dir bound back (from the stage; a per-project VM's units see it
+  at `<base>/run`), no /run/dbus, data tiers, other mounted filesystems
+  (btrfs top level), or attach socket (but the hub). Sockets between the
+  user's and the VM's units are ACL'd to the VM's uid (`grantSocket`); the relay
+  reaches the broker through its staged folder (survives broker restarts).
+- The guest grant agent walks share and target without following symlinks and
+  mounts with open_tree/move_mount onto the held fd; targets must be in ~.
+
 ## Update 2026-10-03: lib/vm/core and the agent VM
 
 Design: agent-auth's `docs/sandbox-design.md` (agent VMs, host daemons, remote
@@ -173,7 +203,8 @@ recursion); follow the existing `lib.genAttrs … mkIf` patterns.
   the kernel cmdline) says what to mount/start (`sbx-setup`).
 - Storage: the app's stash entries bind-mounted into a per-tier tree, shared
   over crosvm's jailed virtio-fs, grafted back onto `~/path` in the guest; the
-  guest user maps to the stash owner's uid (no chowning between modes).
+  guest user maps to the VM's own uid, onto which the stage idmaps the user's
+  data (no chowning between modes; see the 2026-10-08 update).
 - Network: passt over vhost-user, under `lib/netpolicy.nix` (VM default
   "internet": no LAN/host/tailnet), cgroup IP filter on the `-net` unit;
   `network.allowNames` via `sbx-dnsallow` (resolved's query monitor →

@@ -6,6 +6,10 @@
 # capabilities at all. And no unit of it may have a "+" Exec line, which runs
 # that command outside all of the unit's confinement.
 #
+# And a VM's units run as the desktop user only where they must (lib/vm/
+# instance.nix, "Security shape": -wl, -bus, -bus-info, -docs-portal, -docs,
+# the grants hub); everything else the guest talks to runs as the VM's own uid.
+#
 # Why: those units act on paths and processes the user (or a sandboxed app)
 # controls. The rule they follow (lib/vm/instance.nix, the header): root works
 # only on root-owned paths or on objects their owner opened, as the owner
@@ -14,6 +18,10 @@
 { config, lib, ... }:
 let
   ours = name: builtins.match "(sandbox-|sbx-|agent-vm|op-broker).*" name != null;
+  desktopUser = config.modules.sandbox.vm.user;
+  vmUnit = name: builtins.match "sandbox-vm-.*" name != null;
+  asUserOk =
+    name: builtins.match "sandbox-vm-.*-(wl|bus|bus-info|docs-portal|docs|grants)@?" name != null;
 
   # Units that can't comply yet, by exact name. Each entry says why and what
   # removes it; delete it as soon as the unit passes.
@@ -53,6 +61,10 @@ let
         (sc.ProtectSystem or null) == "strict" && caps != null && !(lib.hasPrefix "~" (capsText caps));
     in
     lib.optional (plus != [ ]) "a \"+\" Exec line (${lib.concatStringsSep "; " plus})"
+    ++ lib.optional (vmUnit name && user == desktopUser && !asUserOk name) (
+      "runs as ${desktopUser}, which only a VM's -wl, -bus, -bus-info, -docs-portal, -docs and grants hub may"
+      + " (lib/vm/instance.nix vmUser)"
+    )
     ++ lib.optional ((root || bang != [ ]) && !confined) (
       "runs as root${
         lib.optionalString (!root) " (\"!\" Exec lines)"

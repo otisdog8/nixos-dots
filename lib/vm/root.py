@@ -2,22 +2,33 @@
 from a confined root unit of its own (ProtectSystem=strict, a small capability
 bounding set, no network).
 
-  stage CONFIG BASE KEY [DIR]   (the -prep unit) the paths a user chooses
-      (home storage entries, binds of ~ and absolute paths, projects, shared
-      downloads, the document portal's view, the broker's sockets for a
-      restricted VM's relay, and DIR, a per-project VM's project) mounted into
-      BASE/stage/KEY, which only root can enter, for the VM's units to bind
-      from (BindPaths=). Each is opened by a child that has dropped to the
-      user's uid, gids and groups, without following a symlink in any
-      component (openat2 RESOLVE_NO_SYMLINKS), so no permission is bypassed by
-      root resolving it and nothing the VM wrote into a shared folder (a link
-      where a nested entry should be) can redirect it. The one exception: a
-      link straight into /nix/store (a home-manager file), which every guest
-      sees anyway. What was opened is cloned (open_tree OPEN_TREE_CLONE, with
-      its submounts, nosuid, nodev, read-only when the bind is) and moved onto
-      a mount point in a private tmpfs at the stage, in the host's mount
-      namespace, which is where systemd resolves BindPaths= sources. Private,
-      so none of it propagates into any other unit's namespace.
+  stage CONFIG BASE KEY RT [DIR]
+                                (the -prep unit) what the VM's units bind from
+      (BindPaths=), mounted into BASE/stage/KEY, which only root can enter:
+      the members' stashes, the paths a user chooses (home storage entries,
+      binds of ~ and absolute paths, projects, shared downloads, the document
+      portal's view, the broker's folder and the user's PulseAudio socket for
+      the relay, and DIR, a per-project VM's project), and RT, the launch's
+      runtime dir (the units see only that one: lib/vm/instance.nix `view`).
+      A stash (root's folders down to the entry) and RT are opened by root;
+      everything else by a child that has dropped to the user's uid, gids and
+      groups, without following a symlink in any component (openat2
+      RESOLVE_NO_SYMLINKS), so no permission is bypassed by root resolving it
+      and nothing the VM wrote into a shared folder (a link where a nested
+      entry should be) can redirect it. The one exception: a link straight
+      into /nix/store (a home-manager file), which every guest sees anyway.
+      What was opened is cloned (open_tree OPEN_TREE_CLONE, with its
+      submounts, nosuid, nodev, read-only when the bind is) and, for a VM that
+      runs as its own uid, idmapped (MOUNT_ATTR_IDMAP): the user's files show
+      as the VM's uid and group, what the VM creates lands on disk as the
+      user's, and every other owner shows as nobody. A tree with a mount that
+      can't be idmapped under it (FUSE, NFS) isn't shared at all: unmapped,
+      the VM would act as the user on it. Then it's moved onto a mount point
+      in a private tmpfs at the stage, in the host's mount namespace, which is
+      where systemd resolves BindPaths= sources. Private, so none of it
+      propagates into any other unit's namespace. Before that namespace is
+      entered every capability the work there doesn't need is gone for good
+      (restrict_caps): the unit's read-only view of the host stays behind.
   cleanup BASE KEY RT           (the -prep unit, on stop) unmounts the stage and
       removes the launch's runtime dir: each directory owned by someone else is
       emptied by a child running as its owner, then removed by root; never
@@ -40,6 +51,9 @@ bounding set, no network).
 Every path root works on is checked first: each of its directories is root's
 and writable by nobody else (open_trusted), so only root could have put
 anything there.
+
+The idmap's user namespace (idmap_userns) maps one uid and one gid and holds
+no process: a child makes it and waits while root writes its maps.
 """
 
 import ctypes
@@ -81,6 +95,7 @@ MOUNT_ATTR_RDONLY = 0x1
 MOUNT_ATTR_NOSUID = 0x2
 MOUNT_ATTR_NODEV = 0x4
 MOUNT_ATTR_NOEXEC = 0x8
+MOUNT_ATTR_IDMAP = 0x00100000
 MS_PRIVATE = 1 << 18
 FSOPEN_CLOEXEC = 1
 FSMOUNT_CLOEXEC = 1
@@ -91,7 +106,24 @@ UMOUNT_NOFOLLOW = 8
 RESOLVE_NO_MAGICLINKS = 0x02
 RESOLVE_NO_SYMLINKS = 0x04
 CLONE_NEWNS = 0x20000
+CAP_SETGID = 6
+CAP_SETUID = 7
+CAP_SETPCAP = 8
+CAP_SYS_CHROOT = 18
+CAP_SYS_ADMIN = 21
 CAP_SYS_PTRACE = 19
+PR_CAPBSET_READ = 23
+PR_CAPBSET_DROP = 24
+PR_CAP_AMBIENT = 47
+PR_CAP_AMBIENT_CLEAR_ALL = 4
+# What root keeps in the host's mount namespace (stage, unstage): the mounts
+# (open_tree, fsmount, move_mount, mount_setattr, umount2: CAP_SYS_ADMIN),
+# setns itself (CAP_SYS_ADMIN, CAP_SYS_CHROOT), and the as-user children and
+# the idmap's maps (CAP_SETUID, CAP_SETGID). Not CAP_DAC_OVERRIDE, CAP_FOWNER
+# or CAP_CHOWN: there root only works in its own folders; the cleanup's
+# fallback (taking back a folder its owner keeps filling) stays in the unit's
+# namespace. CAP_SYS_PTRACE only opens the namespace.
+HOST_NS_CAPS = frozenset({CAP_SYS_ADMIN, CAP_SYS_CHROOT, CAP_SETUID, CAP_SETGID})
 PR_SCHED_CORE = 62
 PR_SCHED_CORE_GET = 0
 PR_SCHED_CORE_SHARE_TO = 2
@@ -331,30 +363,128 @@ class CapData(ctypes.Structure):
     _fields_ = [("effective", ctypes.c_uint32), ("permitted", ctypes.c_uint32), ("inheritable", ctypes.c_uint32)]
 
 
-def drop_caps(*caps):
-    """Remove `caps` from this process's effective, permitted and inheritable
-    sets (it never execs, so they don't come back)."""
+def prctl(option, arg=0):
+    return libc.prctl(ctypes.c_int(option), ctypes.c_ulong(arg), ctypes.c_ulong(0), ctypes.c_ulong(0), ctypes.c_ulong(0))
+
+
+def restrict_caps(keep):
+    """Only `keep` from here on, for good: every other capability out of the
+    bounding set (CAP_SETPCAP, which that takes, last), the ambient set
+    cleared, and the effective and permitted sets cut to `keep` (inheritable
+    emptied). A drop that fails fails the step."""
+    for cap in range(64):
+        have = prctl(PR_CAPBSET_READ, cap)
+        if have < 0:
+            break  # past the kernel's last capability
+        if have and cap not in keep and cap != CAP_SETPCAP:
+            check(prctl(PR_CAPBSET_DROP, cap), f"dropping capability {cap} from the bounding set")
+    if CAP_SETPCAP not in keep and prctl(PR_CAPBSET_READ, CAP_SETPCAP) > 0:
+        check(prctl(PR_CAPBSET_DROP, CAP_SETPCAP), "dropping CAP_SETPCAP from the bounding set")
+    check(prctl(PR_CAP_AMBIENT, PR_CAP_AMBIENT_CLEAR_ALL), "clearing the ambient capabilities")
     hdr = CapHeader(0x20080522, 0)  # _LINUX_CAPABILITY_VERSION_3
     data = (CapData * 2)()
     check(libc.capget(ctypes.byref(hdr), data), "capget")
-    for c in caps:
-        i, bit = divmod(c, 32)
-        mask = ~(1 << bit) & 0xFFFFFFFF
+    for i in range(2):
+        mask = sum(1 << (c - 32 * i) for c in keep if 32 * i <= c < 32 * (i + 1))
         data[i].effective &= mask
         data[i].permitted &= mask
-        data[i].inheritable &= mask
+        data[i].inheritable = 0
     check(libc.capset(ctypes.byref(hdr), data), "capset")
 
 
 def enter_host_mount_ns():
-    """Into PID 1's mount namespace, where systemd resolves BindPaths=, and
-    without CAP_SYS_PTRACE (needed only to open it) from then on."""
+    """Into PID 1's mount namespace, where systemd resolves BindPaths=. That
+    leaves the unit's read-only view of the host behind, so first everything
+    but HOST_NS_CAPS goes (CAP_SYS_PTRACE was only needed to open it)."""
     fd = os.open("/proc/1/ns/mnt", os.O_RDONLY | os.O_CLOEXEC)
     try:
-        drop_caps(CAP_SYS_PTRACE)
+        restrict_caps(HOST_NS_CAPS)
         os.setns(fd, CLONE_NEWNS)
     finally:
         os.close(fd)
+
+
+# ── Idmaps ───────────────────────────────────────────────────────────────────
+
+
+def idmap_lines(pairs):
+    """uid_map/gid_map text for `pairs` of (id on disk, id seen through the
+    mount), one id each: nothing else is mapped (it shows as the overflow id),
+    and no id twice on either side."""
+    if not pairs:
+        raise Refused("an idmap needs an id")
+    ins, outs, lines = set(), set(), []
+    for a, b in pairs:
+        for v in (a, b):
+            if type(v) is not int or not 0 <= v < 0xFFFFFFFF:
+                raise Refused(f"bad id {v!r} in an idmap")
+        if a in ins or b in outs:
+            raise Refused("an id twice in an idmap")
+        ins.add(a)
+        outs.add(b)
+        lines.append(f"{a} {b} 1\n")
+    return "".join(lines)
+
+
+def idmap_userns(uids, gids):
+    """An fd for a new user namespace whose only ids are `uids` and `gids`
+    (idmap_lines), for MOUNT_ATTR_IDMAP. A child unshares it and waits while
+    this process writes its maps (setgroups denied first, which an
+    unprivileged writer must and root may) and opens it; nothing ever runs in
+    it."""
+    umap, gmap = idmap_lines(uids), idmap_lines(gids)
+    ready_r, ready_w = os.pipe()
+    done_r, done_w = os.pipe()
+    child = os.fork()
+    if child == 0:
+        try:
+            os.close(ready_r)
+            os.close(done_w)
+            os.unshare(os.CLONE_NEWUSER)
+            os.write(ready_w, b"1")
+            os.read(done_r, 1)
+        finally:
+            os._exit(0)
+    os.close(ready_w)
+    os.close(done_r)
+    try:
+        if os.read(ready_r, 1) != b"1":
+            raise Refused("couldn't make the idmap's user namespace")
+        for name, text in (("setgroups", "deny"), ("uid_map", umap), ("gid_map", gmap)):
+            fd = os.open(f"/proc/{child}/{name}", os.O_WRONLY | os.O_CLOEXEC)
+            try:
+                os.write(fd, text.encode())
+            finally:
+                os.close(fd)
+        return os.open(f"/proc/{child}/ns/user", os.O_RDONLY | os.O_CLOEXEC)
+    finally:
+        os.close(ready_r)
+        os.close(done_w)
+        os.waitpid(child, 0)
+
+
+def stage_idmap(cfg):
+    """For a VM that runs as its own uid (cfg["idmap"], its name): the idmap
+    that shows the user's files as that uid and group, as ([(uid, uid)],
+    [(gid, gid)]); else None."""
+    name = cfg.get("idmap")
+    if not name:
+        return None
+    user = cfg["user"]
+    pw = pwd.getpwnam(name)
+    if pw.pw_uid in (0, user["uid"]) or pw.pw_gid in (0, user["gid"]):
+        raise Refused(f"{name} can't stand in for {user['name']}")
+    return [(user["uid"], pw.pw_uid)], [(user["gid"], pw.pw_gid)]
+
+
+def idmap(tree, userns, path, vm, user):
+    try:
+        mount_setattr(tree, MOUNT_ATTR_IDMAP, userns_fd=userns)
+    except OSError as e:
+        raise Refused(
+            f"{path} (or a mount under it: FUSE, NFS, ...) can't be idmapped ({e.strerror}),"
+            f" and shared as it is {vm} would act as {user} on it"
+        )
 
 
 # ── Mounts ───────────────────────────────────────────────────────────────────
@@ -365,8 +495,8 @@ def open_tree(fd, recursive):
     return check(libc.syscall(SYS_open_tree, fd, b"", flags), "open_tree")
 
 
-def mount_setattr(fd, attr_set=0, propagation=0, recursive=True):
-    attr = struct.pack("QQQQ", attr_set, 0, propagation, 0)
+def mount_setattr(fd, attr_set=0, propagation=0, recursive=True, userns_fd=0):
+    attr = struct.pack("QQQQ", attr_set, 0, propagation, userns_fd)
     buf = ctypes.create_string_buffer(attr, len(attr))
     flags = AT_EMPTY_PATH | (AT_RECURSIVE if recursive else 0)
     check(libc.syscall(SYS_mount_setattr, fd, b"", flags, buf, len(attr)), "mount_setattr")
@@ -414,18 +544,39 @@ NAME = re.compile(r"[a-z]+(-[a-z]+)?[0-9]*")
 
 def check_item(item, user):
     """An item of the stage config, its path canonical and (if it says so)
-    under the folder it must be in."""
-    if not NAME.fullmatch(item.get("name", "")) or item.get("kind") not in KINDS:
+    under the folder it must be in. "rt" is the launch dir's own name."""
+    if not NAME.fullmatch(item.get("name", "")) or item["name"] == "rt" or item.get("kind") not in KINDS:
         raise Refused(f"bad item {item!r}")
     path = canonical(item["path"])
     under = item.get("under")
     if under is not None and not path.startswith(canonical(under) + "/"):
         raise Refused(f"{path}: not under {under}")
+    if item.get("stash") and item["kind"] not in ("dir", "file"):
+        raise Refused(f"bad stash item {item!r}")
     return path
 
 
-def open_item(item, user, path):
-    """The item, opened as the user (open_exact); a socket must be the user's."""
+def open_stash(path, kind, owner):
+    """A stash entry, by root: every folder down to it root's alone
+    (open_trusted), the entry itself not a link and `owner`'s."""
+    parent, name = os.path.split(path)
+    pfd = open_trusted(parent)
+    try:
+        fd = os.open(name, os.O_PATH | os.O_NOFOLLOW | os.O_CLOEXEC, dir_fd=pfd)
+    finally:
+        os.close(pfd)
+    st = os.fstat(fd)
+    if not KINDS[kind](st.st_mode) or st.st_uid != owner:
+        os.close(fd)
+        raise Refused(f"{path}: not a {kind} of uid {owner}")
+    return fd
+
+
+def open_item(item, user, path, stash_owner=None):
+    """The item: a stash entry opened by root (open_stash), anything else as
+    the user (open_exact); what says it's owned must be the user's."""
+    if item.get("stash"):
+        return open_stash(path, item["kind"], stash_owner)
     fd = as_user(user_creds(user), lambda: open_exact(path, item["kind"]))
     if item.get("owned") and os.fstat(fd).st_uid != user["uid"]:
         os.close(fd)
@@ -437,19 +588,41 @@ def stage_items(cfg, project):
     # The project first: a bad one fails the VM before anything is mounted.
     items = list(cfg["items"])
     if cfg.get("cwd"):
-        items.insert(0, {"name": "cwd", "path": project_path(project), "kind": "dir", "required": True})
+        items.insert(0, {"name": "cwd", "path": project_path(project), "kind": "dir", "required": True, "idmap": True})
     return items
 
 
-def stage(cfg, base, key, project=None):
-    """Mount every item of `cfg` into base/stage/key (see the module doc)."""
+def launch_dir(base, rt):
+    """RT, a launch dir straight under BASE."""
+    canonical(rt)
+    if not rt.startswith(base.rstrip("/") + "/") or "/" in rt[len(base.rstrip("/")) + 1 :]:
+        raise Refused(f"{rt}: not a launch dir of {base}")
+    return rt
+
+
+def stage(cfg, base, key, rt, project=None):
+    """Mount every item of `cfg`, and the launch dir `rt` as "rt", into
+    base/stage/key (see the module doc)."""
     user = cfg["user"]
     if not key or "/" in key or key in (".", "..") or len(key) > 255:
         raise Refused(f"bad stage key {key!r}")
+    launch_dir(base, rt)
     items = stage_items(cfg, project)
     for item in items:
         check_item(item, user)
+    stash_owner = pwd.getpwnam(cfg["stashOwner"]).pw_uid if any(i.get("stash") for i in items) else None
+    ids = stage_idmap(cfg)
     enter_host_mount_ns()
+    userns = idmap_userns(*ids) if ids else None
+    try:
+        return stage_into(cfg, base, key, rt, items, stash_owner, userns, cfg.get("idmap"))
+    finally:
+        if userns is not None:
+            os.close(userns)
+
+
+def stage_into(cfg, base, key, rt, items, stash_owner, userns, vm):
+    user = cfg["user"]
     bfd = open_trusted(base)
     try:
         try:
@@ -474,7 +647,7 @@ def stage(cfg, base, key, project=None):
         for item in items:
             path = item["path"]
             try:
-                fd = open_item(item, user, path)
+                fd = open_item(item, user, path, stash_owner)
             except FileNotFoundError:
                 if item.get("required"):
                     raise Refused(f"{path} doesn't exist")
@@ -494,6 +667,14 @@ def stage(cfg, base, key, project=None):
                 if item.get("ro"):
                     attr |= MOUNT_ATTR_RDONLY
                 mount_setattr(tree, attr)
+                if userns is not None and item.get("idmap"):
+                    try:
+                        idmap(tree, userns, path, vm, user["name"])
+                    except Refused as e:
+                        if item.get("required"):
+                            raise
+                        log(f"not sharing {e}")
+                        continue
                 mp = mountpoint(kfd, item["name"], is_dir)
                 try:
                     move_mount(tree, mp)
@@ -502,6 +683,21 @@ def stage(cfg, base, key, project=None):
                 staged += 1
             finally:
                 os.close(tree)
+        # The launch dir, last: what the units see of /run/sandbox-vm.
+        rfd = open_trusted(rt)
+        try:
+            tree = open_tree(rfd, recursive=False)
+        finally:
+            os.close(rfd)
+        try:
+            mount_setattr(tree, MOUNT_ATTR_NOSUID | MOUNT_ATTR_NODEV | MOUNT_ATTR_NOEXEC, recursive=False)
+            mp = mountpoint(kfd, "rt", True)
+            try:
+                move_mount(tree, mp)
+            finally:
+                os.close(mp)
+        finally:
+            os.close(tree)
     finally:
         os.close(kfd)
     return staged
@@ -605,8 +801,7 @@ def remove_rt(rt, uid=0, base_fd=None, as_owner=run_as):
 
 
 def cleanup(base, key, rt):
-    if not rt.startswith(base.rstrip("/") + "/") or "/" in rt[len(base.rstrip("/")) + 1 :]:
-        raise Refused(f"{rt}: not a launch dir of {base}")
+    launch_dir(base, rt)
     # Unmounting happens in the host's namespace, in a child: the removal stays
     # inside this unit's (where only the VM's runtime dir is writable).
     child = os.fork()
@@ -902,10 +1097,10 @@ def coresched(backend_unit, vmm_unit, systemctl):
 
 def main(argv):
     cmd, args = (argv[0], argv[1:]) if argv else ("", [])
-    if cmd == "stage" and len(args) in (3, 4):
+    if cmd == "stage" and len(args) in (4, 5):
         with open(args[0]) as f:
             cfg = json.load(f)
-        n = stage(cfg, canonical(args[1]), args[2], args[3] if len(args) == 4 else None)
+        n = stage(cfg, canonical(args[1]), args[2], args[3], args[4] if len(args) == 5 else None)
         log(f"{n} path(s) staged in {args[1]}/stage/{args[2]}")
     elif cmd == "cleanup" and len(args) == 3:
         cleanup(canonical(args[0]), args[1], canonical(args[2]))
@@ -917,7 +1112,7 @@ def main(argv):
         coresched(*args)
     else:
         print(
-            "usage: sbx-vm-root stage CONFIG BASE KEY [DIR] | cleanup BASE KEY RT"
+            "usage: sbx-vm-root stage CONFIG BASE KEY RT [DIR] | cleanup BASE KEY RT"
             " | gpu-open RT BACKEND PRINCIPAL [CAPTURE] SETFACL"
             " | camera attach|detach RT PRINCIPAL CROSVM | coresched BACKEND_UNIT VMM_UNIT SYSTEMCTL",
             file=sys.stderr,

@@ -70,7 +70,7 @@ let
     case "''${1:-list}" in
       list)
         ${pkgs.systemd}/bin/systemctl list-units --no-legend --plain --state=active 'sandbox-vm-*.service' \
-          | ${pkgs.gnugrep}/bin/grep -Ev -- '-(prep|net|wl|gpu|gpu-open|coresched|relay|bus|capture-bus|capture-broker|grantsfs|grants|docs|docs-portal|camera)(@.*)?\.service' \
+          | ${pkgs.gnugrep}/bin/grep -Ev -- '-(prep|net|wl|gpu|gpu-open|coresched|relay|bus|bus-info|capture-bus|capture-broker|grantsfs|grants|docs|docs-portal|camera)(@.*)?\.service' \
           | ${pkgs.gawk}/bin/awk '{print $1}' | ${pkgs.gnused}/bin/sed -E 's/^sandbox-vm-//; s/\.service$//' || true ;;
       stop) ${pkgs.systemd}/bin/systemctl stop "$(unit_for "$2" "''${3:-}")" ;;
       camera)
@@ -297,12 +297,12 @@ in
     systemd.services = lib.mkMerge (map (i: i.services) (lib.attrValues cfg.groupInstances));
     modules.sandbox.units = lib.concatMap (i: i.polkitUnits) (lib.attrValues cfg.groupInstances);
     modules.sandbox.dnsAllow = lib.concatMap (i: i.dnsAllow) (lib.attrValues cfg.groupInstances);
-    users.users = lib.mkMerge (map (i: i.gpuUsers.users or { }) (lib.attrValues cfg.groupInstances));
-    users.groups = lib.mkMerge (map (i: i.gpuUsers.groups or { }) (lib.attrValues cfg.groupInstances));
+    users.users = lib.mkMerge (map (i: i.hostUsers.users) (lib.attrValues cfg.groupInstances));
+    users.groups = lib.mkMerge (map (i: i.hostUsers.groups) (lib.attrValues cfg.groupInstances));
     modules.sandbox.broker.sandboxes = lib.mapAttrs' (
       _: i: lib.nameValuePair i.brokerName i.brokerEntry
     ) cfg.groupInstances;
-    modules.sandbox.broker.attachVms = lib.filter (n: n != null) (
+    modules.sandbox.broker.attachVms = lib.mkMerge (
       map (i: i.grantsVm) (lib.attrValues cfg.groupInstances)
     );
 

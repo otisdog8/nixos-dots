@@ -30,8 +30,9 @@
   pkgs,
   inputs,
   storage,
-  # The uid/group that owns the app's data and runs the VMM (the user, or
-  # app-<name> for a systemd dedicatedUser app).
+  # The uid/group that owns the app's data (the user, or app-<name> for a
+  # systemd dedicatedUser app, which then also runs its VMM; otherwise the
+  # VM's own uid does: lib/vm/instance.nix `vmUser`).
   principal,
   principalGroup,
   # Package whose share/ provides .desktop entries and icons: the container
@@ -219,14 +220,12 @@ in
         message = "${appName}: sandbox.vm.hostKeyring is per app VM; a group VM's bus is shared by all its members.";
       };
     modules.sandbox.dnsAllow = lib.optionals (group == null) instance.dnsAllow;
-    users.users = lib.optionalAttrs (group == null) (instance.gpuUsers.users or { });
-    users.groups = lib.optionalAttrs (group == null) (instance.gpuUsers.groups or { });
+    users.users = lib.optionalAttrs (group == null) instance.hostUsers.users;
+    users.groups = lib.optionalAttrs (group == null) instance.hostUsers.groups;
     modules.sandbox.broker.sandboxes = lib.optionalAttrs (group == null) {
       ${instance.brokerName} = instance.brokerEntry;
     };
-    modules.sandbox.broker.attachVms = lib.optional (
-      group == null && instance.grantsVm != null
-    ) instance.grantsVm;
+    modules.sandbox.broker.attachVms = lib.optionalAttrs (group == null) instance.grantsVm;
 
     warnings =
       lib.optional (cfg.sandbox.mode == "vm" && unsupported != [ ])

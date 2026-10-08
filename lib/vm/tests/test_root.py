@@ -1,10 +1,13 @@
 """Unprivileged tests for lib/vm/root.py (sbx-vm-root): the path checks root
 relies on (root-only chains, opening exactly the path asked for, never through
-a symlink, the store-link exception, per-project path rules, stage items), the
-fd-passing child, the removal of a launch's runtime dir (never following a
-link or leaving the filesystem, other owners' folders emptied as their owner),
-socket checks, the cgroup and sysfs parsing. The mounts, setns, ownership
-changes and prctl need root and real VMs.
+a symlink, the store-link exception, per-project path rules, stage items,
+stash entries), the fd-passing child, the idmap's maps and its user namespace
+(made for real where unprivileged user namespaces are allowed), which
+capabilities go before the host's mount namespace is entered, the removal of a
+launch's runtime dir (never following a link or leaving the filesystem, other
+owners' folders emptied as their owner), socket checks, the cgroup and sysfs
+parsing. The mounts, setns, ownership changes and prctl need root and real
+VMs.
 
   python3 -m unittest discover -s lib/vm/tests -p 'test_root.py'
 """
@@ -200,11 +203,17 @@ class Items(unittest.TestCase):
                 vmroot.check_item(bad, self.user)
         self.assertEqual(vmroot.check_item(dict(ok, path="/etc/x", under=None), self.user), "/etc/x")
         self.assertEqual(vmroot.check_item(dict(ok, name="relay-pulse"), self.user), "/home/u/.config/x")
+        # "rt" is the launch dir's; a stash entry is a folder or a file.
+        for bad in (dict(ok, name="rt"), dict(ok, stash=True, kind="any"), dict(ok, stash=True, kind="socket")):
+            with self.assertRaises(vmroot.Refused, msg=repr(bad)):
+                vmroot.check_item(bad, self.user)
 
     def test_cwd_item(self):
         cfg = {"user": self.user, "items": [], "cwd": True}
         items = vmroot.stage_items(cfg, "/home/u/proj")
-        self.assertEqual(items[0], {"name": "cwd", "path": "/home/u/proj", "kind": "dir", "required": True})
+        self.assertEqual(
+            items[0], {"name": "cwd", "path": "/home/u/proj", "kind": "dir", "required": True, "idmap": True}
+        )
         with self.assertRaises(vmroot.Refused):
             vmroot.stage_items(cfg, "/")
         with self.assertRaises(vmroot.Refused):
@@ -216,10 +225,14 @@ class Items(unittest.TestCase):
         with mock.patch.object(vmroot, "enter_host_mount_ns", side_effect=AssertionError("entered")):
             for key, project in (("a/b", "/home/u/p"), ("..", "/home/u/p"), ("k", "/"), ("k", "/home/u/p/../q")):
                 with self.assertRaises(vmroot.Refused, msg=(key, project)):
-                    vmroot.stage(cfg, "/run/sandbox-vm/x", key, project)
+                    vmroot.stage(cfg, "/run/sandbox-vm/x", key, "/run/sandbox-vm/x/main", project)
             bad = {"user": self.user, "items": [{"name": "e0", "path": "/root/x", "kind": "dir", "under": "/home/u"}]}
             with self.assertRaises(vmroot.Refused):
-                vmroot.stage(bad, "/run/sandbox-vm/x", "main")
+                vmroot.stage(bad, "/run/sandbox-vm/x", "main", "/run/sandbox-vm/x/main")
+            ok = {"user": self.user, "items": []}
+            for rt in ("/run/sandbox-vm/y/main", "/run/sandbox-vm/x/a/b", "/run/sandbox-vm/x/../y", "/run/sandbox-vm/x"):
+                with self.assertRaises(vmroot.Refused, msg=rt):
+                    vmroot.stage(ok, "/run/sandbox-vm/x", "main", rt)
 
 
 class Child(Tmp):
@@ -408,25 +421,152 @@ class Parsing(Tmp):
         os.makedirs(self.p("1-2:1.0x"))
         self.assertEqual(vmroot.video_devices(self.d), [("1-2", 1, 5, "Webcam"), ("3-1.4", 3, 9, "3-1.4")])
 
-    def test_drop_caps(self):
-        # Unprivileged: nothing to drop, and it must not fail.
-        vmroot.drop_caps(vmroot.CAP_SYS_PTRACE)
+
+
+class FakeCapLibc:
+    """libc's prctl/capget/capset, recording what was asked: a process with
+    every capability up to CAP_LAST in its bounding, effective and permitted
+    sets."""
+
+    LAST = 40
+
+    def __init__(self, calls):
+        self.calls = calls
+        self.bounding = set(range(self.LAST + 1))
+
+    def prctl(self, option, arg, *rest):
+        option, arg = option.value, arg.value
+        if option == vmroot.PR_CAPBSET_READ:
+            return -1 if arg > self.LAST else int(arg in self.bounding)
+        if option == vmroot.PR_CAPBSET_DROP:
+            if vmroot.CAP_SETPCAP not in self.bounding:
+                return -1  # EPERM: CAP_SETPCAP went first
+            self.bounding.discard(arg)
+            self.calls.append(("drop", arg))
+            return 0
+        self.calls.append(("prctl", option, arg))
+        return 0
+
+    def capget(self, hdr, data):
+        for d in data:
+            d.effective = d.permitted = d.inheritable = 0xFFFFFFFF
+        return 0
+
+    def capset(self, hdr, data):
+        caps = lambda field: {c for c in range(64) if getattr(data[c // 32], field) >> (c % 32) & 1}
+        self.calls.append(("capset", caps("effective"), caps("permitted"), caps("inheritable")))
+        return 0
+
+
+class Caps(unittest.TestCase):
+    def test_restrict_caps(self):
+        calls = []
+        fake = FakeCapLibc(calls)
+        with mock.patch.object(vmroot, "libc", fake):
+            vmroot.restrict_caps(vmroot.HOST_NS_CAPS)
+        dropped = [c[1] for c in calls if c[0] == "drop"]
+        self.assertEqual(set(dropped), set(range(FakeCapLibc.LAST + 1)) - vmroot.HOST_NS_CAPS)
+        # CAP_SETPCAP (which the drops need) last of them, then the ambient set
+        # cleared, then the rest cut down.
+        self.assertEqual(dropped[-1], vmroot.CAP_SETPCAP)
+        self.assertEqual(fake.bounding, set(vmroot.HOST_NS_CAPS))
+        self.assertEqual(calls[-2], ("prctl", vmroot.PR_CAP_AMBIENT, vmroot.PR_CAP_AMBIENT_CLEAR_ALL))
+        self.assertEqual(calls[-1], ("capset", set(vmroot.HOST_NS_CAPS), set(vmroot.HOST_NS_CAPS), set()))
+        for c in (vmroot.CAP_SYS_PTRACE, 0, 1, 3):  # PTRACE, CHOWN, DAC_OVERRIDE, FOWNER
+            self.assertNotIn(c, vmroot.HOST_NS_CAPS)
+
+    def test_a_failed_drop_fails(self):
+        fake = FakeCapLibc([])
+        fake.bounding.discard(vmroot.CAP_SETPCAP)  # can't drop anything
+        with mock.patch.object(vmroot, "libc", fake):
+            with self.assertRaises(OSError):
+                vmroot.restrict_caps(vmroot.HOST_NS_CAPS)
+
+    def test_dropped_before_setns(self):
+        """The namespace is opened (CAP_SYS_PTRACE) first, every capability
+        but HOST_NS_CAPS goes, and only then is it entered."""
+        calls = []
+        fake = FakeCapLibc(calls)
+        real_open = os.open
+
+        def fake_open(path, flags, *a, **k):
+            if path == "/proc/1/ns/mnt":
+                calls.append(("open", path))
+                return real_open("/", os.O_RDONLY)
+            return real_open(path, flags, *a, **k)
+
+        with mock.patch.object(vmroot, "libc", fake), mock.patch.object(vmroot.os, "open", fake_open), mock.patch.object(
+            vmroot.os, "setns", lambda fd, nstype: calls.append(("setns", nstype)), create=True
+        ):
+            vmroot.enter_host_mount_ns()
+        kinds = [c[0] for c in calls]
+        self.assertEqual(kinds[0], "open")
+        self.assertEqual(calls[-1], ("setns", vmroot.CLONE_NEWNS))
+        self.assertEqual(calls[-2][0], "capset")
+        self.assertEqual(kinds.count("setns"), 1)
+        self.assertLess(max(i for i, k in enumerate(kinds) if k == "drop"), kinds.index("setns"))
+
+
+class Idmap(unittest.TestCase):
+    def test_lines(self):
+        self.assertEqual(vmroot.idmap_lines([(1000, 987)]), "1000 987 1\n")
+        self.assertEqual(vmroot.idmap_lines([(1000, 987), (0, 990)]), "1000 987 1\n0 990 1\n")
+        for bad in ([], [(1000, 1000), (1000, 2)], [(1, 5), (2, 5)], [(-1, 5)], [(1, 2**32 - 1)], [("1", 5)], [(True, 5)], [(1.0, 5)]):
+            with self.assertRaises(vmroot.Refused, msg=repr(bad)):
+                vmroot.idmap_lines(bad)
+
+    def test_stage_idmap(self):
+        user = {"name": "u", "uid": 1000, "gid": 100}
+        self.assertIsNone(vmroot.stage_idmap({"user": user}))
+        self.assertIsNone(vmroot.stage_idmap({"user": user, "idmap": None}))
+        with mock.patch.object(vmroot.pwd, "getpwnam", lambda n: mock.Mock(pw_uid=987, pw_gid=985)):
+            self.assertEqual(vmroot.stage_idmap({"user": user, "idmap": "sbx-vm-x"}), ([(1000, 987)], [(100, 985)]))
+        # Never root, never the user itself.
+        for uid, gid in ((0, 985), (987, 0), (1000, 985), (987, 100)):
+            with mock.patch.object(vmroot.pwd, "getpwnam", lambda n: mock.Mock(pw_uid=uid, pw_gid=gid)):
+                with self.assertRaises(vmroot.Refused):
+                    vmroot.stage_idmap({"user": user, "idmap": "sbx-vm-x"})
+
+    def test_userns(self):
+        """For real, with the one mapping an unprivileged writer may set (its
+        own ids onto themselves); root writes others the same way."""
+        me, mg = os.getuid(), os.getgid()
+        try:
+            fd = vmroot.idmap_userns([(me, me)], [(mg, mg)])
+        except (vmroot.Refused, PermissionError) as e:
+            self.skipTest(f"no unprivileged user namespaces here: {e}")
+        try:
+            name = os.readlink(f"/proc/self/fd/{fd}")
+            self.assertTrue(name.startswith("user:["), name)
+            self.assertNotEqual(name, os.readlink("/proc/self/ns/user"))
+        finally:
+            os.close(fd)
+
+    def test_userns_child_failing(self):
+        with mock.patch.object(vmroot.os, "unshare", side_effect=PermissionError("no")):
+            with self.assertRaises(vmroot.Refused):
+                vmroot.idmap_userns([(1, 2)], [(1, 2)])
 
 
 class StageFlow(Tmp):
     """stage() with the privileged calls mocked: what gets opened, cloned with
-    which attributes, and mounted onto what kind of mount point."""
+    which attributes (idmapped or not), and mounted onto what kind of mount
+    point."""
 
     def setUp(self):
         super().setUp()
-        os.makedirs(self.p("run", "sandbox-vm", "vm"))
+        os.makedirs(self.p("run", "sandbox-vm", "vm", "main"))
         os.makedirs(self.p("home", "u", ".config", "x"))
         open(self.p("home", "u", ".gitconfig"), "w").close()
         os.makedirs(self.p("home", "u", "proj"))
         os.makedirs(self.p("home", "u", "real"))
         os.symlink(self.p("home", "u", "real"), self.p("home", "u", "planted"))
+        os.makedirs(self.p("persist", "sandbox", "app", ".data"))
+        open(self.p("persist", "sandbox", "app", "conf"), "w").close()
+        os.symlink(".data", self.p("persist", "sandbox", "app", "linked"))
         self.moves = []
         self.attrs = []
+        self.userns = []
         root = self.d
         patches = [
             mock.patch.object(vmroot, "enter_host_mount_ns", lambda: None),
@@ -436,18 +576,34 @@ class StageFlow(Tmp):
             ),
             mock.patch.object(vmroot, "private_tmpfs", lambda fd: None),
             mock.patch.object(vmroot, "open_tree", lambda fd, recursive: os.dup(fd)),
-            mock.patch.object(vmroot, "mount_setattr", lambda fd, attr_set=0, **k: self.attrs.append(attr_set)),
+            mock.patch.object(vmroot, "mount_setattr", self.setattr),
             mock.patch.object(
                 vmroot, "move_mount", lambda tree, mp: self.moves.append((os.readlink(f"/proc/self/fd/{tree}"), os.fstat(mp)))
             ),
+            mock.patch.object(vmroot, "idmap_userns", self.make_userns),
+            mock.patch.object(vmroot.pwd, "getpwnam", lambda n: mock.Mock(pw_uid=os.getuid() + 1, pw_gid=os.getgid() + 1)),
         ]
         for pt in patches:
             pt.start()
             self.addCleanup(pt.stop)
         self.user = {"name": "u", "uid": os.getuid(), "gid": os.getgid(), "home": self.p("home", "u")}
+        self.fail_idmap = set()
 
-    def cfg(self, items, cwd=False):
-        return {"user": self.user, "items": items, "cwd": cwd}
+    def setattr(self, fd, attr_set=0, userns_fd=0, **k):
+        path = os.readlink(f"/proc/self/fd/{fd}")
+        if attr_set & vmroot.MOUNT_ATTR_IDMAP and path in self.fail_idmap:
+            raise OSError(errno.EINVAL, "Invalid argument")
+        self.attrs.append((path, attr_set, userns_fd))
+
+    def make_userns(self, uids, gids):
+        self.userns.append((uids, gids))
+        return os.open("/", os.O_RDONLY)
+
+    def cfg(self, items, cwd=False, idmap=None):
+        return {"user": self.user, "items": items, "cwd": cwd, "stashOwner": "u", "idmap": idmap}
+
+    def stage(self, cfg, key="k", project=None):
+        return vmroot.stage(cfg, "/run/sandbox-vm/vm", key, "/run/sandbox-vm/vm/main", project)
 
     def test_items(self):
         h = self.p("home", "u")
@@ -458,22 +614,84 @@ class StageFlow(Tmp):
             {"name": "b2", "path": f"{h}/planted", "kind": "any", "under": h},
             {"name": "b3", "path": f"{h}/.gitconfig", "kind": "dir", "under": h},
         ]
-        n = vmroot.stage(self.cfg(items, cwd=True), "/run/sandbox-vm/vm", "k", f"{h}/proj")
+        n = self.stage(self.cfg(items, cwd=True), project=f"{h}/proj")
         self.assertEqual(n, 3)
         stage = self.p("run", "sandbox-vm", "vm", "stage", "k")
-        self.assertEqual(sorted(os.listdir(stage)), ["b0", "cwd", "e0"])
+        self.assertEqual(sorted(os.listdir(stage)), ["b0", "cwd", "e0", "rt"])
         self.assertTrue(os.path.isdir(os.path.join(stage, "e0")))
         self.assertTrue(stat.S_ISREG(os.lstat(os.path.join(stage, "b0")).st_mode))
-        self.assertEqual([m[0] for m in self.moves], [f"{h}/proj", f"{h}/.config/x", f"{h}/.gitconfig"])
+        rt = self.p("run", "sandbox-vm", "vm", "main")
+        self.assertEqual([m[0] for m in self.moves], [f"{h}/proj", f"{h}/.config/x", f"{h}/.gitconfig", rt])
         ro = vmroot.MOUNT_ATTR_RDONLY
         base = vmroot.MOUNT_ATTR_NOSUID | vmroot.MOUNT_ATTR_NODEV
-        self.assertEqual(self.attrs, [base, base, base | ro])
+        self.assertEqual(
+            [a[1] for a in self.attrs], [base, base, base | ro, base | vmroot.MOUNT_ATTR_NOEXEC]
+        )
+        # Not a VM of its own uid: nothing idmapped.
+        self.assertEqual(self.userns, [])
+
+    def test_stash(self):
+        """Stash entries are opened by root, must be the owner's and no link,
+        and must be there."""
+        app = self.p("persist", "sandbox", "app")
+        items = [
+            {"name": "e0", "path": "/persist/sandbox/app/.data", "kind": "dir", "stash": True, "required": True},
+            {"name": "e1", "path": "/persist/sandbox/app/conf", "kind": "file", "stash": True, "required": True},
+        ]
+        # open_trusted is mocked onto the test's root; the entry is opened in it.
+        with mock.patch.object(vmroot, "open_trusted", lambda path, *a, **k: os.open(self.d + path, os.O_PATH | os.O_DIRECTORY)):
+            with mock.patch.object(vmroot.pwd, "getpwnam", lambda n: mock.Mock(pw_uid=os.getuid())):
+                self.assertEqual(self.stage(self.cfg(items)), 2)
+                self.assertEqual([m[0] for m in self.moves[:2]], [f"{app}/.data", f"{app}/conf"])
+                for bad in (
+                    {"name": "e0", "path": "/persist/sandbox/app/linked", "kind": "dir", "stash": True, "required": True},
+                    {"name": "e0", "path": "/persist/sandbox/app/conf", "kind": "dir", "stash": True, "required": True},
+                    {"name": "e0", "path": "/persist/sandbox/app/gone", "kind": "dir", "stash": True, "required": True},
+                ):
+                    with self.assertRaises((vmroot.Refused, OSError), msg=bad["path"]):
+                        self.stage(self.cfg([bad]), key="k2")
+                    os.rmdir(self.p("run", "sandbox-vm", "vm", "stage", "k2"))
+            # Someone else's entry.
+            with mock.patch.object(vmroot.pwd, "getpwnam", lambda n: mock.Mock(pw_uid=os.getuid() + 1)):
+                with self.assertRaises(vmroot.Refused):
+                    self.stage(self.cfg(items[:1]), key="k3")
+
+    def test_idmapped(self):
+        """A VM of its own uid: one user namespace mapping the user's uid and
+        group onto the VM's, every data item idmapped through it (sockets and
+        the document view not), and what can't be idmapped isn't shared at all
+        (or fails the VM, if it must be)."""
+        h = self.p("home", "u")
+        s = socket.socket(socket.AF_UNIX)
+        s.bind(self.p("home", "u", "b.sock"))
+        self.addCleanup(s.close)
+        items = [
+            {"name": "e0", "path": f"{h}/.config/x", "kind": "dir", "under": h, "idmap": True},
+            {"name": "b0", "path": f"{h}/.gitconfig", "kind": "any", "ro": True, "under": h, "idmap": True},
+            {"name": "b1", "path": f"{h}/real", "kind": "any", "under": h, "idmap": True},
+            {"name": "relay-broker", "path": f"{h}/b.sock", "kind": "socket", "owned": True},
+        ]
+        self.fail_idmap = {f"{h}/real"}
+        n = self.stage(self.cfg(items, cwd=True, idmap="sbx-vm-vm"), project=f"{h}/proj")
+        self.assertEqual(n, 4)
+        me, mg = os.getuid(), os.getgid()
+        self.assertEqual(self.userns, [([(me, me + 1)], [(mg, mg + 1)])])
+        idmapped = [a[0] for a in self.attrs if a[1] == vmroot.MOUNT_ATTR_IDMAP]
+        self.assertEqual(idmapped, [f"{h}/proj", f"{h}/.config/x", f"{h}/.gitconfig"])
+        self.assertTrue(all(a[2] > 0 for a in self.attrs if a[1] == vmroot.MOUNT_ATTR_IDMAP))
+        moved = [m[0] for m in self.moves]
+        self.assertNotIn(f"{h}/real", moved)
+        self.assertIn(f"{h}/b.sock", moved)
+        # The project must be shared: one that can't be idmapped fails the VM.
+        self.fail_idmap = {f"{h}/proj"}
+        with self.assertRaises(vmroot.Refused):
+            self.stage(self.cfg([], cwd=True, idmap="sbx-vm-vm"), key="k2", project=f"{h}/proj")
 
     def test_project_must_open(self):
         h = self.p("home", "u")
         for project in (f"{h}/nope", f"{h}/planted", f"{h}/.gitconfig"):
             with self.assertRaises((vmroot.Refused, OSError), msg=project):
-                vmroot.stage(self.cfg([], cwd=True), "/run/sandbox-vm/vm", "k", project)
+                self.stage(self.cfg([], cwd=True), project=project)
             # Nothing was mounted for it.
             self.assertEqual(self.moves, [])
             os.rmdir(self.p("run", "sandbox-vm", "vm", "stage", "k"))
@@ -483,10 +701,10 @@ class StageFlow(Tmp):
         s.bind(self.p("home", "u", "b.sock"))
         self.addCleanup(s.close)
         item = {"name": "relay-broker", "path": self.p("home", "u", "b.sock"), "kind": "socket", "owned": True}
-        self.assertEqual(vmroot.stage(self.cfg([item]), "/run/sandbox-vm/vm", "k1"), 1)
+        self.assertEqual(self.stage(self.cfg([item]), key="k1"), 1)
         self.user["uid"] += 1  # someone else's socket now
         with mock.patch.object(vmroot, "user_creds", lambda u: (os.getuid(), os.getgid(), [])):
-            self.assertEqual(vmroot.stage(self.cfg([item]), "/run/sandbox-vm/vm", "k2"), 0)
+            self.assertEqual(self.stage(self.cfg([item]), key="k2"), 0)
 
 
 class GpuOpenFlow(Tmp):

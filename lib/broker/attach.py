@@ -29,11 +29,16 @@ What it will do, whoever asks (the user is the only one who can):
     Read-only is enforced on the mount (MOUNT_ATTR_RDONLY), but like a VM's
     read-only grant it's a guard, not a boundary: the sandbox runs as the user.
   - vm-path: the same, for a sandbox VM's folder grants: into the VM's grants
-    virtio-fs device (`crosvm device fs`, run as the user), whose jail root is
-    the launch's empty grants view ($rtdir/grants/view). The folder is mounted
-    at its path relative to the user's home inside that view, which the guest
-    agent then binds at the real path (lib/vm/grants.py). So that device never
-    holds the user's home, only what was granted.
+    virtio-fs device (`crosvm device fs`, run as the VM's own uid), whose jail
+    root is the launch's empty grants view ($rtdir/grantsfs/view). The folder
+    is mounted at its path relative to the user's home inside that view, which
+    the guest agent then binds at the real path (lib/vm/grants.py). So that
+    device never holds the user's home, only what was granted. The clone is
+    idmapped (MOUNT_ATTR_IDMAP) onto the VM's uid and group, as the VM's other
+    shares are (lib/vm/root.py `stage`): the user's files show as the VM's,
+    what it creates lands on disk as the user's, and other owners show as
+    nobody. A folder with a mount under it that can't be idmapped (FUSE, NFS)
+    is refused: shared unmapped, the VM would act as the user on it.
   - camera: the host's UVC capture devices (uvcvideo; never loopback or capture
     cards) as device nodes at their own paths, into any configured sandbox. A
     dedicated-uid sandbox also gets an ACL for its uid on those nodes, which its
@@ -90,6 +95,7 @@ MOVE_MOUNT_T_EMPTY_PATH = 0x40
 MOUNT_ATTR_RDONLY = 0x1
 MOUNT_ATTR_NOSUID = 0x2
 MOUNT_ATTR_NODEV = 0x4
+MOUNT_ATTR_IDMAP = 0x00100000
 RESOLVE_NO_XDEV = 0x01
 RESOLVE_NO_MAGICLINKS = 0x02
 RESOLVE_NO_SYMLINKS = 0x04
@@ -117,8 +123,8 @@ def open_tree(fd, recursive):
     return check(libc.syscall(SYS_open_tree, fd, b"", flags), "open_tree")
 
 
-def mount_setattr(fd, attr_set):
-    attr = struct.pack("QQQQ", attr_set, 0, 0, 0)
+def mount_setattr(fd, attr_set, userns_fd=0):
+    attr = struct.pack("QQQQ", attr_set, 0, 0, userns_fd)
     buf = ctypes.create_string_buffer(attr, len(attr))
     check(
         libc.syscall(SYS_mount_setattr, fd, b"", AT_EMPTY_PATH | AT_RECURSIVE, buf, len(attr)),
@@ -133,6 +139,80 @@ def move_mount(tree, dst_fd):
         ),
         "move_mount",
     )
+
+
+# ── Idmaps (as lib/vm/root.py's) ──────────────────────────────────────────────
+
+
+def idmap_lines(pairs):
+    """uid_map/gid_map text for `pairs` of (id on disk, id seen through the
+    mount), one id each: nothing else is mapped (it shows as the overflow id),
+    and no id twice on either side."""
+    if not pairs:
+        raise Refused("an idmap needs an id")
+    ins, outs, lines = set(), set(), []
+    for a, b in pairs:
+        for v in (a, b):
+            if type(v) is not int or not 0 <= v < 0xFFFFFFFF:
+                raise Refused(f"bad id {v!r} in an idmap")
+        if a in ins or b in outs:
+            raise Refused("an id twice in an idmap")
+        ins.add(a)
+        outs.add(b)
+        lines.append(f"{a} {b} 1\n")
+    return "".join(lines)
+
+
+def idmap_userns(uids, gids):
+    """An fd for a new user namespace whose only ids are `uids` and `gids`
+    (idmap_lines), for MOUNT_ATTR_IDMAP. A child unshares it and waits while
+    this process writes its maps (setgroups denied first) and opens it;
+    nothing ever runs in it."""
+    umap, gmap = idmap_lines(uids), idmap_lines(gids)
+    ready_r, ready_w = os.pipe()
+    done_r, done_w = os.pipe()
+    child = os.fork()
+    if child == 0:
+        try:
+            os.close(ready_r)
+            os.close(done_w)
+            os.unshare(os.CLONE_NEWUSER)
+            os.write(ready_w, b"1")
+            os.read(done_r, 1)
+        finally:
+            os._exit(0)
+    os.close(ready_w)
+    os.close(done_r)
+    try:
+        if os.read(ready_r, 1) != b"1":
+            raise Refused("couldn't make the idmap's user namespace")
+        for name, text in (("setgroups", "deny"), ("uid_map", umap), ("gid_map", gmap)):
+            fd = os.open(f"/proc/{child}/{name}", os.O_WRONLY | os.O_CLOEXEC)
+            try:
+                os.write(fd, text.encode())
+            finally:
+                os.close(fd)
+        return os.open(f"/proc/{child}/ns/user", os.O_RDONLY | os.O_CLOEXEC)
+    finally:
+        os.close(ready_r)
+        os.close(done_w)
+        os.waitpid(child, 0)
+
+
+def idmap_to(tree, user, vm_pw, path):
+    """Idmap the detached `tree`: the user's uid and group onto the VM's."""
+    if vm_pw.pw_uid in (0, user["uid"]) or vm_pw.pw_gid in (0, user["gid"]):
+        raise Refused("the VM's uid can't stand in for the user")
+    userns = idmap_userns([(user["uid"], vm_pw.pw_uid)], [(user["gid"], vm_pw.pw_gid)])
+    try:
+        mount_setattr(tree, MOUNT_ATTR_IDMAP, userns)
+    except OSError as e:
+        raise Refused(
+            f"{path} (or a mount under it: FUSE, NFS, ...) can't be idmapped ({e.strerror}),"
+            " and shared as it is the VM would act as you on it"
+        )
+    finally:
+        os.close(userns)
 
 
 def statfs_type(fd):
@@ -517,24 +597,26 @@ def op_path(cfg, sb, name, req):
         os.close(tree)
 
 
-def vm_targets(cfg, vm, rtdir, wait=10.0):
-    """pidfds of the grants fs device of this VM launch: a process of the user,
-    in a user namespace the user owns, whose root IS the launch's grants view."""
-    user = cfg["user"]
+def vm_targets(cfg, vm, rtdir, owner, wait=10.0):
+    """pidfds of the grants fs device of this VM launch: a process of the VM's
+    uid (`owner`), in a user namespace that uid owns, whose root IS the
+    launch's grants view."""
     base = f"/run/sandbox-vm/{vm}/"
     if os.path.realpath(rtdir) + "/" != rtdir.rstrip("/") + "/" or not rtdir.startswith(base):
         raise Refused("bad VM runtime dir")
-    # $rtdir is root's; grants/ and its view are the user's: resolved beneath
-    # the launch dir, no symlink, no other mount.
+    # $rtdir is root's; grantsfs/ and its view are the VM's uid's: resolved
+    # beneath the launch dir, no symlink, no other mount.
     rfd = open_exact(os.path.normpath(rtdir))
     try:
-        vfd = openat2(rfd, "grants/view", os.O_PATH | os.O_DIRECTORY, BENEATH)
+        vfd = openat2(rfd, "grantsfs/view", os.O_PATH | os.O_DIRECTORY, BENEATH)
     except OSError:
         raise Refused("no grants view")
     finally:
         os.close(rfd)
     st = os.fstat(vfd)
     os.close(vfd)
+    if st.st_uid != owner:
+        raise Refused("the grants view isn't the VM's")
     want = (st.st_dev, st.st_ino)
     deadline = time.monotonic() + wait
     while True:
@@ -551,8 +633,8 @@ def vm_targets(cfg, vm, rtdir, wait=10.0):
             except OSError:
                 continue
             try:
-                if proc_uid(pid) != user["uid"] or userns_owner(pid) != user["uid"]:
-                    raise Refused("not the user's")
+                if proc_uid(pid) != owner or userns_owner(pid) != owner:
+                    raise Refused("not the VM's")
                 libc_pidfd_signal(pidfd)
                 out.append(pidfd)
             except (Refused, OSError) as e:
@@ -566,10 +648,12 @@ def vm_targets(cfg, vm, rtdir, wait=10.0):
 def op_vm_path(cfg, req):
     vm = req.get("vm")
     rtdir = req.get("rtdir")
-    if vm not in cfg.get("vms", []) or not isinstance(rtdir, str):
+    vms = cfg.get("vms", {})
+    if not isinstance(vm, str) or vm not in vms or not isinstance(rtdir, str):
         raise Refused("unknown VM")
     user = cfg["user"]
     path = home_path(user, req.get("path"))
+    vm_pw = pwd.getpwnam(vms[vm])
     fd = open_as_user(user, path)
     try:
         tree = open_tree(fd, recursive=True)
@@ -580,13 +664,14 @@ def op_vm_path(cfg, req):
         if not req.get("write"):
             attr |= MOUNT_ATTR_RDONLY
         mount_setattr(tree, attr)
-        pidfds = vm_targets(cfg, vm, rtdir)
+        idmap_to(tree, user, vm_pw, path)
+        pidfds = vm_targets(cfg, vm, rtdir, vm_pw.pw_uid)
         if not pidfds:
             raise Refused(f"{vm}'s grants share isn't running")
         rel = path[len(user["home"]) :]
         for pidfd in pidfds:
             try:
-                attach(pidfd, tree, rel, True, user["uid"])
+                attach(pidfd, tree, rel, True, vm_pw.pw_uid)
             finally:
                 os.close(pidfd)
         return len(pidfds)

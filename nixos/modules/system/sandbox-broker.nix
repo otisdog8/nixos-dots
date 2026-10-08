@@ -116,7 +116,7 @@ let
   hostUser = config.users.users.${user};
   # grant-net: the units (or globs) each sandbox's IPAddressAllow= extends.
   netUnits = lib.filterAttrs (_: u: u != [ ]) (lib.mapAttrs (_: sb: sb.netUnits) cfg.sandboxes);
-  attachOn = cfg.attach != { } || cfg.attachVms != [ ] || netUnits != { };
+  attachOn = cfg.attach != { } || cfg.attachVms != { } || netUnits != { };
   attachConfig = pkgs.writeText "sbx-attach.json" (
     builtins.toJSON {
       user = {
@@ -223,9 +223,13 @@ in
     };
 
     attachVms = lib.mkOption {
-      type = lib.types.listOf lib.types.str;
-      default = [ ];
-      description = "Sandbox VM instances whose folder grants the attach helper mounts (into their grants share's jail).";
+      type = lib.types.attrsOf lib.types.str;
+      default = { };
+      description = ''
+        Sandbox VM instances whose folder grants the attach helper mounts (into
+        their grants share's jail), each with the uid that share runs as (the
+        grant is idmapped onto it).
+      '';
     };
 
     sandboxes = lib.mkOption {
@@ -359,9 +363,10 @@ in
         StandardOutput = "journal";
         StandardError = "journal";
         TimeoutSec = 30;
-        # open_tree/setns/move_mount, setns's chroot check, dropping to the
-        # user (opening the source) and to the sandbox's uid (making the mount
-        # point), reading other uids' /proc entries and runtime dirs, pidfd
+        # open_tree/setns/move_mount/mount_setattr, setns's chroot check,
+        # dropping to the user (opening the source) and to the sandbox's uid
+        # (making the mount point), a VM grant's idmap (its user namespace's
+        # maps), reading other uids' /proc entries and runtime dirs, pidfd
         # signal 0. Nothing it writes as root is another uid's: the device ACL
         # is on root's nodes, mount points are made as the sandbox's uid, so
         # no CAP_DAC_OVERRIDE, CAP_FOWNER or CAP_CHOWN.
@@ -391,8 +396,9 @@ in
           "@mount"
         ];
         SystemCallErrorNumber = "EPERM";
-        # setns into a sandbox's mount namespace only.
-        RestrictNamespaces = "mnt";
+        # setns into a sandbox's mount namespace, and a VM grant's idmap (a
+        # user namespace that never holds a process).
+        RestrictNamespaces = "mnt user";
         RestrictSUIDSGID = true;
         # Device nodes are only opened O_PATH (the camera's, for open_tree),
         # which the device policy doesn't gate.

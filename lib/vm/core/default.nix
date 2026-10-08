@@ -18,4 +18,18 @@ rec {
   fsCommon = "type=fs:posix_acl=false:security_ctx=false";
   # The host's store, read-only by the guest's own mount (tag "nixstore").
   storeShare = "/nix/store:nixstore:${fsCommon}:cache=always:timeout=3600";
+
+  # An app VM's own host uid (and group), which its VMM and guest-facing host
+  # services run as instead of the desktop user (lib/vm/instance.nix
+  # `vmUser`); others (op-broker) name it to let that VM's relay in.
+  vmUserName =
+    name:
+    let
+      n = "sbx-vm-${name}";
+    in
+    # 31: the longest group name NixOS accepts.
+    if lib.stringLength n <= 31 then
+      n
+    else
+      "sbx-vm-${builtins.substring 0 16 (builtins.hashString "sha256" name)}";
 }

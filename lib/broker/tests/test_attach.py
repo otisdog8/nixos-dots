@@ -282,7 +282,7 @@ class AllowIp(unittest.TestCase):
 
 
 class VmPath(unittest.TestCase):
-    cfg = {"user": {"uid": os.getuid(), "home": "/home/u"}, "vms": ["blender"]}
+    cfg = {"user": {"name": "u", "uid": os.getuid(), "gid": os.getgid(), "home": "/home/u"}, "vms": {"blender": "sbx-vm-blender"}}
 
     def test_unknown_vm(self):
         with self.assertRaises(attach.Refused):
@@ -296,7 +296,80 @@ class VmPath(unittest.TestCase):
     def test_rtdir_outside_the_vm(self):
         for rtdir in ("/run/sandbox-vm/other/main", "/run/sandbox-vm/blender/../other/main", "/tmp/x"):
             with self.assertRaises(attach.Refused):
-                attach.vm_targets(self.cfg, "blender", rtdir, wait=0)
+                attach.vm_targets(self.cfg, "blender", rtdir, 1234, wait=0)
+
+    def flow(self, fail_idmap=False):
+        """op_vm_path with the privileged calls mocked: (attrs set, attach
+        calls). The VM's uid is the user's + 1."""
+        from unittest import mock
+
+        attrs, attached = [], []
+        vm_pw = mock.Mock(pw_uid=os.getuid() + 1, pw_gid=os.getgid() + 1)
+
+        def setattr_(fd, attr, userns_fd=0):
+            if attr & attach.MOUNT_ATTR_IDMAP and fail_idmap:
+                raise OSError(22, "Invalid argument")
+            attrs.append((attr, userns_fd))
+
+        maps = []
+
+        def userns(uids, gids):
+            maps.append((uids, gids))
+            return os.open("/", os.O_RDONLY)
+
+        with mock.patch.object(attach, "open_as_user", lambda u, p: os.open("/", os.O_PATH)), mock.patch.object(
+            attach, "open_tree", lambda fd, recursive: os.dup(fd)
+        ), mock.patch.object(attach, "mount_setattr", setattr_), mock.patch.object(
+            attach, "idmap_userns", userns
+        ), mock.patch.object(attach.pwd, "getpwnam", lambda n: vm_pw), mock.patch.object(
+            attach, "vm_targets", lambda cfg, vm, rtdir, owner: [os.open("/", os.O_RDONLY)] if owner == vm_pw.pw_uid else []
+        ), mock.patch.object(
+            attach, "attach", lambda pidfd, tree, rel, is_dir, owner: attached.append((rel, owner))
+        ):
+            n = attach.op_vm_path(
+                self.cfg, {"op": "vm-path", "vm": "blender", "rtdir": "/run/sandbox-vm/blender/main", "path": "/home/u/x", "write": True}
+            )
+        return n, attrs, attached, maps
+
+    def test_idmapped_onto_the_vm(self):
+        n, attrs, attached, maps = self.flow()
+        self.assertEqual(n, 1)
+        me, mg = os.getuid(), os.getgid()
+        self.assertEqual(maps, [([(me, me + 1)], [(mg, mg + 1)])])
+        self.assertEqual([a[0] for a in attrs], [attach.MOUNT_ATTR_NOSUID | attach.MOUNT_ATTR_NODEV, attach.MOUNT_ATTR_IDMAP])
+        self.assertGreater(attrs[1][1], 0)
+        self.assertEqual(attached, [("/x", me + 1)])
+
+    def test_not_idmappable_is_refused(self):
+        with self.assertRaises(attach.Refused):
+            self.flow(fail_idmap=True)
+
+
+class Idmap(unittest.TestCase):
+    def test_lines(self):
+        self.assertEqual(attach.idmap_lines([(1000, 987)]), "1000 987 1\n")
+        for bad in ([], [(1, 2), (1, 3)], [(1, 2), (3, 2)], [(-1, 2)], [("1", 2)], [(False, 2)]):
+            with self.assertRaises(attach.Refused, msg=repr(bad)):
+                attach.idmap_lines(bad)
+
+    def test_userns(self):
+        me, mg = os.getuid(), os.getgid()
+        try:
+            fd = attach.idmap_userns([(me, me)], [(mg, mg)])
+        except (attach.Refused, PermissionError) as e:
+            self.skipTest(f"no unprivileged user namespaces here: {e}")
+        try:
+            self.assertNotEqual(os.readlink(f"/proc/self/fd/{fd}"), os.readlink("/proc/self/ns/user"))
+        finally:
+            os.close(fd)
+
+    def test_never_onto_root_or_the_user(self):
+        from unittest import mock
+
+        user = {"uid": 1000, "gid": 100}
+        for uid, gid in ((0, 5), (5, 0), (1000, 5), (5, 100)):
+            with self.assertRaises(attach.Refused):
+                attach.idmap_to(-1, user, mock.Mock(pw_uid=uid, pw_gid=gid), "/home/u/x")
 
 
 def load_grants():
@@ -306,7 +379,83 @@ def load_grants():
     return grants
 
 
+class GuestMount(unittest.TestCase):
+    """The guest agent (root in the guest) walks the share and the target
+    without following a symlink and mounts onto what it opened; the bind
+    itself (open_tree/move_mount) needs root."""
+
+    def setUp(self):
+        self.grants = load_grants()
+        self.tmp = tempfile.TemporaryDirectory()
+        self.d = os.path.realpath(self.tmp.name)
+        self.home = os.path.join(self.d, "home")
+        self.share = os.path.join(self.d, "share")
+        os.makedirs(os.path.join(self.share, "Documents", "x"))
+        os.makedirs(os.path.join(self.home, "Documents"))
+        os.makedirs(os.path.join(self.d, "etc"))
+        self.owner = (self.home, os.getuid(), os.getgid())
+        self.binds = []
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def bind(self, src, dst, ro):
+        self.binds.append((os.readlink(f"/proc/self/fd/{src}"), os.readlink(f"/proc/self/fd/{dst}"), ro))
+
+    def mount(self, rel, path, ro=False):
+        self.grants.guest_mount(self.share, self.owner, rel, path, ro, bind=self.bind)
+
+    def test_mounts_onto_what_it_walked(self):
+        self.mount("/Documents/x", os.path.join(self.home, "Documents", "x", "y"), ro=True)
+        target = os.path.join(self.home, "Documents", "x", "y")
+        self.assertEqual(self.binds, [(os.path.join(self.share, "Documents", "x"), target, True)])
+        self.assertTrue(os.path.isdir(target))
+        self.assertEqual(os.stat(target).st_uid, os.getuid())
+
+    def test_planted_symlink_in_the_target(self):
+        os.symlink(os.path.join(self.d, "etc"), os.path.join(self.home, "Documents", "x"))
+        for path in (os.path.join(self.home, "Documents", "x"), os.path.join(self.home, "Documents", "x", "y")):
+            with self.assertRaises(ValueError, msg=path):
+                self.mount("/Documents/x", path)
+        self.assertEqual(self.binds, [])
+        self.assertEqual(os.listdir(os.path.join(self.d, "etc")), [])
+
+    def test_planted_symlink_in_the_share(self):
+        os.rename(os.path.join(self.share, "Documents"), os.path.join(self.share, "real"))
+        os.symlink(os.path.join(self.d, "etc"), os.path.join(self.share, "Documents"))
+        with self.assertRaises(ValueError):
+            self.mount("/Documents/x", os.path.join(self.home, "Documents", "x"))
+        self.assertEqual(self.binds, [])
+
+    def test_only_inside_the_home(self):
+        for path in (os.path.join(self.d, "etc"), self.home, self.home + "/../etc", self.home + "/a/", "rel"):
+            with self.assertRaises(ValueError, msg=path):
+                self.mount("/Documents/x", path)
+        for rel in ("Documents/x", "/Documents/../../etc", "/Documents//x"):
+            with self.assertRaises(ValueError, msg=rel):
+                self.mount(rel, os.path.join(self.home, "Documents", "x"))
+        self.assertEqual(self.binds, [])
+
+    def test_missing_source(self):
+        with self.assertRaises(FileNotFoundError):
+            self.mount("/Documents/nope", os.path.join(self.home, "Documents", "nope"))
+        self.assertFalse(os.path.exists(os.path.join(self.home, "Documents", "nope")))
+
+
 class Hub(unittest.TestCase):
+    def test_share_names_the_launch_as_the_host_does(self):
+        grants = load_grants()
+        with tempfile.TemporaryDirectory() as d:
+            log = os.path.join(d, "args")
+            fake = os.path.join(d, "attach")
+            with open(fake, "w") as f:
+                f.write(f"#!/bin/sh\nprintf '%s\\n' \"$@\" > {log}\n")
+            os.chmod(fake, 0o755)
+            hub = grants.Hub("/home/u", "/run/sandbox-vm/nv/run/grants", fake, "nv", "/run/sandbox-vm/nv/0123456789abcdef")
+            hub.share("/home/u/x", "rw")
+            with open(log) as f:
+                self.assertEqual(f.read().split("\n")[2], "/run/sandbox-vm/nv/0123456789abcdef")
+
     def test_share_asks_the_attach_helper(self):
         grants = load_grants()
         with tempfile.TemporaryDirectory() as d:

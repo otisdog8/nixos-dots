@@ -55,6 +55,55 @@
     LimitCORE = 0;
   };
 
+  # A host unit of an app VM that isn't root (lib/vm/instance.nix): the few
+  # that must stay the desktop user's (display, session bus, documents, the
+  # grants hub) and the VM's own uid's (relay, capture adapter, grants share,
+  # cross-domain GPU). No capabilities, the host read-only and no home, no
+  # network, no other process (a pid namespace of its own), no namespaces,
+  # @system-service, no W+X memory. The unit adds the paths it may see
+  # (instance.nix `view`) and opens what it must, each deviation said there:
+  # devices, address families, a jail's namespaces and syscalls
+  # (jailedSyscallFilter), ProcSubset (minijail and bwrap read /proc/sys),
+  # PrivateUsers=self (where no ACL, /proc lookup or D-Bus check needs the
+  # real ids).
+  # As PID 1 of its pid namespace a process never gets a signal it has no
+  # handler for from outside it, SIGTERM included, so these stop with SIGKILL:
+  # none of them needs a graceful stop.
+  userStep = {
+    NoNewPrivileges = true;
+    CapabilityBoundingSet = "";
+    AmbientCapabilities = "";
+    ProtectSystem = "strict";
+    ProtectHome = "tmpfs";
+    PrivateTmp = true;
+    PrivateIPC = true;
+    PrivateDevices = true;
+    PrivateNetwork = true;
+    IPAddressDeny = "any";
+    PrivatePIDs = true;
+    KillSignal = "SIGKILL";
+    ProtectProc = "invisible";
+    ProcSubset = "pid";
+    ProtectKernelTunables = true;
+    ProtectKernelModules = true;
+    ProtectKernelLogs = true;
+    ProtectControlGroups = true;
+    ProtectClock = true;
+    ProtectHostname = true;
+    RestrictNamespaces = true;
+    LockPersonality = true;
+    RestrictRealtime = true;
+    RestrictSUIDSGID = true;
+    MemoryDenyWriteExecute = true;
+    RestrictAddressFamilies = [ "AF_UNIX" ];
+    SystemCallArchitectures = "native";
+    SystemCallFilter = [ "@system-service" ];
+    SystemCallErrorNumber = "EPERM";
+    KeyringMode = "private";
+    UMask = "0077";
+    LimitCORE = 0;
+  };
+
   # The VMM (crosvm run). The unit adds what's per-VM: ExecStart, User/Group,
   # SystemCallFilter (jailedSyscallFilter + extras), the paths it may see,
   # DeviceAllow, MemoryMax.

@@ -6,10 +6,13 @@ attach helper (lib/broker/attach.py, op vm-path) bind the folder into that
 device's jail at its path relative to the home, then asks the guest to bind it
 at the same absolute path.
 
-  sbx-grants hub --home DIR --dir RTDIR --attach CLIENT --vm NAME
+  sbx-grants hub --home DIR --dir RTDIR --attach CLIENT --vm NAME [--launch DIR]
       Host, as the user, one per VM. Holds the guest agent's connection
       (RTDIR/guest.sock, reached through the vsock relay as service "grants")
-      and serves requests on RTDIR/ctl.sock.
+      and serves requests on RTDIR/ctl.sock. --launch: the launch's runtime
+      dir as the attach helper (on the host) knows it, when this unit sees it
+      elsewhere (a per-project VM's units see theirs at a fixed path); RTDIR's
+      parent otherwise.
   sbx-grants request RTDIR PATH [rw|ro]
       Host: ask a VM's hub to grant PATH (a folder inside the user's home,
       canonical: what the user approved, never resolved again on the way, and
@@ -17,9 +20,11 @@ at the same absolute path.
       launchers and the sandbox broker; exits non-zero on failure.
   sbx-grants guest --port CID --mount DIR --home HOME --owner UID:GID
       Guest, as root: connect to the hub through the relay and perform the
-      mounts it asks for (bind DIR/<relative> onto the real path). It connects
-      from a privileged vsock port, which only the guest's root can bind, and
-      the host relay takes "grants" from no other (lib/vm/vsock-relay.py).
+      mounts it asks for (bind DIR/<relative> onto the real path, which must be
+      inside HOME; both walked without following a symlink, the mount made on
+      the folder that walk opened). It connects from a privileged vsock port,
+      which only the guest's root can bind, and the host relay takes "grants"
+      from no other (lib/vm/vsock-relay.py).
 
 "ro" makes the host-side mount read-only (and the guest's bind). Removing a
 grant is not supported: it lasts until the VM stops.
@@ -61,9 +66,10 @@ def read_line(f):
 
 # ── Host: the hub ────────────────────────────────────────────────────────────
 class Hub:
-    def __init__(self, home, rtdir, attach, vm):
+    def __init__(self, home, rtdir, attach, vm, launch=None):
         self.home = os.path.realpath(home)
         self.rtdir = rtdir
+        self.launch = launch or os.path.dirname(rtdir)
         self.attach = attach
         self.vm = vm
         self.guest = None  # (sock, file)
@@ -83,10 +89,10 @@ class Hub:
             log("guest agent connected")
 
     def share(self, path, mode):
-        # RTDIR is <launch runtime dir>/grants; the helper wants the launch's.
+        # The helper wants the launch's runtime dir, as the host names it.
         try:
             r = subprocess.run(
-                [self.attach, "vm", self.vm, os.path.dirname(self.rtdir), path, mode],
+                [self.attach, "vm", self.vm, self.launch, path, mode],
                 capture_output=True,
                 text=True,
                 timeout=SHARE_TIMEOUT,
@@ -173,7 +179,7 @@ def listen(path):
 
 
 def run_hub(args):
-    hub = Hub(args.home, args.dir, args.attach, args.vm)
+    hub = Hub(args.home, args.dir, args.attach, args.vm, args.launch)
     threading.Thread(target=hub.accept_guest, daemon=True).start()
     hub.serve_ctl()
 
@@ -201,28 +207,129 @@ def run_request(args):
 
 
 # ── Guest: the agent ─────────────────────────────────────────────────────────
-def mkdirs(path, owner):
-    """Create path and its missing ancestors; the ones under the user's home
-    belong to the user (so the app can still create their siblings)."""
-    if os.path.isdir(path):
-        return
-    mkdirs(os.path.dirname(path), owner)
-    os.mkdir(path, 0o755)
-    home, uid, gid = owner
-    if path.startswith(home + "/"):
-        os.chown(path, uid, gid)
+# Root in the guest, working in folders the guest user controls (the home, and
+# the share, whose folders are the VM uid's on the host: the user's in here).
+# Both paths are walked from a held fd one component at a time, never through
+# a symlink, and the mount goes onto the fd that walk ended on (open_tree +
+# move_mount), so nothing the user swaps in on the way (~/Documents/x -> /etc)
+# redirects it. As lib/broker/attach.py's make_mountpoint.
+
+SYS_open_tree = 428
+SYS_move_mount = 429
+SYS_mount_setattr = 442
+OPEN_TREE_CLONE = 1
+AT_EMPTY_PATH = 0x1000
+AT_RECURSIVE = 0x8000
+MOVE_MOUNT_F_EMPTY_PATH = 0x4
+MOVE_MOUNT_T_EMPTY_PATH = 0x40
+MOUNT_ATTR_RDONLY = 0x1
+_libc = None
 
 
-def guest_mount(mountdir, owner, rel, path, ro):
-    if not os.path.isabs(path) or ".." in path.split("/") or not rel.startswith("/"):
+def libc():
+    global _libc
+    if _libc is None:
+        import ctypes
+
+        _libc = ctypes.CDLL(None, use_errno=True)
+        _libc.syscall.restype = ctypes.c_long
+    return _libc
+
+
+def check(ret, what):
+    if ret < 0:
+        import ctypes
+
+        e = ctypes.get_errno()
+        raise OSError(e, f"{what}: {os.strerror(e)}")
+    return ret
+
+
+def canonical(path):
+    return (
+        isinstance(path, str)
+        and path.startswith("/")
+        and not path.startswith("//")
+        and "\0" not in path
+        and os.path.normpath(path) == path
+    )
+
+
+def walk(path, create=None):
+    """O_PATH fd for the folder `path` (absolute, canonical), walked from / on
+    held fds without following a symlink in any component. `create` (home,
+    uid, gid): make missing folders (mkdirat), the user's under the home."""
+    if not canonical(path):
+        raise ValueError(f"{path!r}: not a canonical path")
+    flags = os.O_PATH | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
+    fd = os.open("/", flags)
+    here = ""
+    try:
+        for part in [p for p in path.split("/") if p]:
+            here += "/" + part
+            try:
+                nfd = os.open(part, flags, dir_fd=fd)
+            except FileNotFoundError:
+                if create is None:
+                    raise
+                home, uid, gid = create
+                os.mkdir(part, 0o755, dir_fd=fd)
+                if here.startswith(home + "/"):
+                    os.chown(part, uid, gid, dir_fd=fd, follow_symlinks=False)
+                nfd = os.open(part, flags, dir_fd=fd)
+            except (NotADirectoryError, OSError) as e:
+                if isinstance(e, NotADirectoryError) or e.errno == errno.ELOOP:
+                    raise ValueError(f"{path}: {here} is a symlink or not a folder")
+                raise
+            os.close(fd)
+            fd = nfd
+        return fd
+    except BaseException:
+        os.close(fd)
+        raise
+
+
+def bind_fd(src_fd, dst_fd, ro):
+    """Bind the folder `src_fd` onto `dst_fd` (both held), read-only if `ro`."""
+    import struct
+    import ctypes
+
+    c = libc()
+    tree = check(
+        c.syscall(SYS_open_tree, src_fd, b"", OPEN_TREE_CLONE | os.O_CLOEXEC | AT_EMPTY_PATH | AT_RECURSIVE),
+        "open_tree",
+    )
+    try:
+        if ro:
+            attr = struct.pack("QQQQ", MOUNT_ATTR_RDONLY, 0, 0, 0)
+            buf = ctypes.create_string_buffer(attr, len(attr))
+            check(c.syscall(SYS_mount_setattr, tree, b"", AT_EMPTY_PATH | AT_RECURSIVE, buf, len(attr)), "mount_setattr")
+        check(
+            c.syscall(SYS_move_mount, tree, b"", dst_fd, b"", MOVE_MOUNT_F_EMPTY_PATH | MOVE_MOUNT_T_EMPTY_PATH),
+            "move_mount",
+        )
+    finally:
+        os.close(tree)
+
+
+def guest_mount(mountdir, owner, rel, path, ro, bind=bind_fd):
+    home = owner[0]
+    if not canonical(path) or not path.startswith(home + "/"):
+        raise ValueError(f"{path!r}: not a folder inside {home}")
+    if not rel.startswith("/") or not canonical(mountdir + rel):
         raise ValueError("bad path")
-    src = mountdir + rel
-    if not os.path.isdir(src):
-        raise FileNotFoundError(src)
-    mkdirs(path, owner)
-    subprocess.run(["mount", "--bind", "--", src, path], check=True)
-    if ro:
-        subprocess.run(["mount", "-o", "remount,bind,ro", "--", path], check=True)
+    try:
+        src = walk(mountdir + rel)
+    except FileNotFoundError:
+        raise FileNotFoundError(mountdir + rel)
+    try:
+        dst = walk(path, create=owner)
+        try:
+            bind(src, dst, ro)
+        finally:
+            os.close(dst)
+    finally:
+        os.close(src)
 
 
 def bind_privileged(s):
@@ -268,6 +375,7 @@ def main():
     h.add_argument("--dir", required=True)
     h.add_argument("--attach", required=True, help="sbx-attach-client")
     h.add_argument("--vm", required=True, help="the VM instance's name")
+    h.add_argument("--launch", help="the launch's runtime dir on the host (default: --dir's parent)")
     r = sub.add_parser("request")
     r.add_argument("dir")
     r.add_argument("path")
