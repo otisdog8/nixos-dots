@@ -83,6 +83,11 @@ let
       substituteInPlace modules/launch.nix --replace-fail \
         '++ config.dbus.args ++ [ "--filter" ];' \
         '++ config.dbus.args ++ (optional config.dbus.filter "--filter");'
+      # The inner proxy is our patched build (overlays: xdg-dbus-proxy-sbx), which
+      # knows --own-numbered (features/system-tray.nix).
+      substituteInPlace modules/launch.nix --replace-fail \
+        "\''${pkgs.xdg-dbus-proxy}/bin/xdg-dbus-proxy" \
+        "\''${pkgs.xdg-dbus-proxy-sbx}/bin/xdg-dbus-proxy"
       # bubblewrap.uid/gid: the uid/gid the app sees inside its user namespace
       # (bwrap --uid/--gid, which need a definite --unshare-user).
       substituteInPlace modules/bubblewrap.nix --replace-fail \

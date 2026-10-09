@@ -1348,7 +1348,7 @@ let
       --bind "$rt/bus" "$rt/bus" \
       --ro-bind ${busFlatpakInfo} /.flatpak-info \
       --die-with-parent \
-      -- ${pkgs.xdg-dbus-proxy}/bin/xdg-dbus-proxy "unix:path=${hostRuntimeDir}/bus" "$rt/bus/bus.sock" \
+      -- ${pkgs.xdg-dbus-proxy-sbx}/bin/xdg-dbus-proxy "unix:path=${hostRuntimeDir}/bus" "$rt/bus/bus.sock" \
         ${lib.concatMapStringsSep " " lib.escapeShellArg busArgs}
   '';
   # The user: the portal looks up the flatpak instance named in .flatpak-info

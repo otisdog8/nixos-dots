@@ -1,0 +1,316 @@
+Add --own-numbered=NAME: the client may request and release the bus names
+NAME-<digits>[-<digits>...], and nothing else.
+
+A StatusNotifierItem (tray icon) is registered under a well-known name such
+as org.freedesktop.StatusNotifierItem-<pid>-<id> (Chromium/Electron) or
+org.kde.StatusNotifierItem-<pid>-<id> (Qt, libappindicator). --own=NAME.*
+only covers dot-separated sub-names (NAME.x), so no existing rule can name
+these, short of --own=org.freedesktop.* (far too wide).
+
+Unlike --own, this is not a policy on the names: it only lets RequestName and
+ReleaseName through. It gives no SEE or TALK, so the client can neither see
+nor call another connection that owns a matching name, and NAME itself,
+NAME.x and NAME-<anything but digit groups> stay refused. See the test.
+
+diff -ruN a/dbus-proxy.c b/dbus-proxy.c
+--- a/dbus-proxy.c	2026-10-09 03:57:31.863912754 +0000
++++ b/dbus-proxy.c	2026-10-09 03:58:13.708414330 +0000
+@@ -64,6 +64,7 @@
+            "    --see=NAME                   Set 'see' policy for NAME\n"
+            "    --talk=NAME                  Set 'talk' policy for NAME\n"
+            "    --own=NAME                   Set 'own' policy for NAME\n"
++           "    --own-numbered=NAME          Allow owning NAME-<digits>[-<digits>...] only\n"
+            "    --call=NAME=RULE             Set RULE for calls on NAME\n"
+            "    --broadcast=NAME=RULE        Set RULE for broadcasts from NAME\n"
+           );
+@@ -289,6 +290,20 @@
+ 
+           *args_i += 1;
+         }
++      else if (g_str_has_prefix (arg, "--own-numbered="))
++        {
++          const char *name = strchr (arg, '=') + 1;
++
++          if (name[0] == ':' || !g_dbus_is_name (name))
++            {
++              g_printerr ("'%s' is not a valid dbus name\n", name);
++              return FALSE;
++            }
++
++          flatpak_proxy_add_own_numbered (proxy, name);
++
++          *args_i += 1;
++        }
+       else if (g_str_has_prefix (arg, "--call=") ||
+                g_str_has_prefix (arg, "--broadcast="))
+         {
+diff -ruN a/flatpak-proxy.c b/flatpak-proxy.c
+--- a/flatpak-proxy.c	2026-10-09 03:57:31.863923945 +0000
++++ b/flatpak-proxy.c	2026-10-09 03:58:13.708297466 +0000
+@@ -344,6 +344,7 @@
+   gboolean       sloppy_names;
+ 
+   GHashTable    *filters;
++  GList         *own_numbered;
+ };
+ 
+ typedef struct
+@@ -682,6 +683,49 @@
+   flatpak_proxy_add_filter (proxy, filter);
+ }
+ 
++/* --own-numbered=NAME: the client may request and release the names
++ * NAME-<digits>[-<digits>...] (e.g. a StatusNotifierItem's NAME-<pid>-<id>),
++ * and nothing else. Unlike --own this is not a policy on those names: it
++ * gives no SEE or TALK, so the client can neither see nor call another
++ * connection that owns one. */
++void
++flatpak_proxy_add_own_numbered (FlatpakProxy *proxy,
++                                const char   *name)
++{
++  proxy->own_numbered = g_list_append (proxy->own_numbered, g_strdup (name));
++}
++
++static gboolean
++flatpak_proxy_name_is_own_numbered (FlatpakProxy *proxy,
++                                    const char   *name)
++{
++  GList *l;
++
++  for (l = proxy->own_numbered; l != NULL; l = l->next)
++    {
++      const char *base = l->data;
++      const char *p;
++
++      if (!g_str_has_prefix (name, base))
++        continue;
++
++      /* One or more "-<digits>" groups, up to the end of the name. */
++      p = name + strlen (base);
++      if (*p != '-')
++        continue;
++      while (*p == '-' && g_ascii_isdigit (p[1]))
++        {
++          p++;
++          while (g_ascii_isdigit (*p))
++            p++;
++        }
++      if (*p == 0)
++        return TRUE;
++    }
++
++  return FALSE;
++}
++
+ void
+ flatpak_proxy_add_call_rule (FlatpakProxy *proxy,
+                              const char   *name,
+@@ -715,6 +759,7 @@
+   g_assert (proxy->clients == NULL);
+ 
+   g_hash_table_destroy (proxy->filters);
++  g_list_free_full (proxy->own_numbered, g_free);
+ 
+   g_free (proxy->socket_path);
+   g_free (proxy->dbus_address);
+@@ -2189,6 +2234,21 @@
+   return FALSE;
+ }
+ 
++/* A RequestName or ReleaseName of a name an --own-numbered rule covers. */
++static gboolean
++is_own_numbered_request (FlatpakProxyClient *client, Header *header, Buffer *buffer)
++{
++  g_autofree char *name = NULL;
++
++  if (g_strcmp0 (header->member, "RequestName") != 0 &&
++      g_strcmp0 (header->member, "ReleaseName") != 0)
++    return FALSE;
++
++  name = get_arg0_string (buffer);
++  return name != NULL &&
++         flatpak_proxy_name_is_own_numbered (client->proxy, name);
++}
++
+ static Buffer *
+ filter_names_list (FlatpakProxyClient *client, Buffer *buffer)
+ {
+@@ -2563,6 +2623,10 @@
+             if (validate_arg0_name (client, buffer, policy_from_handler (handler), &name_policy))
+               goto handle_pass;
+ 
++            if (handler == HANDLE_VALIDATE_OWN &&
++                is_own_numbered_request (client, header, buffer))
++              goto handle_pass;
++
+             if (name_policy < (int) FLATPAK_POLICY_SEE)
+               goto handle_hide;
+             else
+diff -ruN a/flatpak-proxy.h b/flatpak-proxy.h
+--- a/flatpak-proxy.h	2026-10-09 03:57:31.863950165 +0000
++++ b/flatpak-proxy.h	2026-10-09 03:58:13.707232539 +0000
+@@ -53,6 +53,8 @@
+                                        const char   *name,
+                                        gboolean      name_is_subtree,
+                                        FlatpakPolicy policy);
++void         flatpak_proxy_add_own_numbered (FlatpakProxy *proxy,
++                                             const char   *name);
+ void         flatpak_proxy_add_call_rule (FlatpakProxy *proxy,
+                                           const char   *name,
+                                           gboolean      name_is_subtree,
+diff -ruN a/tests/test-proxy.c b/tests/test-proxy.c
+--- a/tests/test-proxy.c	2026-10-09 03:57:31.864019788 +0000
++++ b/tests/test-proxy.c	2026-10-09 03:58:13.708750262 +0000
+@@ -48,6 +48,7 @@
+ #define CAN_CALL_SOME_NAME "com.example.CanCallSome"
+ #define CAN_RECEIVE_ANYTHING_NAME "com.example.CanReceiveAny"
+ #define CAN_RECEIVE_SOME_NAME "com.example.CanReceiveSome"
++#define OWN_NUMBERED_NAME "com.example.Numbered"
+ 
+ #define EXAMPLE_IFACE "net.example.AnyInterface"
+ #define EXAMPLE_METHOD "Echo"
+@@ -396,6 +397,7 @@
+                                           "--see=" CAN_SEE_NAME,
+                                           "--talk=" CAN_TALK_NAME,
+                                           "--own=" CAN_OWN_NAME,
++                                          "--own-numbered=" OWN_NUMBERED_NAME,
+                                           "--call=" CAN_CALL_ANYTHING_NAME "=*",
+                                           "--call=" CAN_CALL_SOME_NAME "=" CAN_CALL_SOME_IFACE "." CAN_CALL_SOME_METHOD "@" CAN_CALL_SOME_PATH,
+                                           "--broadcast=" CAN_RECEIVE_ANYTHING_NAME "=*",
+@@ -598,6 +600,128 @@
+     }
+ }
+ 
++static GVariant *
++request_name (GDBusConnection *conn,
++              const char      *name,
++              GError         **error)
++{
++  return g_dbus_connection_call_sync (conn,
++                                      DBUS_SERVICE_DBUS,
++                                      DBUS_PATH_DBUS,
++                                      DBUS_INTERFACE_DBUS,
++                                      "RequestName",
++                                      g_variant_new ("(su)", name,
++                                                     G_BUS_NAME_OWNER_FLAGS_DO_NOT_QUEUE),
++                                      G_VARIANT_TYPE ("(u)"),
++                                      G_DBUS_CALL_FLAGS_NONE,
++                                      -1,
++                                      NULL,    /* cancellable */
++                                      error);
++}
++
++/* --own-numbered=NAME: NAME-<digits>[-<digits>...] may be owned, nothing else
++ * may, and it gives no access to another owner of such a name. */
++static void
++test_own_numbered (Fixture *f,
++                   gconstpointer context G_GNUC_UNUSED)
++{
++  static const char * const allowed[] =
++  {
++    OWN_NUMBERED_NAME "-629-1",
++    OWN_NUMBERED_NAME "-7",
++  };
++  static const char * const refused[] =
++  {
++    OWN_NUMBERED_NAME,
++    OWN_NUMBERED_NAME "-",
++    OWN_NUMBERED_NAME "-1-",
++    OWN_NUMBERED_NAME "--1",
++    OWN_NUMBERED_NAME "-1x",
++    OWN_NUMBERED_NAME "-x1",
++    OWN_NUMBERED_NAME "-1.Sub",
++    OWN_NUMBERED_NAME ".Sub",
++    OWN_NUMBERED_NAME ".Sub-1",
++    OWN_NUMBERED_NAME "X-1",
++    "com.example.Other-1",
++  };
++  const char *theirs = OWN_NUMBERED_NAME "-99-1";
++  g_autoptr(GError) error = NULL;
++  g_autoptr(GVariant) tuple = NULL;
++  guint32 result = 0;
++  gboolean has_owner = TRUE;
++
++  alarm (30);
++  fixture_start_proxy (f);
++
++  for (size_t i = 0; i < G_N_ELEMENTS (allowed); i++)
++    {
++      g_test_message ("should be allowed to own %s", allowed[i]);
++      tuple = request_name (f->proxied.conn, allowed[i], &error);
++      g_assert_no_error (error);
++      g_assert_nonnull (tuple);
++      g_variant_get (tuple, "(u)", &result);
++      g_assert_cmpuint (result, ==, DBUS_REQUEST_NAME_REPLY_PRIMARY_OWNER);
++      g_clear_pointer (&tuple, g_variant_unref);
++    }
++
++  for (size_t i = 0; i < G_N_ELEMENTS (refused); i++)
++    {
++      g_test_message ("should not be allowed to own %s", refused[i]);
++      tuple = request_name (f->proxied.conn, refused[i], &error);
++      g_assert_null (tuple);
++      g_assert_error (error, G_DBUS_ERROR, G_DBUS_ERROR_SERVICE_UNKNOWN);
++      g_clear_error (&error);
++    }
++
++  /* Another connection owns a covered name: the sandboxed one may ask for
++   * it (and is told it is taken), but can neither see nor call its owner. */
++  tuple = request_name (f->cannot_access_conn.conn, theirs, &error);
++  g_assert_no_error (error);
++  g_assert_nonnull (tuple);
++  g_clear_pointer (&tuple, g_variant_unref);
++
++  tuple = request_name (f->proxied.conn, theirs, &error);
++  g_assert_no_error (error);
++  g_assert_nonnull (tuple);
++  g_variant_get (tuple, "(u)", &result);
++  g_assert_cmpuint (result, ==, DBUS_REQUEST_NAME_REPLY_EXISTS);
++  g_clear_pointer (&tuple, g_variant_unref);
++
++  tuple = g_dbus_connection_call_sync (f->proxied.conn, DBUS_SERVICE_DBUS,
++                                       DBUS_PATH_DBUS, DBUS_INTERFACE_DBUS,
++                                       "NameHasOwner",
++                                       g_variant_new ("(s)", theirs),
++                                       G_VARIANT_TYPE ("(b)"),
++                                       G_DBUS_CALL_FLAGS_NONE, -1, NULL,
++                                       &error);
++  g_assert_no_error (error);
++  g_assert_nonnull (tuple);
++  g_variant_get (tuple, "(b)", &has_owner);
++  g_assert_false (has_owner);
++  g_clear_pointer (&tuple, g_variant_unref);
++
++  tuple = g_dbus_connection_call_sync (f->proxied.conn, theirs,
++                                       "/", DBUS_INTERFACE_PEER,
++                                       "Ping", NULL,
++                                       G_VARIANT_TYPE_UNIT,
++                                       G_DBUS_CALL_FLAGS_NONE, -1, NULL,
++                                       &error);
++  g_assert_null (tuple);
++  g_assert_error (error, G_DBUS_ERROR, G_DBUS_ERROR_SERVICE_UNKNOWN);
++  g_clear_error (&error);
++
++  /* The direct connection can ping it: the name is really there. */
++  tuple = g_dbus_connection_call_sync (f->cannot_access_conn.conn,
++                                       OWN_NUMBERED_NAME "-629-1",
++                                       "/", DBUS_INTERFACE_PEER,
++                                       "Ping", NULL,
++                                       G_VARIANT_TYPE_UNIT,
++                                       G_DBUS_CALL_FLAGS_NONE, -1, NULL,
++                                       &error);
++  g_assert_no_error (error);
++  g_assert_nonnull (tuple);
++}
++
+ typedef struct
+ {
+   const char *name;
+@@ -894,6 +1018,7 @@
+   g_test_add ("/basics", Fixture, NULL, setup, test_basics, teardown);
+   g_test_add ("/call", Fixture, NULL, setup, test_call, teardown);
+   g_test_add ("/own", Fixture, NULL, setup, test_own, teardown);
++  g_test_add ("/own-numbered", Fixture, NULL, setup, test_own_numbered, teardown);
+   g_test_add ("/receive", Fixture, NULL, setup, test_receive, teardown);
+ 
+   return g_test_run ();
