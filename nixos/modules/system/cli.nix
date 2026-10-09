@@ -72,7 +72,6 @@ in
         fluxcd
         helm
         hubble
-        authelia
         cloudflared
 
         # Filesystem tools
