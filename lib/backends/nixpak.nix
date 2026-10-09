@@ -34,6 +34,9 @@ let
   binName = appCfg.packageName;
   brokerOn = config.modules.sandbox.broker.enable;
   audioMode = import ../audio-mode.nix;
+  # TODO: rewrite the Python helpers this launcher runs in Rust
+  # (wayland-security-context.py, ../broker/request.py, ../broker/attach.py):
+  # no interpreter start-up on every launch, and one static binary each.
   wlSecure = import ./wayland-security-context.nix pkgs;
   username = appCfg.username;
   # Folder grants and the camera while it runs (lib/broker/attach.py).
@@ -41,6 +44,8 @@ let
   camera = appCfg.capabilities.camera;
   # Ask for the camera as the app starts (in the background, so it starts
   # meanwhile); the broker prompts, the attach helper waits for the sandbox.
+  # TODO: prompt on demand, when the app first opens the camera, instead of
+  # at every launch.
   cameraRequest = lib.optionalString (camera && brokerOn && cfg.sandbox.vm.cameraOnLaunch) ''
     SBX_BROKER="''${XDG_RUNTIME_DIR:-/run/user/$(${pkgs.coreutils}/bin/id -u)}/sbx-broker/${appName}.sock" \
       ${sbxRequest}/bin/sbx-request camera --reason "${appName} was started" >/dev/null 2>&1 &

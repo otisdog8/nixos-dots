@@ -13,6 +13,10 @@
 # Stash binds are HARD (--bind via bind.rwHard): the source is guaranteed by
 # tmpfiles / the service, so a missing source must fail the sandbox loudly, not
 # silently skip and run ephemeral.
+#
+# TODO: replace nixpak with our own launcher, written in Rust or O(x)Caml: it
+# would build the bwrap command line from app.storage and the capabilities
+# directly, without the source patches below.
 {
   appCfg,
   cfg,

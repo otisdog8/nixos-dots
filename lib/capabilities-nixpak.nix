@@ -123,6 +123,10 @@ lib.mkMerge [
   # Nodes are bound individually (bind-try skips absent ones), so only keys
   # plugged in when the app starts are visible; a later key needs a restart.
   # Dedicated uids can open them via the `fido` group (modules/system/sandbox.nix).
+  # TODO: better handling of FIDO keys. Known gaps: a key plugged in after
+  # the app starts isn't seen, and a fixed range of hidraw nodes is bound
+  # rather than the keys themselves. VMs get keys through the broker (hotplug,
+  # prompted); containers could too.
   (lib.mkIf caps.fido {
     bubblewrap.bind.dev = map (n: "/dev/hidraw${toString n}") (lib.range 0 31);
     # libudev needs these to enumerate and identify FIDO devices.
