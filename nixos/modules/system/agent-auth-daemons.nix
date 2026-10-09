@@ -26,7 +26,7 @@
   ...
 }:
 let
-  brokerPublicKey = null; # "ed25519:…"
+  brokerPublicKey = "ed25519:CAGm4HjX5-lT9w2JNi7U1yomf5i7u8Sge5G7o0eNWpY"; # "ed25519:…"
   brokerUrl = "https://agent-auth.recusant.rooty.dev";
   modules = inputs.agent-auth.nixosModules or { };
   pinned = brokerPublicKey != null;
