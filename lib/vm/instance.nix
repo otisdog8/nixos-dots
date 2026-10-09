@@ -15,8 +15,8 @@
 #     root step mounts it into a root-only stage first (lib/vm/root.py
 #     `stage`), stashes (root's folders all the way down) opened by root,
 #     everything else a path the user chooses (home entries, binds, projects,
-#     the project folder) opened AS THE USER without following a symlink. For
-#     a VM of its own uid the stage idmaps the user's data onto that uid
+#     the project folder) opened AS THE USER without following a symlink.
+#     The stage idmaps the user's data onto the VM's uid
 #     (MOUNT_ATTR_IDMAP): on disk it stays the user's, files of other owners
 #     show as nobody, and what doesn't support idmapped mounts (FUSE, NFS)
 #     isn't shared. The guest user appears as the VMM's uid on the host
@@ -175,7 +175,8 @@ let
   # restricted VM keeps its app-<name> uid: that is already this VM's alone,
   # holds nothing of the user's, and owns the stash on disk, where an idmap
   # onto another uid would only add a mapping (and its container, on the same
-  # stash and shared downloads, runs as app-<name> too).
+  # stash and shared downloads, runs as app-<name> too). What it gets of the
+  # user's (binds, shared downloads) is idmapped onto that uid all the same.
   vmUserName = core.vmUserName name;
   vmUser = if restricted then principal else vmUserName;
   vmGroup = if restricted then principalGroup else vmUserName;
@@ -473,9 +474,9 @@ let
   # the project folder of a per-project VM comes from its instance, the
   # launch dir from the prep): stash entries opened by root, everything else
   # as the user. `under`: the folder it must be inside; `owned`: must be the
-  # user's; `idmap`: the user's data, which a VM of its own uid sees as that
-  # uid's (not the document portal's FUSE view, which can't be idmapped, nor
-  # sockets, which go by ACL).
+  # user's; `idmap`: the user's data, which the VM sees as its own uid's (not
+  # the document portal's FUSE view, which can't be idmapped, nor sockets,
+  # which go by ACL, nor a restricted VM's stash, which is its uid's on disk).
   stageItems =
     map (
       e:
@@ -487,7 +488,8 @@ let
           ro = false;
           stash = true;
           required = true;
-          idmap = true;
+          # A restricted VM's uid owns its stash already.
+          idmap = idmapped;
         }
       else
         {
@@ -546,7 +548,12 @@ let
       cwd = perCwd;
       # Whose the stash entries must be.
       stashOwner = principal;
-      idmap = if idmapped then vmUser else null;
+      # The user's data shows as the VM's uid in every VM: a restricted one's
+      # too (home entries, binds, shared downloads; not its stash, which is
+      # that uid's on disk). Unmapped, the guest sees the user's files as
+      # nobody's and, checking permissions itself (virtio-fs), refuses to
+      # write to them whatever ACLs the host has.
+      idmap = vmUser;
     }
   );
 
