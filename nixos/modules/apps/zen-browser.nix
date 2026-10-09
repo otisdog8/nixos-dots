@@ -43,6 +43,14 @@
       # blocks carving out just the disposable bits, and the profile is wanted in the
       # backup, so it stays whole on persist.
       defaultBackend = "systemd";
+      # The tailnet (Tailscale's CGNAT range and its ULA prefix, MagicDNS
+      # included): reachable in the restricted network modes too (its VM's
+      # default, "internet", blocks both). Other hosts' services on the tailnet,
+      # and this host's own on its tailnet address.
+      capabilities.networkPolicy.allow = [
+        "100.64.0.0/10"
+        "fd7a:115c:a1e0::/48"
+      ];
       storage = [
         {
           path = ".zen";
