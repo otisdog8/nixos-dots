@@ -333,7 +333,7 @@
           dedicated = effectiveBackend == "systemd" && cfg.sandbox.dedicatedUser;
           storage = import ./storage.nix { inherit lib; } {
             inherit appName appCfg;
-            username = builtins.head appCfg.defaultUsernames;
+            username = appCfg.username;
             # nixpak/none → jrt-owned (traversable). systemd same-uid → root lock;
             # systemd + dedicatedUser → per-uid lock.
             stashOwner =
@@ -367,7 +367,7 @@
           # it is built unless the app runs in a VM or variants are on). Its VMM
           # runs as whoever owns the stash, so both implementations share one copy
           # of the app's data.
-          username = builtins.head appCfg.defaultUsernames;
+          username = appCfg.username;
           vmResult = import ./backends/vm.nix {
             inherit
               appName

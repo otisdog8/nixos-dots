@@ -115,11 +115,11 @@
       description = "Layer-2 sandbox backend for this app.";
     };
 
-    # The human user whose session/home the app belongs to (the head is used).
-    defaultUsernames = lib.mkOption {
-      type = lib.types.listOf lib.types.str;
-      default = [ "jrt" ];
-      description = "The app's session user; only the first entry is used.";
+    # The human user whose session/home the app belongs to.
+    username = lib.mkOption {
+      type = lib.types.str;
+      default = "jrt";
+      description = "The app's session user.";
     };
 
     # System-level persistence (for system services, /var/lib, /etc, etc.)
@@ -223,6 +223,15 @@
       # (on the app's unit) and the VM backend (on the VM's passt unit) with
       # systemd's cgroup IP filter; see lib/netpolicy.nix. Per-host override:
       # modules.apps.<name>.sandbox.network.
+      #
+      # TODO: name allowlisting on the sandbox's own traffic. Today allowNames
+      # opens the addresses systemd-resolved returns for an allowed name, to
+      # any lookup on the host (sbx-dnsallow). Still to set up:
+      # - DNS allowlisting: refuse the sandbox's lookups of names not allowed
+      # - DNS reply sniffing: allow IPs from the replies the sandbox itself
+      #   got, instead of from host-wide lookups
+      # - SNI sniffing: check the TLS server name of each connection against
+      #   allowNames, so an allowed IP shared with other names isn't enough
       networkPolicy = {
         mode = lib.mkOption {
           type = lib.types.enum [

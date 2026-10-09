@@ -35,7 +35,7 @@ let
   brokerOn = config.modules.sandbox.broker.enable;
   audioMode = import ../audio-mode.nix;
   wlSecure = import ./wayland-security-context.nix pkgs;
-  username = builtins.head appCfg.defaultUsernames;
+  username = appCfg.username;
   # Folder grants and the camera while it runs (lib/broker/attach.py).
   attachProg = (import ../broker/attach.nix pkgs).forSandbox appName;
   camera = appCfg.capabilities.camera;

@@ -46,8 +46,8 @@
       package = pkgs.APPNAME; # Package to install
       packageName = "APPNAME"; # Binary name in package
 
-      # Optional: the session user (only the first entry is used)
-      # defaultUsernames = [ "alice" ];
+      # Optional: the session user
+      # username = "alice";
 
       # ─────────────────────────────────────────────────────────────────────
       # Persistence

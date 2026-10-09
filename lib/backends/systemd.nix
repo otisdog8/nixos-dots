@@ -39,7 +39,7 @@
   storage,
 }:
 let
-  username = builtins.head appCfg.defaultUsernames;
+  username = appCfg.username;
   uid = toString config.users.users.${username}.uid;
   gid = toString config.users.groups.${config.users.users.${username}.group}.gid;
   binName = appCfg.packageName;

@@ -50,7 +50,7 @@ let
   variants = import ../variants.nix { inherit lib pkgs; };
   mkInstance = import ../vm/instance.nix { inherit config lib pkgs; };
 
-  username = builtins.head appCfg.defaultUsernames;
+  username = appCfg.username;
   bin = appCfg.packageName;
   caps = appCfg.capabilities;
 
