@@ -112,7 +112,7 @@ let
     # container): the subfolder of the user's ~/Downloads that is its ~/Downloads.
     downloads = if cfg.sandbox.sharedDownloads && principal != username then appName else null;
     entries = storage.entries;
-    x11Forward = cfg.sandbox.x11Forward;
+    x11Forward = cfg.sandbox.x11Forward || cfg.sandbox.vm.x11;
     # May ask the ScreenCast portal (features/screen-capture.nix): its VM gets a
     # capture helper user and the backend's inject socket (lib/vm/instance.nix).
     screenCast = lib.elem "ScreenCast" (appCfg.portalInterfaces or [ ]);

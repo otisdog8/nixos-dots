@@ -152,6 +152,15 @@
                 and transparent huge pages and ntsync in the guest. Group
                 members use their group's setting.'';
             };
+            x11 = lib.mkOption {
+              type = lib.types.bool;
+              default = false;
+              description = ''
+                Give ${appName}'s VM an X server of its own (xwayland-satellite
+                in the guest, DISPLAY=:0), for an app that needs X11 beside
+                Wayland. Nothing of the host's X server is shared, unlike
+                sandbox.x11Forward, and the container is unaffected.'';
+            };
             hostKeyring = lib.mkOption {
               type = lib.types.bool;
               default = false;
