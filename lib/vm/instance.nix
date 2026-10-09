@@ -630,6 +630,9 @@ let
     "NIXOS_OZONE_WL=1"
     "ELECTRON_OZONE_PLATFORM_HINT=wayland"
     "MOZ_ENABLE_WAYLAND=1"
+    # gecko's remote on the VM's bus (open-links.nix does this for containers):
+    # the host launcher forwards links to it (lib/backends/systemd.nix).
+    "MOZ_DBUS_REMOTE=1"
     "QT_QPA_PLATFORM=wayland;xcb"
     "QT_QPA_PLATFORMTHEME=qt6ct"
     "XDG_CURRENT_DESKTOP=Hyprland"

@@ -492,7 +492,21 @@ let
       # URL/file handling — ONLY for apps that declare a dbusName (URL handlers, e.g.
       # the browser). Every other systemd app skips this entirely and gets the plain
       # start-and-wait launcher below, unchanged.
-      if ${pkgs.systemd}/bin/systemctl is-active --quiet ${unitName}.service; then
+      # The live instance's bus name: exact match on the bus-name column, the
+      # app's own name or a <dbusName>.<instance> child. Dots escaped, anchored at
+      # both ends — a loose prefix grep would also accept e.g. org.mozillaXzen or
+      # org.mozilla.zenfoo. Only this app may OWN names under <dbusName>
+      # (features/browser.nix) — its container, or its VM through that VM's bus
+      # proxy (same policy) — so a match is this app's live instance.
+      __dest=""
+      if [ "$#" -gt 0 ]; then
+        __dest=$(${busctl} --user list --no-legend 2>/dev/null | ${awk} '{print $1}' \
+          | ${grep} -xE '${lib.escapeRegex appCfg.dbusName}(\.[A-Za-z0-9_-]+)*' | ${co}/head -1 || true)
+      fi
+      # Also when the instance isn't this unit's but the app's VM's (the default
+      # handler's entry runs this launcher whichever implementation is up): the
+      # link opens there instead of being refused by the lock check below.
+      if ${pkgs.systemd}/bin/systemctl is-active --quiet ${unitName}.service || [ -n "$__dest" ]; then
         # Already running: forward the URLs to the live instance and exit (systemctl
         # start would no-op, --wait would block). gecko remote: interface <dbusName>,
         # method OpenURL(ay) at /<dbusName-as-path>/Remote — the per-profile INSTANCE
@@ -503,13 +517,6 @@ let
           # offsets (and code points > 255 make busctl reject the payload) for any
           # non-ASCII URL or cwd.
           export LC_ALL=C
-          # Exact match on the bus-name column: the app's own name or a
-          # <dbusName>.<instance> child. Dots escaped, anchored at both ends — a
-          # loose prefix grep would also accept e.g. org.mozillaXzen or
-          # org.mozilla.zenfoo. Only this app may OWN names under <dbusName>
-          # (features/browser.nix), so a match is this app's live instance.
-          __dest=$(${busctl} --user list --no-legend 2>/dev/null | ${awk} '{print $1}' \
-            | ${grep} -xE '${lib.escapeRegex appCfg.dbusName}(\.[A-Za-z0-9_-]+)*' | ${co}/head -1 || true)
           [ -z "''${__dest:-}" ] && __dest="${appCfg.dbusName}"
           __path="/$(${co}/printf '%s' "${appCfg.dbusName}" | ${co}/tr . /)/Remote"
           # gecko's OpenURL(ay) payload is a mozilla-serialized COMMAND LINE, not a bare
