@@ -1,6 +1,8 @@
 # agent-auth client tools — the `agent-auth` CLI and the `agent-auth-mcp`
 # stdio server that Hermes instances (and Claude Code) use to request
 # credentials from the broker on recusant.
+# Also `agent-auth-mcp-bridge <server>`: an MCP server from the broker's
+# catalog as a local stdio server.
 #
 # Only the two client entrypoints are linked out of the broker's virtualenv:
 # its bin/ also carries generic console scripts (fastapi, alembic, httpx,
@@ -26,6 +28,11 @@ let
     mkdir -p $out/bin
     ln -s ${venv}/bin/agent-auth $out/bin/agent-auth
     ln -s ${venv}/bin/agent-auth-mcp $out/bin/agent-auth-mcp
+    # A catalogued MCP server as a stdio one, with the agent's token kept
+    # fresh (absent from older agent-auth revisions).
+    if [ -e ${venv}/bin/agent-auth-mcp-bridge ]; then
+      ln -s ${venv}/bin/agent-auth-mcp-bridge $out/bin/agent-auth-mcp-bridge
+    fi
   '';
 in
 {
