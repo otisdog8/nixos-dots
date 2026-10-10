@@ -108,7 +108,7 @@ in
         rule or the LLM), and armed here for at most an hour
       '';
       shells = lib.mkEnableOption ''
-        time-boxed root shells (30 minutes at most), opened with a root TOTP
+        time-boxed root shells (two hours at most), opened with a root TOTP
         code, every command shown on Discord before it runs. Root on this
         host for as long as one is open
       '';
@@ -183,6 +183,7 @@ in
         tiers.user.shell.enable = lib.mkDefault (commands.user.enable && commands.user.shells);
         tiers.root.enable = lib.mkDefault commands.root.enable;
         tiers.root.shell.enable = lib.mkDefault (commands.root.enable && commands.root.shells);
+        tiers.root.shell.maxDuration = lib.mkDefault "2h";
         desktop = lib.mkIf (prompts.enable && hypridle.enable) (
           {
             enable = true;
