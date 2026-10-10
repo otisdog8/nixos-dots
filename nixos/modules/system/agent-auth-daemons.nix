@@ -78,8 +78,12 @@ in
         vm.unit = lib.mkIf config.modules.agentVm.enable (lib.mkDefault "agent-vm.service");
         # Commands as the user, where the agents are (bring-up, as the VM).
         # Nothing runs before `totp-enroll`, or while the tier is disarmed
-        # (no autoCommands here). Root tier and shells: off.
+        # (no autoCommands here). Root tier: off.
         tiers.user.enable = lib.mkDefault config.modules.agentVm.enable;
+        # Time-boxed shells as the user (each opened with a TOTP code, every
+        # command shown on Discord first): excelsior only, for bring-up. Here
+        # and not in the host's file: the option may not exist yet.
+        tiers.user.shell.enable = lib.mkDefault (hostName == "excelsior" && hostd.tiers.user.enable);
         desktop.enable = lib.mkDefault hypridle.enable;
       };
       # hypridle and the lock screen tell hostd whether the user is there

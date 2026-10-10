@@ -47,8 +47,8 @@ shells, the kill switch and desktop approval prompts (its
   the newer commits are not pushed yet.
 - Where the agent VM is enabled (excelsior): `vm.unit = agent-vm.service`
   (lockdown freezes it) and the user tier. hostd then runs as root with three
-  capabilities, and its state dir (persisted) is root's. Root tier and shells
-  are off everywhere; no `autoCommands`.
+  capabilities, and its state dir (persisted) is root's. User-tier shells
+  are on on excelsior only; the root tier is off everywhere; no `autoCommands`.
 - Where hypridle is enabled: desktop prompts, with presence reported by
   hypridle (`hypridle.presenceCommand`: idle/active after 120 s, locked/unlocked
   around hyprlock).
