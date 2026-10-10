@@ -305,9 +305,21 @@ let
   avm = pkgs.writeShellScriptBin "avm" ''
     set -euo pipefail
     vm=${cli}/bin/agent-vm
+    # --host H: the same command on H's agent VM, over SSH (H's own `avm`).
+    if [ "''${1:-}" = --host ]; then
+      host="''${2:-}"; shift 2 || true
+      case "$host" in ""|-*) echo "avm: --host needs a host name" >&2; exit 2 ;; esac
+      # A terminal for the TUIs; without one (secret-set < FILE, pipes) stdin
+      # passes through.
+      if [ -t 0 ] && [ "''${1:-}" != secret-set ]; then tty=-t; else tty=-T; fi
+      remote=""
+      if [ $# -gt 0 ]; then remote="$(printf '%q ' "$@")"; fi
+      exec ${pkgs.openssh}/bin/ssh "$tty" -- "$host" avm $remote
+    fi
     case "''${1:-}" in
       ""|-h|--help)
-        echo "usage: avm ls [-p PROJECT] [-a] | claude PROJECT | codex PROJECT | attach ID [--now]" >&2
+        echo "usage: avm [--host HOST] COMMAND" >&2
+        echo "       avm ls [-p PROJECT] [-a] | claude PROJECT | codex PROJECT | attach ID [--now]" >&2
         echo "           | logs ID [-f] | send ID TEXT | stop ID | close ID | shell PROJECT" >&2
         echo "           | project-create NAME [--open] | mint PROJECT [-r claude|codex]" >&2
         echo "           | agents | projects | status | secret-set NAME < FILE | pair" >&2
