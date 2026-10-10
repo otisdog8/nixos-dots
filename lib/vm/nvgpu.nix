@@ -18,9 +18,9 @@
 #   - kmod:     the guest kernel module (virtio_gpu_nv), built against the
 #               guest's kernel; it registers /dev/nvidia*, a DRM device and
 #               /dev/nvgpu-wl in the guest.
-# nixos-dots applies nothing to the fork's code: what it used to patch (the
-# window flags, the 16-byte syncobj handle, compat ioctls on the NVIDIA nodes)
-# is upstream since `heavyfix` (docs/virtio-nvgpu-gpu-window-and-compat-brief.md).
+# nixos-dots applies no patches of its own to the fork's code (the window
+# flags, the 16-byte syncobj handle and compat ioctls on the NVIDIA nodes are
+# the fork's).
 # The guest also needs NVIDIA's userspace at exactly the host driver's release
 # (lib/vm/guest.nix takes the host's own hardware.nvidia.package).
 {

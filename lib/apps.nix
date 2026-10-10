@@ -59,9 +59,9 @@
         # There is deliberately NO sandbox.backend override option: the effective
         # backend is app.defaultBackend (app-spec, independent eval). Dispatch can't
         # read a cfg.sandbox.* option in the mkIf conditions below without forcing
-        # the outer merge mid-collect → infinite recursion (see the backendResult
-        # comment). A per-host override would therefore be inert and misleading, so
-        # it isn't offered — set app.defaultBackend in the app module.
+        # the outer merge mid-collect → infinite recursion. A per-host override
+        # would therefore be inert and misleading, so it isn't offered — set
+        # app.defaultBackend in the app module.
         sandbox = {
           # Selecting container vs vm is a VALUE choice (which package the command
           # is), never a structural one: both implementations are always evaluated,

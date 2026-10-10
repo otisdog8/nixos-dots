@@ -8,8 +8,8 @@
 #   - a root guest service, sbx-polkit-agent (lib/vm/polkit-agent.py), is the
 #     polkit agent for 1Password's processes (1Password checks its actions with
 #     its OWN process as the subject);
-#   - asked to authenticate, the agent sends {"op":"authenticate"} over the VM's
-#     broker socket; the host sbx-broker runs pkcheck for a host action with a
+#   - asked to authenticate, the agent sends {"op":"authenticate"} straight to
+#     the host's vsock relay; the host sbx-broker runs pkcheck for a host action with a
 #     fixed message, so the user's own agent (hyprpolkitagent) asks for their
 #     password (or fingerprint, if PAM's polkit-1 does that) on the host;
 #   - granted: the guest agent answers polkitd as root, completing 1Password's

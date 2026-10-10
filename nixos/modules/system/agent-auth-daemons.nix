@@ -12,8 +12,7 @@
 #     agents (headless claude/codex per conversation), routes their a2a.
 #
 # Inert until both exist:
-#   - the agent-auth flake input provides the modules (push agent-auth, then
-#     `nix flake update agent-auth`);
+#   - the agent-auth flake input provides the modules;
 #   - `brokerPublicKey` below is set: the broker's public signing key, from
 #     `agent-auth admin broker-key` once BROKER_SIGNING_KEY is in recusant's
 #     agent-auth/env secret. Pinned here, in an audited commit, so no network
@@ -34,7 +33,7 @@
   ...
 }:
 let
-  brokerPublicKey = "ed25519:CAGm4HjX5-lT9w2JNi7U1yomf5i7u8Sge5G7o0eNWpY"; # "ed25519:…"
+  brokerPublicKey = "ed25519:CAGm4HjX5-lT9w2JNi7U1yomf5i7u8Sge5G7o0eNWpY";
   brokerUrl = "https://agent-auth.recusant.rooty.dev";
   modules = inputs.agent-auth.nixosModules or { };
   pinned = brokerPublicKey != null;

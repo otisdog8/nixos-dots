@@ -437,8 +437,8 @@ let
   # LONG-LIVED objects (session sockets, bridge sock, shared jrt data like the
   # vault). Called from TWO places: the launcher's trap (the fast path) and the
   # unit's ExecStopPost (authoritative: it fires on unit deactivation even when the
-  # launcher was SIGKILLed/OOM-killed and its trap never ran, which was the one
-  # path that used to leak grants). Both run it AS JRT — the ExecStopPost through
+  # launcher was SIGKILLed/OOM-killed and its trap never ran, which would
+  # otherwise leak the grants). Both run it AS JRT — the ExecStopPost through
   # asUser: every object here is jrt's, and an owner may change its own ACLs, so
   # root never walks jrt's home or runtime dir. Both runs are safe and
   # composable: `setfacl -x` only REMOVES an entry (never grants), so a double run
@@ -593,7 +593,7 @@ let
       if dedicated then
         ''
           # ACL teardown lives in ${revokeAclsScript} (defined above), invoked from
-          # BOTH the trap below (fast path) and the unit's ExecStopPost (also as jrt,
+          # BOTH the trap above (fast path) and the unit's ExecStopPost (also as jrt,
           # authoritative — so a SIGKILL/OOM of this launcher, which skips the
           # trap, still gets grants revoked on unit deactivation). See that script.
           # Grant app-${appUser} rw on ONLY the specific session sockets (which the
@@ -711,15 +711,6 @@ let
     fi
   '';
 
-  # ptrace_scope hardening baseline for the SAME-UID stash (blocks ATTACH memory
-  # scraping). It does NOT hide the stash via /proc/<pid>/root — dedicated does.
-  # Gate on `!dedicated`, the real same-uid systemd condition. (This used to key on
-  # a cfg.sandbox.stashOwner option, since removed: the effective stash owner is now
-  # derived from dedicatedUser at lowering in lib/apps.nix, and the old option was a
-  # dead knob that made this assertion inert.) Matches injectAssertion's `!dedicated`.
-  # Where the app may connect (lib/netpolicy.nix), enforced on this unit by
-  # systemd's cgroup IP filter. Containers default to open; DNS goes through
-  # resolved's stub on loopback, kept reachable in the restricted modes.
   # Where the app's pulse/native comes from (runScript): the broker's filter.
   pulseSource =
     if config.modules.sandbox.broker.enable then
@@ -727,12 +718,21 @@ let
     else
       "${jrtRuntime}/pulse/native";
 
+  # Where the app may connect (lib/netpolicy.nix), enforced on this unit by
+  # systemd's cgroup IP filter. Containers default to open; DNS goes through
+  # resolved's stub on loopback, kept reachable in the restricted modes.
   netPolicy = (import ../netpolicy.nix { inherit lib; }).lower {
     policy = cfg.sandbox.network;
     backendDefault = "open";
     dns = if config.services.resolved.enable then [ "127.0.0.53" ] else config.networking.nameservers;
   };
 
+  # ptrace_scope hardening baseline for the SAME-UID stash (blocks ATTACH memory
+  # scraping). It does NOT hide the stash via /proc/<pid>/root — dedicated does.
+  # Gate on `!dedicated`, the real same-uid systemd condition. (This used to key on
+  # a cfg.sandbox.stashOwner option, since removed: the effective stash owner is now
+  # derived from dedicatedUser at lowering in lib/apps.nix, and the old option was a
+  # dead knob that made this assertion inert.) Matches injectAssertion's `!dedicated`.
   ptraceAssertion = lib.optional (!dedicated) {
     assertion = builtins.toString (config.boot.kernel.sysctl."kernel.yama.ptrace_scope" or 0) != "0";
     message = ''

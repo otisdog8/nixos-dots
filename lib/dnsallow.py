@@ -30,9 +30,9 @@ null, "rules": [{"units": [UNIT or GLOB...], "names": [NAME...],
 sbx-netlocal: keep the sandboxes in a restricted network mode off the host's
 and LAN's public addresses. netpolicy's static ranges (RFC 1918, ULA, ...)
 can't name the host's own global addresses or its LAN's global prefixes: on an
-IPv6 LAN the router hands those out, and they change. This one watches the kernel's
-addresses and routes (`ip monitor`, plus a rescan every RESCAN seconds) and
-keeps the sandboxes' slice denied them:
+IPv6 LAN the router hands those out, and they change. This one watches the
+kernel's addresses and routes (`ip monitor`, plus a rescan every RESCAN
+seconds) and keeps the sandboxes' slice denied them:
 
     systemctl set-property --runtime SLICE IPAddressDeny= IPAddressDeny=PREFIX...
 

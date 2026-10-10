@@ -41,10 +41,9 @@
 #     modules.sandbox.vm.graphics. X11 apps get xwayland-satellite in the guest.
 #   - audio → the sandbox broker's filtered PulseAudio socket (playback;
 #     recording only with the microphone capability, after approval), and the
-#     members' D-Bus policy → a
-#     filtered xdg-dbus-proxy with the (first) member's flatpak identity (portals,
-#     notifications, OpenURI), both over a vsock relay that answers only this
-#     VM's CID.
+#     members' D-Bus policy → a filtered xdg-dbus-proxy with the (first)
+#     member's flatpak identity (portals, notifications, OpenURI), both over a
+#     vsock relay that answers only this VM's CID.
 #   - folder grants (VMs whose data is the user's): a second virtio-fs share, of
 #     an empty view (lib/vm/grants.py). The broker's grant-path, and group
 #     launchers started in an undeclared folder of ~ (grantCwd), have the root
@@ -68,7 +67,7 @@
 #     passt (-net), cross-domain -gpu, the relay, the capture adapter
 #     (-capture-bus), the grants share (-grantsfs);
 #   sbx-gpu-<vm> / sbx-cap-<vm>: virtio-nvgpu's backend and the capture
-#     helper (their own, as before);
+#     helper (each its own uid);
 #   the desktop user: -wl (a compositor client, which makes the security-
 #     context socket), -bus (xdg-dbus-proxy: the session bus authenticates it
 #     by uid, and the portals read its /proc/<pid>/root), -bus-info,
@@ -262,9 +261,10 @@ let
 
   # ── Host services over vsock (lib/vm/vsock-relay.py) ─────────────────────────
   # Audio: the broker's filtered PulseAudio socket for this VM (in front of
-  # pipewire-pulse), no shm/memfd since file descriptors can't cross vsock. D-Bus: an xdg-dbus-proxy with the members' own
-  # filter (the same policy the container backends apply) and a flatpak identity,
-  # so the portals treat it as that sandboxed app.
+  # pipewire-pulse), no shm/memfd since file descriptors can't cross vsock.
+  # D-Bus: an xdg-dbus-proxy with the members' own filter (the same policy the
+  # container backends apply) and a flatpak identity, so the portals treat it as
+  # that sandboxed app.
   audio = anyCap "audio";
   dbusArgs = lib.unique (lib.concatMap (m: if m.dbusArgs == null then [ ] else m.dbusArgs) members);
   # The bus identity: the first member with a .flatpak-info, and its app id
@@ -2086,8 +2086,8 @@ let
       };
   };
 
-  # sbx-cap-<vm>: as before (no PrivatePIDs: it drives the NVIDIA driver,
-  # untested so), with this VM's view.
+  # sbx-cap-<vm>: its own settings, not userStep (no PrivatePIDs: it drives the
+  # NVIDIA driver, untested so), with this VM's view.
   captureBrokerService = helper (
     afterPrep [
       (ref "${unit}-gpu")

@@ -10,8 +10,9 @@
 #   grant-net ADDR         let the sandbox reach an address its network policy
 #                          blocks (VMs and systemd-backend apps; through the
 #                          root attach helper; until the host reboots)
-#   grant-path [--write] P give a running VM a folder (see the VM instances)
-#   camera                 attach the host's camera(s) to a running VM
+#   grant-path [--write] P give a running sandbox a folder (VMs, and containers
+#                          that run as the user; through the attach helper)
+#   camera                 attach the host's camera(s) to a running sandbox
 #   fido                   (VMs' virtual security key, not sbx-request) relay
 #                          CTAPHID to the key plugged in now
 #   authenticate ACTION    (VM guests' polkit agent, not sbx-request) have the

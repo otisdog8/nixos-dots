@@ -481,9 +481,9 @@ rec {
               # Gecko finds its application directory, and so
               # distribution/policies.json, from its executable's REAL path.
               # wrapFirefox copies the executable only under the name it expects;
-              # Zen's is lib/zen-bin-*/zen (the command is zen-beta), so it stayed
+              # Zen's is lib/zen-bin-*/zen (the command is zen-beta), so it stays
               # a symlink into the unwrapped package, whose policies.json has
-              # only upstream's System Trust: none of these policies applied.
+              # only upstream's System Trust: none of these policies would apply.
               # Replace whatever the wrapper execs (and its -bin twin) with copies.
               buildCommand = old.buildCommand + ''
                 for w in "$out"/bin/.*-wrapped; do

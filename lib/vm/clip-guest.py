@@ -4,7 +4,8 @@ Some apps set the clipboard through the data-control protocols
 (zwlr_data_control_manager_v1, ext_data_control_manager_v1) instead of
 wl_data_device: 1Password does (arboard / wl-clipboard-rs). A sandbox's Wayland
 socket has no data-control (it would let the sandbox read everything you copy),
-and the guest's display proxy doesn't relay it, so those copies went nowhere.
+and the guest's display proxy doesn't relay it, so those copies would go
+nowhere.
 
 This sits between the app and the guest's display proxy:
 

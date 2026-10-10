@@ -78,7 +78,6 @@
         { config, lib, ... }:
         {
           modules.apps.lunar-client.sandbox.dedicatedUser = true;
-          # Match Prism's gaming VM: one game may use most of each GPU window zone.
           # Game VM sizing, as steam.nix.
           modules.apps.lunar-client.sandbox.vm.memory = lib.mkDefault 32768;
           modules.apps.lunar-client.sandbox.vm.gpuMemoryMiB = lib.mkDefault 24576;

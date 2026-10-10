@@ -17,15 +17,16 @@ root in the guest, fills that gap by asking the HOST user instead:
     dials the host's vsock relay itself, from a privileged port, rather than
     the guest relay's /run/sbx/broker.sock: that socket and the relay are the
     guest user's, who could otherwise stand in for the host and answer
-    "granted". The host
-    broker has the user authenticate with THEIR polkit agent (password,
-    fingerprint: whatever the host's PAM polkit-1 stack asks) for a host action
-    the host config maps this one to, and answers granted/denied.
+    "granted". The host broker has the user authenticate with THEIR polkit
+    agent (password, fingerprint: whatever the host's PAM polkit-1 stack asks)
+    for a host action the host config maps this one to, and answers
+    granted/denied.
   - Granted: as root it answers polkitd itself (AuthenticationAgentResponse2)
     with the identity polkit asked for (the guest user), which completes the
     app's authorization. The uid it passes is the user's, not its own: polkitd
     files an agent root registers for a process under that process's user, and
-    looks the cookie up there ("No session for cookie" otherwise). Anything else, and every other action: refused.
+    looks the cookie up there ("No session for cookie" otherwise). Anything
+    else, and every other action: refused.
 
 Trust: the guest's root is inside the VM boundary, like the app; the host
 decides, and only for the actions its config maps for this VM.

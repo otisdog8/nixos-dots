@@ -172,7 +172,7 @@ let
   # while 1Password is locked) waits for 1Password's own authorization: the
   # host's polkit dialog, answered by you typing a password. Killing op before
   # that is answered cancels the host dialog under your fingers (and counts as
-  # a failed authentication towards the broker's 3-strikes pause), so this is
+  # a failed authentication towards sbx-broker's 3-strikes pause), so this is
   # well above the host-side serve mode's 30 s. The launcher (`timeout`) stops
   # op itself; the broker's own limit is later, so it never kills only the
   # launcher and leaves op running.
@@ -312,7 +312,8 @@ let
   # 1Password's own sandbox, desktop auth only: its runtime dir must be the real
   # host directory (where the broker, same uid, finds the CLI socket the app
   # opens there), and the app must be able to resolve the onepassword-cli group
-  # it checks a connecting CLI's gid against. UNVERIFIED on hardware (see doc).
+  # it checks a connecting CLI's gid against. The app still refuses the
+  # connection in its container (see the header and the doc).
   onepasswordNixpak =
     { sloth, ... }:
     {

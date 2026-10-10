@@ -314,7 +314,7 @@ in
     environment.systemPackages = [ sandboxVmCli ];
 
     # /run/sandbox-vm/<app>/<id>: per-launch keys, sockets and share mount points,
-    # created and removed by each VM's root prep/cleanup (lib/backends/vm.nix).
+    # created and removed by each VM's root prep/cleanup (lib/vm/instance.nix).
     # Traversable, never listable or writable by unprivileged users.
     systemd.tmpfiles.rules = [ "d /run/sandbox-vm 0711 root root -" ];
   };

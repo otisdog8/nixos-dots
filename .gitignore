@@ -4,7 +4,7 @@ __pycache__/
 /result
 /result-*
 /*.log
-# Nested repos pinned as flake inputs (git+file:…), not part of this tree
+# Local checkouts of the virtio-nvgpu / vm-dbus-proxy flake inputs, not part of this tree
 /virtio-nvgpu/
 /vm-dbus-proxy/
 # Agent tool state

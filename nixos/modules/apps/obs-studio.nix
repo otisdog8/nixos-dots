@@ -35,7 +35,7 @@
       # reboots. Screen capture rides the PipeWire portal (cross-uid, like screenshare
       # elsewhere). Real cameras come on request (camera.nix); the virtual camera's
       # output, the v4l2loopback node (/dev/video1: enableVirtualCamera's video_nr=1),
-      # is bound from the start below (video group below).
+      # is bound from the start (nixpakModules and video group below).
       defaultBackend = "systemd";
       storage = [
         {

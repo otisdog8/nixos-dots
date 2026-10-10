@@ -5,8 +5,8 @@
 # (nixpak-pkg.nix `appModule`: its storage, binds and capabilities), whose entry
 # point is `sbx-exec agent` (lib/sbx-exec.py). It runs as the user service
 # sbx-group-<g>, started by the first launch; each member's command then runs
-# inside it through the agent, on the launcher's own terminal (fds passed over
-# the socket).
+# inside it through the agent, on the launcher's own terminal (its input and
+# output relayed over the socket; no fd of the caller's enters the sandbox).
 #
 # Where a command runs (launcherFor), as a group VM's launcher does (grantCwd):
 # a member that takes $PWD (capabilities.cwd) runs in the caller's directory,

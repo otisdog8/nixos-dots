@@ -39,8 +39,6 @@ let
   # without it this would fire on resume and undo after_sleep_cmd's `dpms on`.
   blankAfterLock = ''(s=$(date +%s); sleep 2; [ $(( $(date +%s) - s )) -le 5 ] && ${dpms "off" null}) &'';
 
-  # Exit 0 only when on battery. Glob over A* (AC0/ACAD/ADP1/…) instead of the
-  # old hardcoded AC0, so it works on any laptop's supply naming.
   # cfg.presenceCommand, told "idle", "active", "locked" or "unlocked". Never
   # in the way of locking: in the background, its failure ignored.
   presence =
@@ -49,6 +47,8 @@ let
   # the screen was already locked (that hyprlock exits at once).
   presenceUnlocked = lib.optionalString (cfg.presenceCommand != null) " ; ${pkgs.procps}/bin/pgrep -x hyprlock >/dev/null || ${cfg.presenceCommand} unlocked >/dev/null 2>&1";
 
+  # Exit 0 only when on battery. Glob over A* (AC0/ACAD/ADP1/…) instead of the
+  # old hardcoded AC0, so it works on any laptop's supply naming.
   onBattery = ''test "$(cat /sys/class/power_supply/A*/online 2>/dev/null | head -n1)" = 0'';
 in
 {

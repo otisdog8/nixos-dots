@@ -89,8 +89,8 @@
             # guest out: its kernel killed content processes.
             modules.apps.zen-browser.sandbox.vm.memory = lib.mkDefault 12288;
             # Zen upstream's one policy (its wrapper's): trust the system's CA
-            # store through p11-kit. Kept, now that ours actually apply
-            # (browser-settings.nix: the executable is copied, not linked).
+            # store through p11-kit. Repeated here: our policies.json replaces
+            # upstream's (browser-settings.nix: the executable is copied, not linked).
             modules.apps.zen-browser.browser.policies.SecurityDevices."System Trust" =
               "${pkgs.p11-kit}/lib/pkcs11/p11-kit-trust.so";
           }

@@ -66,9 +66,10 @@ MAX_REQUEST = 1 << 20
 # probe's exit statuses (the launcher falls back on them).
 NO_SANDBOX = 3
 NO_DIR = 4
-# The relay: the request's version (a launcher from before it passed its fds),
-# frame header, the largest frame accepted, and how much either side buffers
-# for a slow reader before it stops reading what feeds that buffer.
+# The relay: the request's version (a request without it is from an older
+# launcher, which passed its fds instead), frame header, the largest frame
+# accepted, and how much either side buffers for a slow reader before it stops
+# reading what feeds that buffer.
 RELAY = 1
 HEADER = struct.Struct(">cI")
 MAX_FRAME = 1 << 20

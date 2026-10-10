@@ -21,8 +21,8 @@ bounding set, no network).
       submounts, nosuid, nodev, read-only when the bind is, and private: a
       clone of a shared mount would otherwise stay its peer, and whatever the
       host mounts under the source later, unidmapped, would turn up in the
-      VM's share) and, for a VM that
-      runs as its own uid, idmapped (MOUNT_ATTR_IDMAP): the user's files show
+      VM's share) and, for a VM that runs as its own uid, idmapped
+      (MOUNT_ATTR_IDMAP): the user's files show
       as the VM's uid and group, what the VM creates lands on disk as the
       user's, and every other owner shows as nobody. A tree with a mount that
       can't be idmapped under it (FUSE, NFS) isn't shared at all: unmapped,
@@ -30,9 +30,10 @@ bounding set, no network).
       in a private tmpfs at the stage, in the host's mount namespace, which is
       where systemd resolves BindPaths= sources. Private, as is BASE/stage
       itself (a bind onto itself, made once), so none of it propagates into
-      any other unit's namespace, not even the empty tmpfs. Before that namespace is
-      entered every capability the work there doesn't need is gone for good
-      (restrict_caps): the unit's read-only view of the host stays behind.
+      any other unit's namespace, not even the empty tmpfs. Before that
+      namespace is entered every capability the work there doesn't need is
+      gone for good (restrict_caps): the unit's read-only view of the host
+      stays behind.
   cleanup BASE KEY RT           (the -prep unit, on stop) unmounts the stage and
       removes the launch's runtime dir: each directory owned by someone else is
       emptied by a child running as its owner, then removed by root; never

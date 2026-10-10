@@ -148,7 +148,7 @@ in
   # Stable across boots (the root is a tmpfs), so the persisted journal stays
   # one machine's.
   environment.etc.machine-id.text = "${builtins.substring 0 32 (builtins.hashString "sha256" "agent-vm-${agentVmHost.hostName}")}\n";
-  services.journald.storage = "persistent";
+  services.journald.settings.Journal.Storage = "persistent";
 
   nix = {
     enable = true;
