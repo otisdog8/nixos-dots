@@ -96,8 +96,8 @@
       storage-health.enable = lib.mkDefault true;
     };
     # The agent VM (modules/system/agent-vm.nix; agent-auth's
-    # docs/sandbox-design.md). Bring-up on excelsior first; galaxy and recusant
-    # follow once it is validated there.
+    # docs/sandbox-design.md). On excelsior here, and on recusant (its own
+    # file); galaxy follows.
     agentVm = {
       enable = lib.mkDefault (hostname == "excelsior");
       network = {

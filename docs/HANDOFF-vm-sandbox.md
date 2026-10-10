@@ -45,7 +45,7 @@ shells, the kill switch and desktop approval prompts (its
   (`options.services.agent-auth-hostd ? tiers`), so the repo evaluates before
   and after `nix flake update agent-auth`. **The lock still pins `b52e87f`**:
   the newer commits are not pushed yet.
-- Where the agent VM is enabled (excelsior): `vm.unit = agent-vm.service`
+- Where the agent VM is enabled (excelsior; recusant with 32 GiB / 16 vCPUs): `vm.unit = agent-vm.service`
   (lockdown freezes it) and the user tier. hostd then runs as root, without
   capabilities (PID 1 starts the jobs; polkit authorizes uid 0), and its
   state dir (persisted) is root's. Tiers and shells are

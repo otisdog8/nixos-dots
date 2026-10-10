@@ -82,6 +82,16 @@
   # and the other agents' plain commands).
   modules.sandbox.agents.mode = "vm";
 
+  # The agent VM (modules/system/agent-vm.nix): headless coding agents, run by
+  # agent-auth's sandboxd in the guest. The memory is a ceiling, not a
+  # reservation: the host commits pages as the guest touches them and gets
+  # freed ones back.
+  modules.agentVm = {
+    enable = true;
+    memory = 32768;
+    vcpus = 16;
+  };
+
   # Approved commands for agents on this host (agent-auth's hostd,
   # modules/system/agent-auth-daemons.nix): as jrt and as root, and root
   # shells. This is the broker's own host: root here can change the broker,
