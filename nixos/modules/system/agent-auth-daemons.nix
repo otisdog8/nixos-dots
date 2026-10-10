@@ -1,8 +1,12 @@
 # agent-auth's daemons (agent-auth's docs/sandbox-design.md), both pinned to
 # the same broker key:
 #   - hostd, on every host: dials out to the broker on recusant, pairs once per
-#     host; what will run approved commands outside the agent VMs and freeze
-#     them on lockdown;
+#     host. Where the agent VM runs it freezes the VM on lockdown and runs
+#     approved commands as the user (the user tier; the root tier is off). It
+#     decides itself what runs, from this config, its own TOTP secrets
+#     (`sudo agent-auth-hostd totp-enroll`, once per host) and its arm state.
+#     On desktops its helper in the user's session shows approval prompts
+#     while the user is there (presence: hypridle's hooks);
 #   - sandboxd, inside the agent VM (modules.agentVm's guest): runs the VM's
 #     agents (headless claude/codex per conversation), routes their a2a.
 #
@@ -23,6 +27,8 @@
   config,
   inputs,
   lib,
+  options,
+  username,
   ...
 }:
 let
@@ -31,6 +37,17 @@ let
   modules = inputs.agent-auth.nixosModules or { };
   pinned = brokerPublicKey != null;
   hostName = config.networking.hostName;
+  hostd = config.services.agent-auth-hostd;
+  # The pinned agent-auth may predate hostd's local policy (tiers, the VM's
+  # unit, desktop prompts): those settings wait for the flake update.
+  hostdPolicy = (options.services.agent-auth-hostd or { }) ? tiers;
+  # As agent-auth's module: with a tier or a VM to freeze, hostd runs as root.
+  hostdOwner =
+    if hostdPolicy && (hostd.tiers.user.enable || hostd.tiers.root.enable || hostd.vm.unit != null) then
+      "root"
+    else
+      "agent-auth-hostd";
+  hypridle = config.modules.desktop.full.hyprland.hypridle;
 in
 {
   # Conditional on the input, never on config (imports can't depend on it).
@@ -42,17 +59,34 @@ in
         enable = lib.mkDefault true;
         inherit brokerUrl brokerPublicKey;
       };
-      # The host's identity key: lose it and the host must pair again. Owned
-      # by the service's user (agent-auth's hostd module), as its tmpfiles
-      # rules and StateDirectory expect.
+      # The host's identity key (lose it and the host must pair again) and
+      # its TOTP secrets. Owned by whoever the service runs as (agent-auth's
+      # hostd module), as its tmpfiles rules and StateDirectory expect.
       environment.persistence."/persist".directories = [
         {
           directory = "/var/lib/agent-auth-hostd";
-          user = "agent-auth-hostd";
-          group = "agent-auth-hostd";
+          user = hostdOwner;
+          group = hostdOwner;
           mode = "0700";
         }
       ];
+    })
+    (lib.optionalAttrs (modules ? hostd && pinned && hostdPolicy) {
+      services.agent-auth-hostd = {
+        user = lib.mkDefault username;
+        # Lockdown freezes the agent VM.
+        vm.unit = lib.mkIf config.modules.agentVm.enable (lib.mkDefault "agent-vm.service");
+        # Commands as the user, where the agents are (bring-up, as the VM).
+        # Nothing runs before `totp-enroll`, or while the tier is disarmed
+        # (no autoCommands here). Root tier and shells: off.
+        tiers.user.enable = lib.mkDefault config.modules.agentVm.enable;
+        desktop.enable = lib.mkDefault hypridle.enable;
+      };
+      # hypridle and the lock screen tell hostd whether the user is there
+      # (Hyprland keeps no logind idle or lock hints).
+      modules.desktop.full.hyprland.hypridle.presenceCommand = lib.mkIf hostd.desktop.enable (
+        lib.mkDefault "/run/current-system/sw/bin/agent-auth-hostctl presence"
+      );
     })
     (lib.optionalAttrs (modules ? sandboxd && pinned) {
       modules.agentVm.guestModules = [

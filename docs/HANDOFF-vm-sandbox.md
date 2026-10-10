@@ -35,6 +35,31 @@ and the comments on each unit. **Not run on hardware.**
 - The guest grant agent walks share and target without following symlinks and
   mounts with open_tree/move_mount onto the held fd; targets must be in ~.
 
+## Update 2026-10-10: hostd's local policy, desktop prompts, `avm --host`
+
+agent-auth's `agent-sandbox` branch now has commands on hosts (hostexec),
+shells, the kill switch and desktop approval prompts (its
+`docs/sandbox-design.md`, Status table). This repo's side, in
+`nixos/modules/system/agent-auth-daemons.nix`:
+- hostd's new options are set only when the pinned agent-auth has them
+  (`options.services.agent-auth-hostd ? tiers`), so the repo evaluates before
+  and after `nix flake update agent-auth`. **The lock still pins `b52e87f`**:
+  the newer commits are not pushed yet.
+- Where the agent VM is enabled (excelsior): `vm.unit = agent-vm.service`
+  (lockdown freezes it) and the user tier. hostd then runs as root with three
+  capabilities, and its state dir (persisted) is root's. Root tier and shells
+  are off everywhere; no `autoCommands`.
+- Where hypridle is enabled: desktop prompts, with presence reported by
+  hypridle (`hypridle.presenceCommand`: idle/active after 120 s, locked/unlocked
+  around hyprlock).
+- `avm --host H …` runs H's own `avm` over SSH.
+- recusant: `/var/lib/private` forced to 0700 (systemd refused the broker's
+  DynamicUser state dir under impermanence's 0755 parent).
+
+**Evaluated** (excelsior, galaxy, recusant, carrack; with the pin and with the
+local agent-auth as an override), hostd's unit built. **Not run on hardware**:
+any of it. Per host after deploying: `sudo agent-auth-hostd totp-enroll`.
+
 ## Update 2026-10-03: lib/vm/core and the agent VM
 
 Design: agent-auth's `docs/sandbox-design.md` (agent VMs, host daemons, remote
