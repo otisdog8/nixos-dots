@@ -3,9 +3,11 @@ shown in dialogs, the one-dialog-per-sandbox queue, and the PulseAudio filter's
 record classification and per-stream checks (against a fake server).
 Run: python3 -m unittest lib/broker/tests/test_broker.py"""
 
+import base64
 import importlib.util
 import json
 import os
+import shutil
 import socket
 import struct
 import sys
@@ -488,6 +490,70 @@ class FilterTest(unittest.TestCase):
     def test_record_proplist_update(self):
         self.assertIsNone(self.command(80, 1, L(0) + L(1) + P({"target.object": "x"})))
         self.assertIsNotNone(self.command(80, 2, L(0) + L(1) + P({"media.name": "x"})))
+
+
+class Clipboard(unittest.TestCase):
+    """op "clipboard": only with the grant; the text goes to the program
+    (wl-copy) on stdin, never in its arguments; a clear runs only while this
+    sandbox's copy is still the selection."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        self.calls = os.path.join(self.tmp, "calls.jsonl")
+        prog = os.path.join(self.tmp, "wl-copy")
+        with open(prog, "w") as f:
+            f.write(
+                f"#!{sys.executable}\n"
+                "import json, sys, time\n"
+                "text = '' if '--clear' in sys.argv else sys.stdin.read()\n"
+                f"open({self.calls!r}, 'a').write(json.dumps([sys.argv[1:], text]) + '\\n')\n"
+                "if '--foreground' in sys.argv: time.sleep(30)\n"
+            )
+        os.chmod(prog, 0o755)
+        self.broker, _ = make_broker(
+            self.tmp, sandboxes={"sb": {"label": "A", "clipboard": prog}, "other": {"label": "B"}}
+        )
+
+    def tearDown(self):
+        for p in self.broker.clips.values():
+            p.kill()
+
+    def ask(self, sandbox, req):
+        out = []
+        self.broker.op_clipboard(sandbox, req, out.append)
+        return out[-1]
+
+    def seen(self):
+        with open(self.calls) as f:
+            return [json.loads(line) for line in f]
+
+    def test_copy_then_clear(self):
+        data = base64.b64encode(b"hunter2").decode()
+        self.assertEqual(self.ask("sb", {"op": "clipboard", "data": data, "sensitive": True})["type"], "granted")
+        self.assertEqual(self.seen(), [[["--foreground", "--type", "text/plain", "--sensitive"], "hunter2"]])
+        # Still ours: cleared.
+        self.assertEqual(self.ask("sb", {"op": "clipboard", "clear": True})["type"], "granted")
+        self.assertEqual(self.seen()[-1], [["--clear"], ""])
+        # Nothing of ours there any more: a second clear touches nothing.
+        self.assertEqual(self.ask("sb", {"op": "clipboard", "clear": True})["type"], "granted")
+        self.assertEqual(len(self.seen()), 2)
+
+    def test_replaced_by_someone_else(self):
+        data = base64.b64encode(b"x").decode()
+        self.ask("sb", {"op": "clipboard", "data": data})
+        self.broker.clips["sb"].kill()  # as when another app copies: wl-copy exits
+        self.broker.clips["sb"].wait()
+        self.ask("sb", {"op": "clipboard", "clear": True})
+        self.assertEqual(len(self.seen()), 1)
+
+    def test_refusals(self):
+        data = base64.b64encode(b"x").decode()
+        self.assertEqual(self.ask("other", {"op": "clipboard", "data": data})["type"], "denied")
+        self.assertEqual(self.ask("sb", {"op": "clipboard", "data": "%%%"})["type"], "error")
+        big = base64.b64encode(b"x" * (broker.MAX_CLIPBOARD + 1)).decode()
+        self.assertEqual(self.ask("sb", {"op": "clipboard", "data": big})["type"], "error")
+        self.assertFalse(os.path.exists(self.calls))
 
 
 if __name__ == "__main__":

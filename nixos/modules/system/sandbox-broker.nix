@@ -274,6 +274,11 @@ in
               default = false;
               description = "The sandbox may ask to use the plugged-in security key (fido).";
             };
+            clipboard = lib.mkOption {
+              type = lib.types.nullOr lib.types.str;
+              default = null;
+              description = "wl-copy, for a sandbox that may put text on the user's clipboard (the `clipboard` op: set and clear, never read; no prompt).";
+            };
             authenticate = lib.mkOption {
               type = lib.types.attrsOf lib.types.str;
               default = { };

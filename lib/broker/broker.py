@@ -29,6 +29,14 @@ of JSON lines, the last one final:
         sandbox's polkit agent (lib/vm/polkit-agent.py) then completes its own
         authorization: "system authentication" for apps in a VM, whose guest
         user has no password. No dialog of ours: the host agent's is the prompt.
+  {"op": "clipboard", "data": <base64 text>, "sensitive": bool?}
+  {"op": "clipboard", "clear": true}
+      → {"type": "granted"} once the text is on the user's clipboard (marked
+        as a secret for clipboard managers when `sensitive`), or once it is
+        cleared, which happens only while what is on it is still what this
+        sandbox put there. For sandboxes with the clipboard grant only
+        (a VM's data-control copies, lib/vm/clip-guest.py); never asks, and
+        never reads the clipboard.
   any refusal → {"type": "denied", "reason": "..."}; bad input → {"type": "error", ...}
 
 Audio: a sandbox with audio also gets $XDG_RUNTIME_DIR/sbx-broker/<sandbox>.pulse,
@@ -74,6 +82,8 @@ MAX_PULSE_CONNS = 32
 # authenticate: one at a time per sandbox; after AUTH_FAILS failed or dismissed
 # authentications in a row, refuse for AUTH_PAUSE seconds (a compromised
 # sandbox can't keep the user's password dialog on screen).
+# clipboard: the text a sandbox may put on the clipboard at once.
+MAX_CLIPBOARD = 32 * 1024
 AUTH_FAILS = 3
 AUTH_PAUSE = 300
 AUTH_TIMEOUT = 300
@@ -185,6 +195,7 @@ class Broker:
         self.turns = {}  # sandbox -> lock held while its dialog is on screen
         self.waiting = {}  # sandbox -> requests on screen or waiting their turn
         self.conns = {}  # (sandbox, kind) -> connections open
+        self.clips = {}  # sandbox -> the wl-copy holding what it copied
 
     def take_slot(self, sandbox, kind, limit):
         """Count one more open connection of `kind` for `sandbox`, unless it
@@ -439,6 +450,63 @@ class Broker:
             return send({"type": "error", "message": r.stderr.strip() or "could not attach the camera"})
         send({"type": "granted"})
 
+    def op_clipboard(self, sandbox, req, send):
+        prog = self.sandboxes[sandbox].get("clipboard")
+        if not prog:
+            return send({"type": "denied", "reason": "this sandbox can't set the clipboard"})
+        text = None
+        if not req.get("clear"):
+            try:
+                text = base64.b64decode(req.get("data", ""), validate=True)
+            except (ValueError, TypeError):
+                return send({"type": "error", "message": "bad clipboard data"})
+            if len(text) > MAX_CLIPBOARD:
+                return send({"type": "error", "message": "too much text for the clipboard"})
+        with self.lock:
+            old = self.clips.pop(sandbox, None)
+        # wl-copy stays (--foreground) for as long as its text is the
+        # selection, and exits, removing its copy of the text, when something
+        # else is copied: while it lives, the clipboard is this sandbox's. So
+        # a clear is done only then (never by killing it: its temporary file
+        # would stay), and a new copy just replaces it.
+        if not text:  # cleared (an empty copy is one too)
+            if old is not None and old.poll() is None:
+                try:
+                    subprocess.run([prog, "--clear"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=5)
+                except (OSError, subprocess.TimeoutExpired) as e:
+                    log(f"{sandbox}: clipboard: {e}")
+                log(f"{sandbox}: clipboard: cleared")
+            return send({"type": "granted"})
+        argv = [prog, "--foreground", "--type", "text/plain"]
+        if req.get("sensitive"):
+            argv.append("--sensitive")
+        try:
+            p = subprocess.Popen(argv, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+            p.stdin.write(text)
+            p.stdin.close()
+        except OSError as e:
+            log(f"{sandbox}: clipboard: {e}")
+            return send({"type": "error", "message": "could not set the clipboard"})
+        try:
+            p.wait(0.3)  # it stays unless it couldn't reach the compositor
+        except subprocess.TimeoutExpired:
+            pass
+        else:
+            if p.returncode != 0:
+                log(f"{sandbox}: clipboard: {scrub(p.stderr.read().decode(errors='replace'))}")
+                return send({"type": "error", "message": "could not set the clipboard"})
+        threading.Thread(target=self.reap_clip, args=(p,), daemon=True).start()
+        with self.lock:
+            self.clips[sandbox] = p
+        log(f"{sandbox}: clipboard: {len(text)} bytes{' (sensitive)' if req.get('sensitive') else ''}")
+        send({"type": "granted"})
+
+    @staticmethod
+    def reap_clip(p):
+        p.stderr.read()
+        p.stderr.close()
+        p.wait()
+
     def op_fido(self, sandbox, req, send, conn):
         if not self.sandboxes[sandbox].get("fido"):
             return send({"type": "denied", "reason": "this sandbox has no security key access"})
@@ -584,6 +652,7 @@ class Broker:
                 "grant-net": self.op_grant_net,
                 "grant-path": lambda sb, r, snd: self.op_grant_path(sb, r, snd, conn),
                 "camera": lambda sb, r, snd: self.op_camera(sb, r, snd, conn),
+                "clipboard": self.op_clipboard,
                 "fido": lambda sb, r, snd: self.op_fido(sb, r, snd, conn),
                 "authenticate": lambda sb, r, snd: self.op_authenticate(sb, r, snd, conn),
             }.get(op)
