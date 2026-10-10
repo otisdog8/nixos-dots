@@ -74,6 +74,10 @@ let
   tailscaleIp = "100.110.239.45";
 
   dashboardPort = 9119;
+
+  hindsightClient = fromTOML (
+    builtins.readFile "${inputs.hindsight}/hindsight-clients/python/pyproject.toml"
+  );
 in
 {
   # ── Secrets ────────────────────────────────────────────────────────────────
@@ -106,6 +110,24 @@ in
     # chromium, the one-time imperative fallback is
     # `sudo -u hermes-homelab-recusant env HOME=/var/lib/hermes-homelab-recusant agent-browser install`
     # (lands in the persisted home, like the codex login).
+    # The Hindsight memory provider left hermes core for a catalog plugin, which
+    # hermes cannot install into a store package: the plugin and the one
+    # package of it this mode (local_external) imports, both from the server's
+    # own pin (../hindsight.nix). The client's dependencies are all in the
+    # hermes venv already, so it is built without them (see the option).
+    plugins.hindsight = "${inputs.hindsight}/hindsight-integrations/hermes";
+    extraPythonPackages = ps: [
+      (ps.buildPythonPackage {
+        pname = "hindsight-client";
+        inherit (hindsightClient.project) version;
+        pyproject = true;
+        src = "${inputs.hindsight}/hindsight-clients/python";
+        build-system = [ ps.hatchling ];
+        dontCheckRuntimeDeps = true;
+        doCheck = false;
+      })
+    ];
+
     extraPackages = [
       agentAuthMcp
       pkgs.agent-browser
@@ -126,20 +148,20 @@ in
       # ChatGPT subscription via Codex OAuth (manual login, bootstrap step 5).
       # Auxiliary tasks stay on "auto": they pick codex/openrouter from
       # whatever auth is present, so the OpenRouter key doubles as fallback.
-      # Codex-backend slugs at the pinned rev: gpt-5.6[-sol|-terra|-luna],
-      # gpt-5.5, gpt-5.4[-mini] (retire from Codex 2026-08-31),
-      # gpt-5.3-codex, gpt-5.3-codex-spark (Pro-only preview; /model to try).
-      # Terra: ~gpt-5.5 quality at half the token/quota weight. Bare "gpt-5.6"
-      # aliases to sol, which is heavier and has reported auth errors on
-      # ChatGPT-account Codex — pin terra explicitly.
+      # GPT-6.1 Sol. On the Codex backend the pinned rev knows it by this exact
+      # slug (no -pro there; "gpt-6.1-sol-900k" is the opt-in large-context
+      # variant, the plain one keeps Codex's 272K). It takes no reasoning
+      # effort "none": leave agent.reasoning_effort unset or at a real level.
+      # The account must be entitled to it; gpt-6-sol, gpt-6-luna and the
+      # gpt-5.6 tiers (-sol, -terra, -luna) are the fallbacks to pin if not.
       model = {
         provider = "openai-codex";
-        default = "gpt-5.6-terra";
+        default = "gpt-6.1-sol";
       };
       # Keep scheduled jobs independent from future interactive model changes;
       # otherwise Hermes intentionally fails an unpinned job closed on drift.
       cron = {
-        model = "gpt-5.6-terra";
+        model = "gpt-6.1-sol";
         model_provider = "openai-codex";
       };
 

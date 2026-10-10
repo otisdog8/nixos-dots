@@ -69,8 +69,9 @@
     };
     # hindsight: shared agent-memory service on recusant (hosts/recusant/
     # hindsight.nix). Not a flake — we build hindsight-api-slim from its
-    # uv.lock with hermes-agent's uv2nix inputs. Keep roughly in step with
-    # the hindsight-client pinned by hermes-agent's pyproject.
+    # uv.lock with hermes-agent's uv2nix inputs. The Hermes side comes from
+    # here too (hermes-homelab-recusant.nix): the memory-provider plugin and
+    # its hindsight-client, so server, plugin and client move together.
     hindsight = {
       url = "github:vectorize-io/hindsight";
       flake = false;
