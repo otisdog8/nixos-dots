@@ -11,8 +11,9 @@ comes from a component the browser can't reach.
 
 Code: `pkgs/op-broker/` (broker, native host, extension, tests).
 NixOS: `nixos/modules/apps/op-broker.nix` (`modules.apps.op-broker`), on by default
-where 1Password runs in its VM, for every supported browser that is enabled.
-1Password's own authorization of the broker (and its system-authentication unlock):
+where 1Password runs in its VM (its default, `nixos/modules/apps/onepassword.nix`),
+for every supported browser that is enabled. 1Password's own authorization of
+the broker (and its system-authentication unlock):
 `nixos/modules/apps/onepassword-system-auth.nix`, see *1Password's own prompt and
 system authentication* below. **1Password in its container can't serve op-broker**
 (nor use system authentication): see *1Password in its container* below.
@@ -27,27 +28,34 @@ system authentication* below. **1Password in its container can't serve op-broker
                                                                │  rate-limits, audits  │
 ```
 
+The deployed shape is *1Password in its VM* (below): the broker runs in that
+guest and the host only relays bytes.
+
 ## Where the broker runs, and why
 
-**Next to 1Password, as 1Password's uid (or inside 1Password's VM); never in a
+**Next to 1Password: inside 1Password's VM, or as 1Password's uid; never in a
 browser sandbox and never as the desktop user.**
 
-- `op` only talks to the desktop app when it runs as the app's uid, from the app's
-  `$XDG_RUNTIME_DIR` (the app's IPC socket lives there and is owned by that uid),
-  with **gid `onepassword-cli`**: the app resets any connection whose peer gid
-  isn't that group ([app integration security][sec]). Here the app runs as
-  `app-onepassword` in `sandbox-onepassword.service`, so the broker runs as
-  `app-onepassword` with `Group=onepassword-cli`. A setgid wrapper isn't needed
-  (and wouldn't work under `NoNewPrivileges`); the primary group is enough.
-- Putting the broker in the same DAC domain as the vault means the host user
-  (`jrt`) can't read its memory, its `op` session, or its config: a compromised
-  jrt can ask the broker for items (and faces the same prompts), but can't bypass
-  it. A broker running as jrt would add nothing over giving jrt `op` directly.
-- The prompt must also be outside the browser's reach: it's `sbx-prompt` (zenity)
-  on the security-context Wayland socket the 1Password launcher already holds for
-  `app-onepassword`. The browser can't draw over it, answer it or read it.
-- With 1Password in its own VM the broker runs *in that guest* for the same
-  reasons; the host then only relays bytes (see *1Password in its VM* below).
+- `op` only talks to the desktop app from the app's own `$XDG_RUNTIME_DIR` (the
+  app's IPC socket lives there and is owned by its uid), with **gid
+  `onepassword-cli`**: the app resets any connection whose peer gid isn't that
+  group ([app integration security][sec]).
+- With 1Password in its VM the broker runs *in that guest*, as the guest user,
+  and runs `op` through a setgid `onepassword-cli` wrapper; the host only
+  relays bytes (see *1Password in its VM*). The desktop user (`jrt`) on the
+  host can't read the broker's memory, its `op` session or its config: a
+  compromised jrt can ask the broker for items (and faces the same prompts),
+  but can't bypass it. A broker running as jrt on the host would add nothing
+  over giving jrt `op` directly.
+- With 1Password in its container the app runs as `app-onepassword` in
+  `sandbox-onepassword.service`, and the broker as `app-onepassword` with
+  `Group=onepassword-cli` (a setgid wrapper isn't needed there, and wouldn't
+  work under `NoNewPrivileges`): the same DAC separation from jrt. The app
+  refuses that broker's `op`, though (see *1Password in its container*).
+- The prompt must also be outside the browser's reach: it's `sbx-prompt`
+  (zenity) on 1Password's VM's display, or for a host broker on a
+  security-context Wayland socket of its own (`op-broker-display.service`). The
+  browser can't draw over it, answer it or read it.
 
 Alternatives considered: a broker on the host as jrt driving a "vault runner" as
 app-onepassword (the runner would need its own gate, since jrt could call it
@@ -98,8 +106,8 @@ What it can't do:
   (DAC) or a different VM, and the only way in is the per-client socket.
 - Impersonate another browser: identity is the socket (each client has its own
   directory with a traverse ACL for exactly its uid), checked again with
-  `SO_PEERCRED` (uid) and, for VM relays, the peer's cgroup (a system unit the
-  user can't move processes into).
+  `SO_PEERCRED` (uid) and, for VM relays, the peer's cgroup (a system unit
+  running as the VM's own uid, which the user can't move processes into).
 - Flood the user: one dialog on screen at a time, one in-flight request per
   requester, a token bucket, and a cooldown (default 5 min) after 3 denials or
   timeouts in a row.
@@ -303,8 +311,10 @@ extension only sends on one, but a compromised browser can send anything.
 
 ### Audit log
 
-One JSON line per event on stderr (the journal: `journalctl -u op-broker`) and
-in `/var/lib/op-broker/audit.jsonl` (0600, app-onepassword): time, requester,
+One JSON line per event on stderr: the journal of the broker's unit
+(`sbx-svc-op-broker` in 1Password's guest; `op-broker` for a host broker, which
+also appends to `/var/lib/op-broker/audit.jsonl`, 0600, unless `auditFile` is
+off). The guest's journal is gone when the VM stops. Each line has time, requester,
 peer pid/uid/cgroup, origin and top origin, requested fields, item id and title,
 decision (`once`, `session`, `session-cached`, `deny`, `no-match`,
 `rate-limited`, `cooldown`, `busy`, `unavailable`), `match` (`exact` or
@@ -313,10 +323,10 @@ Never a secret; the tests check that.
 
 ## Deployments
 
-### 1Password in its container — wired, but the app refuses the broker
+### 1Password in its container (wired, but the app refuses the broker)
 
 **This deployment can't work, and op-broker is off by default with 1Password in
-its container (enabling it anyway warns).** Found by reading the 1Password
+its container (enabling it anyway warns).** From reading the 1Password
 8.12.34 binary (`resources/app.asar.unpacked/index.node`, which has symbols):
 
 - For a CLI connection the app runs
@@ -343,7 +353,7 @@ on the host. So the CLI connection is refused and system authentication is
 disabled, whatever the broker or polkit do. Making it work would need 1Password's
 container without a user namespace and in the host pid namespace (a setuid-root
 bubblewrap restricted to app-onepassword, or the root runScript building the
-sandbox itself) — a sandbox-core change, not done here (a decision for later).
+sandbox itself): a sandbox-core change, not done (see *Open items*).
 1Password in its VM has neither namespace (see below), which is where op-broker
 and system authentication are wired to work.
 
@@ -352,27 +362,34 @@ What the module still generates for it:
 - `op-broker.service`: `User=app-onepassword`, `Group=onepassword-cli`,
   `WantedBy=`/`BindsTo=sandbox-onepassword.service` (it runs exactly while
   1Password runs), `XDG_RUNTIME_DIR=/run/app-onepassword`, dialogs on a
-  display socket of its own (`op-broker-display.service`, as with a service
-  account below; nothing is bound in from jrt's runtime dir), `ProtectSystem=strict`,
+  display socket of its own (`op-broker-display.service`, see *Service-account
+  mode*; nothing is bound in from jrt's runtime dir), `ProtectSystem=strict`,
   no network (`IPAddressDeny=any`, AF_UNIX only), empty capability set.
 - 1Password's own nixpak sandbox additionally binds its runtime dir (so the CLI
   socket the app creates there is on the host, where the broker, same uid, sees
   it) and `/etc/group` (so the app can resolve `onepassword-cli`).
-- `/run/op-broker/clients/<app>/` (0710, owner the broker uid, ACL `u:<client>:--x`)
-  holds each client's socket; a browser's VM is the separate client `<app>-vm`
-  (both exist with sandbox variants, whose launcher offers "(container)" and
-  "(vm)" whatever the app's mode). The browser's sandbox binds that directory at
-  `/run/sbx/op` (a directory, so a restarted broker's new socket is seen) and the
-  native host manifest where it looks, via `modules.apps.<browser>.sandbox.nixpakModules`.
+
+### Client sockets
+
+In every deployment, `/run/op-broker/clients/<client>/` (0710, owned by whoever
+listens there: the host broker, or the bridge; ACL `u:<client uid>:--x`) holds
+one client's socket. A browser's container is the client `<app>`, its VM the
+separate client `<app>-vm` (both exist with sandbox variants, whose launcher
+offers "(container)" and "(vm)" whatever the app's mode). A container browser's
+sandbox binds its directory at `/run/sbx/op` (a directory, so a restarted
+listener's new socket is seen) and the native host manifest where the browser
+looks, via `modules.apps.<browser>.sandbox.nixpakModules`.
 
 ### Browser in a VM
 
 The browser VM's native host connects to `/run/sbx/op/sock` in the guest; the VM's
 vsock relay carries it to the host as service `op`, and the per-VM host relay
-(`sandbox-vm-<app>-relay.service`, as jrt) connects it to
-`/run/op-broker/clients/<app>/sock`. The broker accepts it because the peer is
-jrt **and** its cgroup is `/system.slice/sandbox-vm-<app>-relay(@…).service`.
-Nothing else changes: requester identity is still "which socket".
+(`sandbox-vm-<app>-relay.service`, running as the VM's own uid: `app-<app>` for
+a dedicated-uid browser, else `sbx-vm-<app>`) connects it to
+`/run/op-broker/clients/<app>-vm/sock`. The listener accepts it because the
+peer has that uid **and** its cgroup is
+`/system.slice/sandbox-vm-<app>-relay(@…).service`. Nothing else changes:
+requester identity is still "which socket".
 
 ### 1Password in its VM
 
@@ -394,47 +411,54 @@ browser (container or VM) ─► /run/op-broker/clients/<app>/sock ─► op-bro
   (added on the host after 1Password's VM started: a rebuild doesn't restart
   the VM) is taken from the header with the bridge's label, sanitised, up to 64
   of them; a configured client keeps the guest's label.
-- `op-broker-bridge.service` (host, `op-broker-bridge` uid, AF_UNIX only) owns the
-  client sockets, checks peers like the broker does, and accepts uplinks only
-  from jrt in `sandbox-vm-onepassword-relay.service`. It holds no secrets; a
-  compromised bridge could mislabel requesters, not skip prompts.
+- `op-broker-bridge.service` (host, `op-broker-bridge` uid, AF_UNIX only; it
+  runs exactly while `sandbox-vm-onepassword.service` does) owns the client
+  sockets, checks peers like the broker does, and accepts uplinks only from
+  1Password's VM's relay: its uid (`app-onepassword`) in
+  `sandbox-vm-onepassword-relay.service`. It holds no secrets; a compromised
+  bridge could mislabel requesters, not skip prompts.
 - Browser in one VM and 1Password in another: both hooks at once; the host path
   is relay → client socket → bridge → uplink relay → broker.
 
-The in-guest broker needs gid `onepassword-cli` in the guest (the app checks it
-there), and runs with the guest's config file from
+The in-guest broker runs with the guest's config file from
 `modules.apps.op-broker.guestBroker`. Its guest service runs as the guest's root
 (`sandbox.vm.guestServices.<n>.root`) only to prepare: it copies `op` and
-`timeout` to `/run/sbx/op-bin/` (tmpfs, root:root 0755), creates the group, then
-`setpriv`s to the user (own groups) and runs the broker, which runs `op` as
-`/run/sbx/op-bin/timeout 120 /run/wrappers/bin/op …`. That wrapper is the guest's
-`security.wrappers.op`: setgid `onepassword-cli`, running the tmpfs copy, as
-1Password's own install and NixOS's `programs._1password` have the CLI. The app
-wants the group as op's **effective** gid with the real gid the user's: with
-both set to the group (`setpriv --regid`, tried first) it logs "invalid group
-attempted to connect, rejecting remote" and resets the connection; it says the
-same of a group whose gid is below 1000, so `onepassword-cli` is pinned to
-NixOS's 31002 (`ids.gids`, as `programs._1password` has it; auto-assigned it
-was 996) on the host and in the guest (120 s, not
-the host serve mode's 30: the first `op` waits for 1Password's authorization,
-i.e. for you to answer the host's polkit dialog, and killing op earlier cancels
-that dialog under your fingers and counts towards the 3-strikes pause). The
-group is also declared in the guest system (`modules.sandbox.vm.guestModules`),
-so it exists before 1Password starts and resolves it. The broker's dialogs get
-the host's font configuration (the generic guest has no fonts) and GTK's
-software renderer (`GSK_RENDERER=cairo`: no GPU behind the cross-domain
-display), since guest services get none of the app's GUI environment. Why: the
-app's root-ownership checks above apply to the CLI's binary **and its parent's**,
-and the guest's `/nix/store` is virtio-fs, i.e. FUSE, with the host's root-owned
-files showing as nobody's (crosvm's jailed fs device maps only its own uid). The
-copies are root-owned and on tmpfs; `timeout` forks `op` and waits, so it is op's
-parent (the broker's interpreter is a store path). Requires
-`modules.apps.onepassword-system-auth` (below), which the app needs to authorize
-the CLI session at all.
+`timeout` to `/run/sbx/op-bin/` (tmpfs, root:root 0755), then `setpriv`s to the
+user (own groups) and runs the broker, which runs `op` as
+`/run/sbx/op-bin/timeout 120 /run/wrappers/bin/op …`. What each piece is for:
+
+- **The copies.** The app's root-ownership checks (*1Password in its
+  container*) apply to the CLI's binary **and its parent's**, and the guest's
+  `/nix/store` is virtio-fs, i.e. FUSE, with the host's root-owned files
+  showing as nobody's (crosvm's jailed fs device maps only its own uid). The
+  copies are root-owned and on tmpfs; `timeout` forks `op` and waits, so it is
+  op's parent (the broker's interpreter is a store path).
+- **The wrapper.** `/run/wrappers/bin/op` is the guest's `security.wrappers.op`:
+  setgid `onepassword-cli`, running the tmpfs copy, as 1Password's own install
+  and NixOS's `programs._1password` have the CLI. The app wants the group as
+  op's **effective** gid with the real gid the user's: with both set to the
+  group (`setpriv --regid`) it logs "invalid group attempted to connect,
+  rejecting remote" and resets the connection.
+- **The gid.** The app says the same of a group whose gid is below 1000, so
+  `onepassword-cli` is pinned to NixOS's 31002 (`ids.gids`, as
+  `programs._1password` has it) on the host and in the guest. The group is
+  declared in the guest system (`modules.sandbox.vm.guestModules`), so it
+  exists before 1Password starts and resolves it.
+- **120 s**, not the host serve mode's 30: the first `op` waits for
+  1Password's authorization, i.e. for you to answer the host's polkit dialog,
+  and killing op earlier cancels that dialog under your fingers and counts
+  towards the 3-strikes pause.
+- **The dialogs' environment.** The broker's dialogs get the host's font
+  configuration (the generic guest has no fonts) and GTK's software renderer
+  (`GSK_RENDERER=cairo`: no GPU behind the cross-domain display), since guest
+  services get none of the app's GUI environment.
+
+Requires `modules.apps.onepassword-system-auth` (below), which the app needs to
+authorize the CLI session at all.
 
 ### 1Password's own prompt and system authentication (VM)
 
-The flow the user asked for: log in to 1Password in its VM; the first time the
+The flow: log in to 1Password in its VM; the first time the
 broker's `op` connects, **1Password asks** (its CLI authorization, through polkit
 action `com.1password.1Password.authorizeCLI`); then every fill asks through
 op-broker's dialog. And "unlock using system authentication" (polkit action
@@ -461,8 +485,11 @@ without a logind session, and there is no polkit. `onepassword-system-auth.nix`
    helpers; the Rust core's pid is whichever calls polkit), and drops dead ones.
    `BeginAuthentication` for anything but the two actions, or without the user's
    identity on offer, is refused. For the two actions it sends
-   `{"op":"authenticate","action":…}` to the host over the VM's broker socket
-   (`/run/sbx/broker.sock`) and waits.
+   `{"op":"authenticate","action":…}` to the host's `sbx-broker` and waits. It
+   dials the host's vsock relay itself (`--broker vsock`) rather than using
+   the guest relay's `/run/sbx/broker.sock`: that socket and the guest relay
+   are the guest user's, who could otherwise stand in for the host and answer
+   "granted".
 3. **The host asks you, with your own polkit agent.** `sbx-broker` (your session)
    maps the action through `modules.sandbox.broker.sandboxes.vm-onepassword.authenticate`
    to a host action (`org.otisroot.sandbox.onepassword.unlock` /
@@ -478,8 +505,10 @@ without a logind session, and there is no polkit. `onepassword-system-auth.nix`
    the agent closes the connection and the broker kills pkcheck, which cancels
    your dialog.
 4. Granted: the guest agent (root) answers polkitd itself
-   (`AuthenticationAgentResponse2(0, cookie, unix-user:<user>)`) and returns, and
-   1Password's check succeeds. Denied/dismissed: an error, and the app sees a
+   (`AuthenticationAgentResponse2(<the user's uid>, cookie, unix-user:<user>)`:
+   polkitd files an agent root registered for a process under that process's
+   user, and looks the cookie up there) and returns, and 1Password's check
+   succeeds. Denied/dismissed: an error, and the app sees a
    failed authorization.
 
 Trust: the host decides, and only for the two actions mapped for exactly this VM;
@@ -496,7 +525,6 @@ work (`coreutils` is multi-call, dispatched by argv[0]'s basename).
 
 Nested (`sandbox.vm.nested`) is refused by an assertion: the nixpak namespaces
 inside the guest would bring back the container's problem.
-
 
 ### Service-account mode (opt-in)
 
@@ -575,41 +603,39 @@ The official 1Password extension is blocked
 (`ExtensionSettings."{d634138d-c276-4fc8-924b-40a0ea21d284}".installation_mode =
 "blocked"` for Firefox, `ExtensionInstallBlocklist` with
 `aeblfdkhhhdcdjpifhhbdiojplfjncoa` and the beta `khgocmkkpikpnmmkgmdnfckapcdkgfaf`
-for Chromium). The old direct-integration binds (`lib/features/onepassword*.nix`:
-`1Password-BrowserSupport`, and the host's `~/.mozilla/native-messaging-hosts` /
-`NativeMessagingHosts` read-write) are gone (2026-10-01): the Firefox-family one
-covered the directory op-broker's manifest is bound into, so Zen and Firefox
-reported "No such native application com.otisroot.op_broker".
+for Chromium). The browsers get no direct-integration binds
+(`1Password-BrowserSupport`, or the host's `~/.mozilla/native-messaging-hosts` /
+`NativeMessagingHosts` read-write): a bind over the Firefox-family directory
+would cover the one op-broker's manifest is bound into, and the browser then
+reports "No such native application com.otisroot.op_broker".
 
 ## Sandbox-core hooks
 
-Wired through three generic per-app VM options (`lib/apps.nix`,
+Wired through generic per-app VM options (`lib/apps.nix`,
 `lib/vm/instance.nix`, `lib/vm/guest.nix`), which this module sets:
 
 1. `sandbox.vm.relays.op` on browser VMs: host `/run/op-broker/clients/<app>-vm/sock`,
-   guest `/run/sbx/op/sock`, carried by the VM's vsock relay (the host end runs
-   as jrt in `sandbox-vm-<app>-relay.service`, which the broker's peer check expects).
+   guest `/run/sbx/op/sock`, carried by the VM's vsock relay (the host end is
+   `sandbox-vm-<app>-relay.service`, which the peer check expects).
 2. `sandbox.vm.relays.op-uplink` on the 1Password VM: host
    `/run/op-broker/uplink/sock`, guest `/run/sbx/op-uplink/sock`.
-3. `sandbox.vm.guestServices.op-broker` on the 1Password VM, with `root = true`
-   (new: guest services may run as the guest's root): `guestBroker.command`
-   prepares the root-owned `op`/`timeout` copies, creates `onepassword-cli`, and
-   drops to the user with that primary group, with the VM's Wayland display and
-   session bus. `onepassword-system-auth.nix` adds `guestServices.polkit-agent`
-   (root) and a host-wide `modules.sandbox.vm.guestModules` entry (new: extra
-   NixOS modules for the one generic guest system) for polkit and the policy.
-4. `sandbox.vm.guestBinds` on browser VMs: the native-messaging manifest, bound
+3. `sandbox.vm.guestServices.op-broker` on the 1Password VM, with `root = true`:
+   `guestBroker.command` prepares the root-owned `op`/`timeout` copies and
+   drops to the user, with the VM's Wayland display and session bus.
+   `onepassword-system-auth.nix` adds `guestServices.polkit-agent` (root).
+4. `modules.sandbox.vm.guestModules` (extra NixOS modules for the one generic
+   guest system): the `onepassword-cli` group and the setgid `op` wrapper from
+   this module; polkit and 1Password's policy from
+   `onepassword-system-auth.nix`.
+5. `sandbox.vm.guestBinds` on browser VMs: the native-messaging manifest, bound
    read-only where the browser looks (as the container binds do).
-5. Not done: **end sessions on sandbox stop** (an `ExecStopPost=` telling the
-   broker to drop that requester's grants; needs a control socket in the broker).
 
-Grouped VMs (modules.sandbox.groups) aren't covered: the peer checks name the
-per-app relay unit.
+Not covered: see *Open items*.
 
 ## Verification status
 
 Tested (`python3 -m unittest discover -s pkgs/op-broker/tests`, also run in the
-package's `checkPhase`; 45 tests): origin and item-URL validation and matching,
+package's build): origin and item-URL validation and matching,
 request validation, exact `op` command lines (fake `op` rejects anything else),
 dialogs never containing a secret, audit never containing a secret, deny and
 cooldown, session grants (scope, idle expiry, max age, `--no-session`), chooser
@@ -623,7 +649,7 @@ repeats not counted, per-requester, one per interval, window expiry, the rate-li
 trigger, the block button → `cooldown`, no notice command → audit only).
 
 `sbx-polkit-agent` (`lib/vm/tests/test_polkit_agent.py`, run when
-`lib/vm/polkit-agent.nix` builds; 9 tests) against a private dbus-daemon, a fake
+`lib/vm/polkit-agent.nix` builds) against a private dbus-daemon, a fake
 polkitd and a fake host broker: the registration wire format (unix-process
 subject with pid/start-time/uid), one connection per registered process, only
 matching processes, granted → `AuthenticationAgentResponse2(0, cookie,
@@ -632,22 +658,20 @@ unhandled action → an error without a response (and without asking the host fo
 the last two), CancelAuthentication → `Cancelled` and the host connection
 closed, process exit → registration dropped.
 
-NixOS (evaluated): excelsior, galaxy and constitution as configured (1Password in
-its container: op-broker and system auth off); excelsior with op-broker forced on
-(container: wired, warned); with 1Password and Zen in VMs (op-broker, the bridge,
-the guest broker and polkit agent, guest polkit + policy, host auth actions, all
-on by default; built); with a service account (own display service). The
-JavaScript is syntax-checked by node at build time. Not tested: `sbx-broker`'s
-`authenticate` op (pkcheck against a live polkitd), the guest start script.
+NixOS: the module evaluates in each deployment (1Password in its VM, the
+default; in its container with op-broker forced on, which warns; with a
+service account). The JavaScript is syntax-checked by node at build time. Not
+tested off hardware: `sbx-broker`'s `authenticate` op (pkcheck against a live
+polkitd), the guest start script. On hardware: 1Password runs in its VM; fills
+end to end are not confirmed (the checklist below).
 
 ## Hardware test checklist
 
-Everything below needs the real desktop. 1Password in its VM
-(`modules.apps.onepassword.sandbox.mode = "vm"`), a browser with the extension.
+Everything below needs the real desktop: 1Password in its VM (the default), a
+browser with the extension.
 
-1. Guest basics, as root in the 1Password VM (e.g. `sbx-request exec` is
-   host-side; use the VM's serial console or `sandbox-vm status onepassword` and
-   the guest journal): `systemctl status sbx-svc-polkit-agent sbx-svc-op-broker`
+1. Guest basics, as root in the 1Password VM (`sudo sandbox-vm root
+   onepassword`): `systemctl status sbx-svc-polkit-agent sbx-svc-op-broker`
    running; `ls -la /run/sbx/op-bin` shows `op` and `timeout` root:root 0755;
    `pkaction | grep 1password` lists the three actions and
    `pkaction --action-id com.1password.1Password.authorizeCLI --verbose` shows
@@ -687,17 +711,19 @@ Everything below needs the real desktop. 1Password in its VM
 11. Allow until it stops: unchanged behaviour (grant survives until the browser's
     port is gone for 5 min).
 12. Container (optional, expected to fail): with op-broker forced on and 1Password
-    in its container, a fill answers `unavailable` and 1Password's logs show it
+    in its container (`modules.apps.onepassword.sandbox.mode = "container"`), a fill answers `unavailable` and 1Password's logs show it
     rejected the CLI; "Unlock using system authentication" isn't offered. That
     confirms the analysis above.
 
 ## Troubleshooting
 
-For 1Password in its VM (the default). Paste the output of each step; each one
-narrows the failure to one hop. `b` is the browser's client: its app name
-(`firefox`, `zen-browser`, `ungoogled-chromium`) for the container, with `-vm`
-(`zen-browser-vm`) for its VM. For a VM client, probe as `jrt` (the relay's
-uid), not `app-<b>`.
+For 1Password in its VM (the default). Each step narrows the failure to one
+hop. `b` is the browser's container client, i.e. its app name (`firefox`,
+`zen-browser`, `ungoogled-chromium`). A browser's VM client (`<b>-vm`) can't be
+probed from a host shell: the bridge also checks the peer's cgroup, which only
+the VM's relay unit has. Probe the container client to test the chain behind
+the bridge, then the VM's own hop from inside it (`/run/sbx/op/sock`, `sudo
+sandbox-vm root $b`).
 
 **0. The usual suspects.** After a rebuild that touched op-broker, restart the
 browser (its sandbox binds `/run/op-broker/clients/<b>` only when it starts) and
@@ -748,22 +774,18 @@ side of that: `journalctl --user -b -u sbx-broker | grep authenticate`
 `hyprpolkitagent` running? / `paused after repeated failed authentications` →
 wait 5 minutes).
 
-**2. Inside 1Password's VM** (SSH as yourself, as the launcher does; your user
-there may read the whole guest journal):
+**2. Inside 1Password's VM** (as the guest's root: your own key into this VM
+only starts 1Password; `u` is the desktop user, the same name in the guest):
 
 ```sh
-cid=$(( 3 + 16#$(printf %s onepassword/main | sha256sum | cut -c1-7) ))
-rt=/run/sandbox-vm/onepassword/main
-vmssh() { ssh -F /dev/null -o "ProxyCommand=/run/current-system/systemd/lib/systemd/systemd-ssh-proxy %h %p" \
-  -o ProxyUseFdpass=yes -o User=$USER -o IdentityFile=$rt/client/id_ed25519 -o IdentitiesOnly=yes \
-  -o UserKnownHostsFile=$rt/client/known_hosts -o HostKeyAlias=sandbox-vm -o BatchMode=yes -T "vsock/$cid" \
-  "PATH=/run/current-system/sw/bin; $1"; }
+u=jrt
+vmroot() { sudo sandbox-vm root onepassword -- "PATH=/run/current-system/sw/bin; u=$u; $1"; }
 
-vmssh 'systemctl status --no-pager sbx-svc-op-broker sbx-svc-polkit-agent sbx-relay'
-vmssh 'journalctl -b --no-pager -u sbx-svc-op-broker | tail -n 40'
-vmssh 'ls -ld /run/sbx /run/sbx/op-bin; ls -la /run/sbx/op-bin /run/sbx/op-uplink /run/user/$(id -u); getent group onepassword-cli'
-vmssh 'ps -eo pid,user,group,args | grep -e op-broker -e 1password | grep -v grep'
-vmssh 'journalctl -b --no-pager -u sbx-svc-polkit-agent -u polkit | tail -n 30'
+vmroot 'systemctl status --no-pager sbx-svc-op-broker sbx-svc-polkit-agent sbx-relay'
+vmroot 'journalctl -b --no-pager -u sbx-svc-op-broker | tail -n 40'
+vmroot 'ls -ld /run/sbx /run/sbx/op-bin; ls -la /run/sbx/op-bin /run/sbx/op-uplink /run/user/$(id -u $u); getent group onepassword-cli'
+vmroot 'ps -eo pid,user,group,args | grep -e op-broker -e 1password | grep -v grep'
+vmroot 'journalctl -b --no-pager -u sbx-svc-polkit-agent -u polkit | tail -n 30'
 ```
 
 - `sbx-svc-op-broker` must be active; its journal starts with `"event": "ready",
@@ -778,8 +800,9 @@ vmssh 'journalctl -b --no-pager -u sbx-svc-polkit-agent -u polkit | tail -n 30'
 - `/run/sbx/op-bin/{op,timeout}` root:root 0755; `/run/sbx` root-owned;
   `/run/sbx/op-uplink/sock` exists; `/run/user/<uid>` has
   `1Password-BrowserSupport.sock` (1Password's CLI socket: none means the app
-  isn't running in this VM) and `wayland-0`; the group exists; the broker's
-  process runs as you with group `onepassword-cli`.
+  isn't running in this VM) and `wayland-0`; the group exists with gid 31002;
+  the broker's process runs as you, and `op` (while one runs) with group
+  `onepassword-cli`.
 - The polkit agent says `serving …` and `Registered Authentication Agent …`
   appears in polkit's log for the `1password` processes; a failed CLI
   authorization shows there too.
@@ -787,9 +810,9 @@ vmssh 'journalctl -b --no-pager -u sbx-svc-polkit-agent -u polkit | tail -n 30'
   through the VM's display):
 
   ```sh
-  vmssh 's=$(systemctl show -p ExecStart --value sbx-svc-op-broker | grep -o "/nix/store/[^ ;]*op-broker-guest-start" | head -n 1);
+  vmroot 's=$(systemctl show -p ExecStart --value sbx-svc-op-broker | grep -o "/nix/store/[^ ;]*op-broker-guest-start" | head -n 1);
     p=$(grep -o "/nix/store/[^\"]*/bin/sbx-prompt" $(grep -o "/nix/store/[^ ]*op-broker-guest.json" "$s"));
-    env $(grep -o "FONTCONFIG_FILE=[^ ]*" "$s") GSK_RENDERER=cairo XDG_RUNTIME_DIR=/run/user/$(id -u) WAYLAND_DISPLAY=wayland-0 \
+    runuser -u $u -- env $(grep -o "FONTCONFIG_FILE=[^ ]*" "$s") GSK_RENDERER=cairo XDG_RUNTIME_DIR=/run/user/$(id -u $u) WAYLAND_DISPLAY=wayland-0 \
       DBUS_SESSION_BUS_ADDRESS=unix:path=/run/sbx/bus/bus \
       "$(grep -o "/nix/store/[^ ]*/bin/zenity" "$p")" --info --text "op-broker dialog test"'
   ```
@@ -797,7 +820,8 @@ vmssh 'journalctl -b --no-pager -u sbx-svc-polkit-agent -u polkit | tail -n 30'
   A window must appear on the host; an error printed here is why op-broker's
   prompts answer `denied` without one.
 
-**3. The browser's side** (step 1 works, the browser doesn't):
+**3. The browser's side** (step 1 works, the browser doesn't; for a browser in
+its container):
 
 ```sh
 pid=$(pgrep -u app-$b -n)
@@ -816,7 +840,7 @@ com.otisroot.op_broker" (manifest not found); Chromium —
 "Specified native messaging host not found" = manifest), and `journalctl -b -u
 sandbox-$b | grep op-broker-native-host`.
 
-## Decisions (the former open questions)
+## Decisions
 
 1. **1Password's authorization of the CLI:** desktop-app integration (not a
    service account), with 1Password's own polkit prompt answered by real system
@@ -825,21 +849,26 @@ sandbox-$b | grep op-broker-native-host`.
    1Password runs in its VM.
 2. **Probing:** `no-match` stays dialog-free per request, but probing shows a
    rate-limited notice (*Probing notice*).
-3. **Firefox signing:** handled separately (Firefox Developer Edition, which
-   honours `xpinstall.signatures.required = false`, with op-broker force-installed).
+3. **Firefox signing:** Firefox Developer Edition, which honours
+   `xpinstall.signatures.required = false`, with op-broker force-installed.
 4. **"Allow until it stops":** kept as is.
 5. **Subdomain matching:** kept as the default, and labelled in the chooser and
    the dialog.
 
-## Open questions
+## Open items
 
 1. Container: implement a 1Password container without user/pid namespaces
    (setuid-root bubblewrap limited to app-onepassword, or the root runScript
    building the sandbox), so op-broker and system auth work there too? It weakens
    the container (host pid namespace; a privileged bwrap) for the one app that
-   holds the vault; the VM already provides both.
+   holds the vault; the VM already provides both. Leaning no.
 2. Thresholds: 4 sites / 2 min, one notice per 10 min, block for 1 h — adjust
    after living with it?
+3. End sessions on sandbox stop: an `ExecStopPost=` telling the broker to drop
+   that requester's grants (needs a control socket in the broker). Today a
+   grant outlives the browser by `sessionIdle`.
+4. Browsers in group VMs (`modules.sandbox.groups`) aren't covered: the peer
+   checks name the per-app relay unit.
 
 ## Sources
 

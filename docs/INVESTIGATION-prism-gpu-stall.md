@@ -1,8 +1,11 @@
-# Prism/Minecraft GPU stall investigation — 2026-09-27
+# Prism/Minecraft GPU stall in a virtio-nvgpu VM
 
-Inspected virtio-nvgpu revision `2eec306fae9b0baba495d506c515fb883a649477`,
-which matches this configuration's flake.lock. Source tree was clean and was
-not modified. Evidence: prism-vm-host.log and prism-host-kernel.log.
+Why Prism Launcher / Minecraft in its VM stalled with Xid 69 on the RTX 5090,
+and what was changed. The analysis is of virtio-nvgpu revision
+`2eec306fae9b0baba495d506c515fb883a649477` (the flake pin at the time), from
+the backend's log and the host kernel log of two runs; the fork has moved since
+(see *What changed*), so the function names and sizes below describe that
+revision, not the current pin.
 
 ## Confirmed allocation failure
 
@@ -58,7 +61,7 @@ operation or recording an active mapping. The mapping descriptor's eventual
 close can clean this up, but the failure is not transactional. This warrants
 a separate failure-injection test; the logs do not establish it causes Xid.
 
-## Validation and next capture
+## Validation and what to capture next
 
 A standalone rustc harness imported the actual quota.rs and mmap.rs modules
 (with minimal surrounding type stubs). Five tests passed: three existing quota
@@ -67,8 +70,8 @@ pool capacity remaining, and a mapping-index test showing a guest VA misses
 while descriptor cleanup retrieves the retained entry. This is bookkeeping
 validation, NOT a host GPU or driver-lifecycle reproduction.
 
-Full `cargo test --offline -p device` could not resolve libc from the local
-Cargo cache. No hardware reproduction was performed here.
+The fork's full `cargo test -p device` was not run, and there was no hardware
+reproduction beyond the two logged runs.
 
 To distinguish live demand from accumulated retention, add bounded snapshots
 on first quota failure: owner/zone bytes split between active mappings with
@@ -80,43 +83,36 @@ as a complete accounting ledger.
 Recommended order: fix and regression-test guest-address tracking and failed
 map rollback; measure retained versus live mappings; then size a configurable
 window for actual rendering workloads while retaining per-process isolation.
-The current sizing comments explicitly derive from enumeration/CUDA/NVENC
+That revision's sizing comments explicitly derive from enumeration/CUDA/NVENC
 traces on a T4, not a game rendering on this RTX 5090. The relationship between
 the repeated allocation failures and Xid remains a hypothesis to test.
 
-## Configurable limit increase (implemented; reviewed 2026-09-29)
+## What changed
 
-Options: per-app `sandbox.vm.gpuMemoryMiB` (1024-16384, whole GiB, default
-1024) and `sandbox.vm.gpuMemoryProcessPercent` (1-95, default 50), and the same
-under a group's `vm.*` for a group VM. Prism Launcher, Lunar Client and Steam
-default to 16384 MiB / 90 %. For another game:
+The window and the per-process share are now backend flags in the fork
+(`--window-size`, `--window-owner-share`), set per VM from
+`sandbox.vm.gpuMemoryMiB` (256-65536 MiB, a multiple of 64, default 1024) and
+`sandbox.vm.gpuMemoryProcessPercent` (1-95, default 50), or a group's `vm.*`
+for a group VM (`lib/vm/nvgpu.nix` `windowArgs`). nixos-dots patches nothing in
+the fork. Prism Launcher, Lunar Client and Steam (and the `games` group)
+default to 24576 MiB / 90 %. For another game:
 
 ```nix
 modules.apps.<game>.sandbox.vm.gpuMemoryMiB = 4096;
 ```
 
-The defaults are the fork's own backend, unchanged. Any other pair builds a
-variant with `lib/vm/nvgpu.nix` `backendFor`. The variant appends
-`ZoneConfig::configured_window()`, which is `default_1gib()`'s split scaled.
-It appends `ShmAllocator::set_owner_percent()` and
-`NvidiaBackend::with_configured_window()`, and points the binary's
-GET_SHMEM_CONFIG and its backend construction at them. Those two call sites are
-replaced with `--replace-fail`. The build runs the variant's own tests and the
-fork's GET_SHMEM_CONFIG test: window size, the share admitted in full and not a
-page more, and another process still served. At 16 GiB / 90 %, the zones are UC
-512, WC 12288 and WB 3584 MiB. The per-process caps are about 10.8 GiB WC,
-3.15 GiB WB and 0.45 GiB UC. The reserve is `min(zone/8, zone - share)` and the
-floor is `min(zone/16, reserve)`, so at 50 % this is exactly `Share::half`.
-Guest RAM and VRAM are independent. A change takes a new VM session.
+Guest RAM and VRAM are independent of the window. A change takes a new VM
+session.
 
-What this gives up: above 50 %, one guest process can push a zone down to its
-reserve, and the VM's other processes share only that. Each VM has its own
-backend and window, so this affects availability inside one guest only. A
-larger window also lets one guest keep more video memory BAR1-mapped at once,
-and BAR1 is shared host-wide. Touched window pages count against the VMM
-unit's `MemoryMax`, so host RAM stays bounded as before.
+What a larger share gives up: above 50 %, one guest process can push a zone
+down to its reserve, and the VM's other processes share only that. Each VM has
+its own backend and window, so this affects availability inside one guest only.
+A larger window also lets one guest keep more video memory BAR1-mapped at once,
+and BAR1 is shared host-wide. Touched window pages count against the VMM unit's
+`MemoryMax` (guest RAM + 512 MiB + the window), so host RAM stays bounded.
 
-This raises capacity. It does not repair the address-translation or rollback
-issues above. If those leak, a larger window only delays the stall. The
-upstream request, with both defects, is in
-`docs/virtio-nvgpu-gpu-window-and-compat-brief.md`.
+This raises capacity. It does not by itself repair the address-translation or
+rollback issues above: if those leak, a larger window only delays the stall.
+Both were reported to the fork; whether the current pin
+fixes them has not been checked here, and the game VMs have not been re-run to
+confirm the stall is gone.
