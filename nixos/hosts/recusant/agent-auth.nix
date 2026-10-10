@@ -107,6 +107,14 @@
     }
   ];
 
+  # systemd refuses a DynamicUser state directory unless /var/lib/private is
+  # 0700; impermanence creates it 0755, as the parent of the bind mounts (here
+  # and on /persist). The same directory serves garage and attic.
+  systemd.tmpfiles.rules = [
+    "d /var/lib/private 0700 root root -"
+    "d /persist/var/lib/private 0700 root root -"
+  ];
+
   # ── TLS + reverse proxy ────────────────────────────────────────────────────
   # Covered by the existing *.recusant.rooty.dev wildcard cert (secrets.nix),
   # same as the other services on this host.
