@@ -46,8 +46,9 @@ shells, the kill switch and desktop approval prompts (its
   and after `nix flake update agent-auth`. **The lock still pins `b52e87f`**:
   the newer commits are not pushed yet.
 - Where the agent VM is enabled (excelsior): `vm.unit = agent-vm.service`
-  (lockdown freezes it) and the user tier. hostd then runs as root with three
-  capabilities, and its state dir (persisted) is root's. User-tier shells
+  (lockdown freezes it) and the user tier. hostd then runs as root, without
+  capabilities (PID 1 starts the jobs; polkit authorizes uid 0), and its
+  state dir (persisted) is root's. User-tier shells
   are on on excelsior only; the root tier is off everywhere; no `autoCommands`.
 - `modules.agentAuth.desktopPrompts.enable` (excelsior only): desktop
   prompts, with presence reported by hypridle (`hypridle.presenceCommand`:
