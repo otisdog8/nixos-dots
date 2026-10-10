@@ -12,6 +12,11 @@
     pkgs,
     ...
   }:
+  let
+    browserSettings = import ../../../lib/browser-settings.nix { inherit lib; };
+    # ungoogled-chromium's compiled-in policy path (lib/browser-settings.nix).
+    policyRoot = "/etc/chromium/policies";
+  in
   {
     imports = [
       ../../../lib/features/browser.nix
@@ -42,13 +47,61 @@
       defaultBackend = "systemd";
       storage = lib.mkForce [ ];
 
-      customConfig = _: {
-        modules.apps.captive-browser-chromium.sandbox.dedicatedUser = true;
-        users.users."app-captive-browser-chromium".extraGroups = [
-          "video"
-          "audio"
-        ];
+      # Baseline policies only (no telemetry, DoH off so name resolution stays with
+      # the portal's SOCKS proxy, no password saving): no extensions, search engine
+      # or package changes — the command line above stays as it is.
+      # A portal login page has no business recording: sound out only, and only
+      # xdg.nix's benign portal baseline — no screen capture, screenshots or
+      # camera (browser.nix adds those; this browser runs on hostile networks,
+      # and ScreenCast would also give its VM the capture bridge).
+      capabilities.microphone = lib.mkForce false;
+      portalInterfaces = lib.mkForce [
+        "FileChooser"
+        "OpenURI"
+        "Email"
+        "Print"
+        "Trash"
+        "Notification"
+        "Inhibit"
+        "Settings"
+        "NetworkMonitor"
+        "ProxyResolver"
+        "MemoryMonitor"
+        "PowerProfileMonitor"
+        "Realtime"
+        "GameMode"
+        "Secret"
+      ];
+      capabilities.binds.ro = browserSettings.chromiumBinds {
+        appName = "captive-browser-chromium";
+        inherit policyRoot;
       };
+
+      customOptions =
+        _:
+        browserSettings.mkOptions {
+          appName = "captive-browser-chromium";
+          family = "chromium";
+          searchEngine = null;
+          withHardwareVideoDecoding = false;
+        };
+
+      customConfig =
+        { lib, ... }@args:
+        lib.mkMerge [
+          {
+            modules.apps.captive-browser-chromium.sandbox.dedicatedUser = true;
+            users.users."app-captive-browser-chromium".extraGroups = [
+              "video"
+              "audio"
+            ];
+          }
+          (browserSettings.chromiumConfig {
+            appName = "captive-browser-chromium";
+            inherit policyRoot;
+            defaultExtensions = { };
+          } args)
+        ];
     };
   }
 )

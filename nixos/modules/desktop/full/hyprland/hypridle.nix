@@ -19,6 +19,34 @@ let
   # expands at runtime.
   idleFlag = "$XDG_RUNTIME_DIR/idle-suspend";
 
+  # Hyprland runs the Lua config parser, where `hyprctl dispatch <arg>` is
+  # eval'd as `hl.dispatch(<arg>)` — so <arg> must be a Lua dispatcher
+  # expression. The legacy `dispatch dpms off` form is a Lua syntax error there
+  # and fails silently (monitors never blank).
+  dpms =
+    action: monitor:
+    let
+      mon = lib.optionalString (monitor != null) '', monitor = "${monitor}"'';
+    in
+    "hyprctl dispatch '${''hl.dsp.dpms({ action = "${action}"${mon} })''}'";
+
+  # Blank all monitors shortly after locking. Every lock path (CTRL+ALT+l,
+  # wlogout, idle ladder, before_sleep) funnels through lock_cmd, so this is the
+  # one place to do it. The delay lets hyprlock grab the screen first and keeps
+  # the pointer motion / key press that triggered the lock from instantly
+  # re-enabling dpms (mouse_move/key_press_enables_dpms). Wall-clock guard: when
+  # the lock came from before_sleep_cmd the machine suspends mid-sleep, and
+  # without it this would fire on resume and undo after_sleep_cmd's `dpms on`.
+  blankAfterLock = ''(s=$(date +%s); sleep 2; [ $(( $(date +%s) - s )) -le 5 ] && ${dpms "off" null}) &'';
+
+  # cfg.presenceCommand, told "idle", "active", "locked" or "unlocked". Never
+  # in the way of locking: in the background, its failure ignored.
+  presence =
+    state: lib.optionalString (cfg.presenceCommand != null) "(${cfg.presenceCommand} ${state} >/dev/null 2>&1 &) ; ";
+  # After hyprlock exits: unlocked, unless this was a second lock_cmd while
+  # the screen was already locked (that hyprlock exits at once).
+  presenceUnlocked = lib.optionalString (cfg.presenceCommand != null) " ; ${pkgs.procps}/bin/pgrep -x hyprlock >/dev/null || ${cfg.presenceCommand} unlocked >/dev/null 2>&1";
+
   # Exit 0 only when on battery. Glob over A* (AC0/ACAD/ADP1/…) instead of the
   # old hardcoded AC0, so it works on any laptop's supply naming.
   onBattery = ''test "$(cat /sys/class/power_supply/A*/online 2>/dev/null | head -n1)" = 0'';
@@ -40,6 +68,23 @@ in
       '';
     };
 
+    presenceCommand = lib.mkOption {
+      type = lib.types.nullOr lib.types.str;
+      default = null;
+      description = ''
+        A command told whether the user is at this desktop: called with
+        "idle" / "active" (presenceTimeout without input, and back) and
+        "locked" / "unlocked" (around hyprlock). Set by agent-auth's hostd
+        (modules/system/agent-auth-daemons.nix) for its desktop prompts.
+      '';
+    };
+
+    presenceTimeout = lib.mkOption {
+      type = lib.types.int;
+      default = 120;
+      description = "Seconds without input before presenceCommand is told \"idle\".";
+    };
+
     oledTimeout = lib.mkOption {
       type = lib.types.int;
       default = 150;
@@ -57,7 +102,7 @@ in
           general = {
             ignore_dbus_inhibit = false;
             ignore_systemd_inhibit = false;
-            lock_cmd = "sudo -K && hyprlock";
+            lock_cmd = "${presence "locked"}${blankAfterLock} sudo -K && hyprlock${presenceUnlocked}";
             unlock_cmd = "pkill -USR1 hyprlock && rm -f ${idleFlag}";
             # Lock on EVERY suspend path, not just the idle ladder. Without this,
             # a suspend triggered outside the idle timeouts — lid close, manual
@@ -69,7 +114,7 @@ in
             # before the machine actually suspends; after_sleep_cmd repaints the
             # display on resume so it isn't left blanked behind the lock.
             before_sleep_cmd = "loginctl lock-session";
-            after_sleep_cmd = "hyprctl dispatch dpms on";
+            after_sleep_cmd = dpms "on" null;
           };
 
           listener =
@@ -81,10 +126,13 @@ in
             # outputs go dark; the global `dpms on` on resume relights them.
             lib.optional (cfg.oledMonitors != [ ]) {
               timeout = cfg.oledTimeout;
-              on-timeout = lib.concatMapStringsSep " && " (
-                m: ''hyprctl dispatch dpms "off ${m}"''
-              ) cfg.oledMonitors;
-              on-resume = "hyprctl dispatch dpms on";
+              on-timeout = lib.concatMapStringsSep " && " (dpms "off") cfg.oledMonitors;
+              on-resume = dpms "on" null;
+            }
+            ++ lib.optional (cfg.presenceCommand != null) {
+              timeout = cfg.presenceTimeout;
+              on-timeout = "${cfg.presenceCommand} idle";
+              on-resume = "${cfg.presenceCommand} active";
             }
             ++ [
             {
@@ -93,8 +141,8 @@ in
             }
             {
               timeout = 450;
-              on-timeout = "hyprctl dispatch dpms off";
-              on-resume = "hyprctl dispatch dpms on";
+              on-timeout = dpms "off" null;
+              on-resume = dpms "on" null;
             }
           ]
           # Laptops only: after lock + dpms, mark idle and suspend if on

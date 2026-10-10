@@ -120,7 +120,8 @@ in
 
           {
             "label" = "logout";
-            "action" = "hyprctl dispatch exit 0";
+            # Lua config parser: dispatch args are Lua dispatcher expressions.
+            "action" = "hyprctl dispatch 'hl.dsp.exit()'";
             "text" = "Logout";
             "keybind" = "e";
           }

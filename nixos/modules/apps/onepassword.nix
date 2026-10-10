@@ -4,11 +4,20 @@
 # Scope (per the deliberate decision): GUI + vault only. NO browser integration and
 # NO SSH agent — the two hard cross-uid channels — so this is "just another dedicated
 # Electron app" with an extra-sensitive stash. Consequences:
-#   - Unlock is by the 1Password ACCOUNT password (system-auth/polkit unlock is gone
-#     with programs._1password-gui; see auth.nix). Arguably better — no system-auth tie.
-#   - We do NOT grant the Secret Service (org.freedesktop.secrets) DBus policy, so the
-#     app can't stash its local key in jrt's kwallet — which would defeat the hiding.
-#     It keeps the vault key material inside its OWN app-onepassword profile instead.
+#   - In its container, unlock is by the 1Password ACCOUNT password: the app refuses
+#     polkit inside nixpak's user namespace (root-owned files show as uid 65534,
+#     and it checks the system bus directory is root's), so there is no
+#     system-auth unlock and no CLI integration (docs/op-broker.md).
+#   - In its VM (sandbox.mode = "vm"), onepassword-system-auth.nix gives it
+#     "unlock using system authentication" and CLI authorization (op-broker),
+#     answered by you authenticating on the HOST with your polkit agent.
+#   - Its container gets no Secret Service (org.freedesktop.secrets): the vault key
+#     material stays in its OWN app-onepassword profile, never in jrt's kwallet.
+#   - Its VM does (sandbox.vm.hostKeyring, on below), for one thing: the token that
+#     remembers this device for two-factor sign-in. Without a keyring 1Password
+#     asks for the 2FA code at every start. The VM can then read whatever
+#     kwallet serves unlocked; the vault itself is still unlocked only by the
+#     account password or system authentication, not by anything kept there.
 
 (import ../../../lib/apps.nix).mkApp (
   {
@@ -22,7 +31,10 @@
       # chromium.nix (Electron): carves .config/1Password's regenerable caches to
       # /cache, keeps the profile+vault on persist. Also pulls in gui.nix.
       ../../../lib/features/chromium.nix
-      ../../../lib/features/needs-gpu.nix
+      # No needs-gpu.nix: the vault's app renders in software. Its container
+      # gets no GPU device nodes, and its VM gets crosvm's cross-domain display
+      # instead of virtio-nvgpu — no host GPU driver interface reachable from
+      # the sandbox holding the vault.
       ../../../lib/features/network.nix
       ../../../lib/features/xdg-desktop.nix
       # 1Password lives in the tray.
@@ -63,6 +75,18 @@
         { config, lib, ... }:
         {
           modules.apps.onepassword.sandbox.dedicatedUser = true;
+          # In its VM by default: only there can the app authorize op-broker's
+          # `op` and offer system authentication (docs/op-broker.md, "Why not
+          # the container"); the container stays available per host.
+          modules.apps.onepassword.sandbox.mode = lib.mkDefault "vm";
+          modules.apps.onepassword.sandbox.vm.hostKeyring = lib.mkDefault true;
+          # 1Password copies through data-control (arboard / wl-clipboard-rs),
+          # which a sandbox's Wayland socket doesn't have: nothing it copied
+          # reached the clipboard, not even for pasting back into it. Its VM
+          # gets a data-control endpoint whose copies go to the host's
+          # clipboard (marked as secrets for clipboard managers, as 1Password
+          # marks them); it can't read the clipboard through it.
+          modules.apps.onepassword.sandbox.vm.clipboard = lib.mkDefault true;
           users.users."app-onepassword".extraGroups = [
             "video"
             "audio"

@@ -23,19 +23,41 @@ let
   hyprlandGuiutilsPkg =
     inputs.hyprland.inputs.hyprland-guiutils.packages.${system}.hyprland-guiutils.override
       { stdenv = pkgs.stdenv; };
+  # aquamarine patch: blocking DRM ioctls (the DPMS-on modesets, the forced
+  # connector probes on every monitor-wake hotplug uevent) stall the main loop
+  # for ~1s on nvidia; the keyboard's evdev buffer overflows meanwhile and the
+  # lock screen loses typed keys. The patch keeps draining input into libinput
+  # during those ioctls. Against the flake's aquamarine pin (1a10fe26).
   hyprlandPkg =
-    (inputs.hyprland.packages.${system}.hyprland.override {
+    (inputs.hyprland.packages.${system}.hyprland.override (old: {
       hyprland-guiutils = hyprlandGuiutilsPkg;
-    }).overrideAttrs
+      aquamarine = old.aquamarine.overrideAttrs (a: {
+        patches = (a.patches or [ ]) ++ [ ./patches/aquamarine-buffer-input-during-blocking-drm.patch ];
+      });
+    })).overrideAttrs
       (old: {
         postPatch = (old.postPatch or "") + ''
           substituteInPlace CMakeLists.txt \
             --replace-fail "find_package(glaze 7...<8 QUIET)" "find_package(glaze QUIET)"
         '';
       });
-  hyprlandPortalPkg = inputs.hyprland.packages.${system}.xdg-desktop-portal-hyprland.override {
-    hyprland = hyprlandPkg;
-  };
+  hyprlandPortalPkg =
+    (inputs.hyprland.packages.${system}.xdg-desktop-portal-hyprland.override {
+      hyprland = hyprlandPkg;
+      # The compositor's older nixpkgs pin also pins the picker's Qt. Its Qt
+      # must match the host qt6ct/Kvantum plugins from theming.nix: mixing
+      # Qt 6.11.1 with QtSvg 6.11.2 fails on Qt_6_PRIVATE_API symbols, then
+      # qt6ct recurses in QProxyStyle::standardPalette. Override the whole Qt
+      # scope (including its wrapper hook), preserving the compositor pin.
+      qt6 = pkgs.qt6;
+      # ...and build with that Qt's toolchain: upstream forces the pin's
+      # gcc15Stdenv, whose glibc falls behind the host Qt's (libQt6Gui needing
+      # GLIBC_2.43 against a 2.42 link) whenever the host nixpkgs moves ahead.
+      stdenv = pkgs.stdenv;
+    }).overrideAttrs
+      (old: {
+        patches = (old.patches or [ ]) ++ [ ./patches/xdph-dequeue-busy-buffers.patch ];
+      });
 
   # Screencopy permission allow-list targets. Exact store paths double as
   # regexes for hl.permission — they re-interpolate on every rebuild.
@@ -81,7 +103,11 @@ let
     -----------------------------------------------------------------
     hl.on("hyprland.start", function()
       hl.exec_cmd("kwalletd6")
-      hl.exec_cmd("systemctl --user start hyprpolkitagent")
+      -- The agent itself, not its user unit: the unit is PartOf=graphical-session.target,
+      -- which this session never starts, and was stopped right after login (no
+      -- polkit agent at all). Run from here it is in the login session and
+      -- registers for it.
+      hl.exec_cmd("${pkgs.hyprpolkitagent}/libexec/hyprpolkitagent")
       hl.exec_cmd("${pkgs.kdePackages.kwallet-pam}/libexec/pam_kwallet_init")
       hl.exec_cmd("waybar")
       hl.exec_cmd("nm-applet")
@@ -309,18 +335,23 @@ in
               };
             };
             general = {
-              gaps_in = 3;
-              gaps_out = 3;
+              gaps_in = 1;
+              gaps_out = 1;
             };
             decoration = {
               rounding = 0;
-              active_opacity = 0.97;
-              inactive_opacity = 0.9;
+              active_opacity = 1.0;
+              inactive_opacity = 1.0;
             };
             dwindle = {
               preserve_split = true;
               force_split = 0;
               smart_split = true;
+            };
+            render = {
+              # Fullscreen HDR apps switch their monitor to HDR even when its
+              # rule is cm = "auto" (successor to cm_fs_passthrough).
+              cm_auto_hdr = 1;
             };
             binds = {
               allow_workspace_cycles = true;
@@ -346,7 +377,8 @@ in
               mode = "highres";
               position = "auto";
               scale = 1;
-              bitdepth = 8;
+              bitdepth = 10;
+              cm = "auto";
             }
           ]
           ++ cfg.monitors;

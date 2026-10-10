@@ -7,7 +7,7 @@
   #
   # Where my-app.nix is a module like:
   #   { config, lib, pkgs, ... }: {
-  #     imports = [ ../lib/features/electron.nix ../lib/features/network.nix ];
+  #     imports = [ ../lib/features/chromium.nix ../lib/features/network.nix ];
   #     config.app = {
   #       name = "myapp";
   #       package = pkgs.myapp;
@@ -56,46 +56,210 @@
           description = "Package to use for ${appName}";
         };
 
-        persistConfig = lib.mkOption {
-          type = lib.types.bool;
-          default = true;
-          description = "Whether to persist ${appName} config files";
-        };
-
-        persistData = lib.mkOption {
-          type = lib.types.bool;
-          default = true;
-          description = "Whether to persist ${appName} data files";
-        };
-
-        enableCache = lib.mkOption {
-          type = lib.types.bool;
-          default = true;
-          description = "Whether to enable cache for ${appName}";
-        };
-
         # There is deliberately NO sandbox.backend override option: the effective
         # backend is app.defaultBackend (app-spec, independent eval). Dispatch can't
         # read a cfg.sandbox.* option in the mkIf conditions below without forcing
-        # the outer merge mid-collect → infinite recursion (see the backendResult
-        # comment). A per-host override would therefore be inert and misleading, so
-        # it isn't offered — set app.defaultBackend in the app module.
+        # the outer merge mid-collect → infinite recursion. A per-host override
+        # would therefore be inert and misleading, so it isn't offered — set
+        # app.defaultBackend in the app module.
         sandbox = {
-          # Legacy in-session nixpak wrap toggle (defaultBackend = "legacy" apps).
-          # v2 apps ignore it — their backend is app.defaultBackend — but the app
-          # bundles still drive it via `enableSandboxing`, and it's the real sandbox
-          # switch for the remaining legacy app (slipstream). Retire it only after
-          # the last legacy app is migrated and the bundles stop setting it.
-          enable = lib.mkOption {
-            type = lib.types.bool;
-            default = false;
-            description = "Sandbox ${appName} using the legacy in-session nixpak wrap (defaultBackend = \"legacy\" apps only).";
+          # Selecting container vs vm is a VALUE choice (which package the command
+          # is), never a structural one: both implementations are always evaluated,
+          # so reading this option can't recurse into the config merge the way a
+          # backend override would (see above).
+          mode = lib.mkOption {
+            type = lib.types.enum [
+              "container"
+              "vm"
+            ];
+            default = config.modules.sandbox.mode;
+            defaultText = lib.literalExpression "config.modules.sandbox.mode";
+            description = "Run ${appName} in its container backend (app.defaultBackend) or its microVM.";
+          };
+
+          # Per-host override of app.capabilities.networkPolicy (lib/netpolicy.nix).
+          network = {
+            mode = lib.mkOption {
+              type = lib.types.enum [
+                "default"
+                "open"
+                "internet"
+                "allowlist"
+              ];
+              default = appCfg.capabilities.networkPolicy.mode;
+              description = "Where ${appName} may connect (see app.capabilities.networkPolicy.mode).";
+            };
+            allow = lib.mkOption {
+              type = lib.types.listOf lib.types.str;
+              default = appCfg.capabilities.networkPolicy.allow;
+              description = "Addresses/prefixes ${appName} may always reach.";
+            };
+            deny = lib.mkOption {
+              type = lib.types.listOf lib.types.str;
+              default = appCfg.capabilities.networkPolicy.deny;
+              description = "Addresses/prefixes ${appName} may never reach.";
+            };
+            allowDns = lib.mkOption {
+              type = lib.types.bool;
+              default = appCfg.capabilities.networkPolicy.allowDns;
+              description = "Keep ${appName}'s resolver reachable in the restricted modes.";
+            };
+            allowNames = lib.mkOption {
+              type = lib.types.listOf lib.types.str;
+              default = appCfg.capabilities.networkPolicy.allowNames;
+              description = "Names whose addresses ${appName} may reach (see app.capabilities.networkPolicy.allowNames).";
+            };
+          };
+
+          vm = {
+            persistent = lib.mkOption {
+              type = lib.types.bool;
+              default = false;
+              description = "Keep ${appName}'s VM running after its last session exits (stop it with `sandbox-vm stop ${appName}`).";
+            };
+            memory = lib.mkOption {
+              type = lib.types.ints.positive;
+              default = 4096;
+              description = "Guest memory for ${appName}'s VM, in MiB.";
+            };
+            vcpus = lib.mkOption {
+              type = lib.types.ints.positive;
+              default = 4;
+              description = "vCPUs for ${appName}'s VM.";
+            };
+            gpuMemoryMiB = lib.mkOption {
+              type = lib.types.addCheck (lib.types.ints.between 256 65536) (n: lib.mod n 64 == 0);
+              default = 1024;
+              description = "virtio-nvgpu's shared window for ${appName}'s VM, in MiB (a multiple of 64, 256-65536; at most 64512 for GPU-compute VMs): how much GPU memory its processes may keep CPU-mapped at once (the backend's --window-size). It is address space, not guest RAM or VRAM. Keep the default unless the backend logs `SHM alloc failed` (the fork's DEPLOY.md, \"Sizing the window\"). Group members use their group's setting.";
+            };
+            gpuMemoryProcessPercent = lib.mkOption {
+              type = lib.types.ints.between 1 95;
+              default = 50;
+              description = "How much of each zone of the shared window one guest process may hold, in percent (the fork's default is 50). Above 50, one process can leave the VM's other processes only the reserve, which is shrunk to what the share leaves. Suits a single-game VM, not a VM shared by several apps. A non-default value builds a backend variant. Group members use their group's setting.";
+            };
+            tuning = lib.mkOption {
+              type = lib.types.enum [
+                "default"
+                "game"
+              ];
+              default = "default";
+              description = ''
+                "game": virtio-nvgpu's measured settings for games, for a GPU VM
+                (lib/vm/instance.nix `gameTuning`): a 100 µs scheduler slice for
+                the VMM, one core-scheduling cookie for the VMM and its backend,
+                the vCPUs pinned in pairs on whole cores of the CPU's
+                least-preferred L3 domain (an even vcpus count; else unpinned),
+                and transparent huge pages and ntsync in the guest. Group
+                members use their group's setting.'';
+            };
+            x11 = lib.mkOption {
+              type = lib.types.bool;
+              default = false;
+              description = ''
+                Give ${appName}'s VM an X server of its own (xwayland-satellite
+                in the guest, DISPLAY=:0), for an app that needs X11 beside
+                Wayland. Nothing of the host's X server is shared, unlike
+                sandbox.x11Forward, and the container is unaffected.'';
+            };
+            clipboard = lib.mkOption {
+              type = lib.types.bool;
+              default = false;
+              description = ''
+                For an app that copies through the data-control protocols
+                (wlr/ext-data-control) instead of the ordinary Wayland
+                clipboard: its VM gets a data-control endpoint
+                (lib/vm/clip-guest.py) whose copies the host's broker puts
+                on your clipboard, without asking. The VM can set and clear
+                the clipboard, never read it. Text only; VM mode only.'';
+            };
+            hostKeyring = lib.mkOption {
+              type = lib.types.bool;
+              default = false;
+              description = ''
+                Let ${appName}'s VM talk to the host's Secret Service
+                (org.freedesktop.secrets: kwallet) through its filtered session
+                bus. That is every unlocked collection the host keyring serves,
+                not just ${appName}'s own entries: grant it only to an app as
+                trusted with your secrets as the keyring itself. VM mode only,
+                and not for group members.'';
+            };
+            nested = lib.mkOption {
+              type = lib.types.bool;
+              default = config.modules.sandbox.vm.nested;
+              defaultText = lib.literalExpression "config.modules.sandbox.vm.nested";
+              description = "Inside its VM, also run ${appName} in its nixpak sandbox (defense in depth).";
+            };
+            cameraOnLaunch = lib.mkOption {
+              type = lib.types.bool;
+              default = true;
+              description = "Apps with the camera capability (container or VM): ask (through the broker) to attach the camera when ${appName} starts. Otherwise: `sbx-request camera` inside, or for a VM `sandbox-vm camera ${appName}`.";
+            };
+            # Hooks for other modules (e.g. op-broker) to reach into the guest.
+            relays = lib.mkOption {
+              type = lib.types.attrsOf (
+                lib.types.submodule {
+                  options = {
+                    host = lib.mkOption {
+                      type = lib.types.str;
+                      description = "Host unix socket the service connects to (as the user).";
+                    };
+                    guest = lib.mkOption {
+                      type = lib.types.str;
+                      description = "Where the guest's end listens.";
+                    };
+                  };
+                }
+              );
+              default = { };
+              description = "Extra host services relayed into ${appName}'s VM over vsock, by service name.";
+            };
+            guestBinds = lib.mkOption {
+              type = lib.types.attrsOf lib.types.str;
+              default = { };
+              example = {
+                "~/.mozilla/native-messaging-hosts/x.json" = "/nix/store/…/x.json";
+              };
+              description = "Read-only binds in ${appName}'s guest: target (absolute or ~/…) = source (a store path).";
+            };
+            guestServices = lib.mkOption {
+              type = lib.types.attrsOf (
+                lib.types.submodule {
+                  options = {
+                    argv = lib.mkOption { type = lib.types.listOf lib.types.str; };
+                    group = lib.mkOption {
+                      type = lib.types.nullOr lib.types.str;
+                      default = null;
+                      description = "Run with this primary group (created in the guest if missing).";
+                    };
+                    root = lib.mkOption {
+                      type = lib.types.bool;
+                      default = false;
+                      description = "Run as the guest's root instead of the user (the guest is the boundary; e.g. a polkit agent, or a helper that drops privileges itself).";
+                    };
+                  };
+                }
+              );
+              default = { };
+              description = "Commands ${appName}'s guest keeps running as the user, or as root (with the VM's display, when it has one).";
+            };
           };
 
           dedicatedUser = lib.mkOption {
             type = lib.types.bool;
             default = false;
-            description = "systemd backend only, CLI apps only: run under a dedicated app-<name> uid.";
+            description = "systemd backend only: run under a dedicated app-<name> uid.";
+          };
+
+          appearAsUser = lib.mkOption {
+            type = lib.types.bool;
+            default = true;
+            description = ''
+              systemd backend + dedicatedUser: inside its sandbox the app sees
+              itself as the user (uid and gid, HOME=/home/<user>, the user's
+              runtime dir path), as it does in its VM, while the host still runs
+              it as app-<name>. Paths the app saves are then the same in container
+              and VM mode. Its old home path stays bound to the same data.
+            '';
           };
 
           envMode = lib.mkOption {
@@ -104,13 +268,19 @@
               "defaults"
             ];
             default = "inject";
-            description = "systemd/vm env strategy: inject live session env, or derive sensible defaults.";
+            description = "systemd env strategy: inject live session env, or derive sensible defaults.";
           };
 
           extraBinds = lib.mkOption {
             type = lib.types.listOf lib.types.str;
             default = [ ];
-            description = "Additional bind mounts for sandboxed ${appName} (relative to home or absolute paths)";
+            description = "Additional bind mounts for sandboxed ${appName}: absolute, ./ or ../ (relative to $PWD), or home-relative (see lib/paths.nix).";
+          };
+
+          extraBindsReadOnly = lib.mkOption {
+            type = lib.types.listOf lib.types.str;
+            default = [ ];
+            description = "Like extraBinds, but read-only. Not for dedicated-uid apps (the systemd backend's ACL grants are read-write).";
           };
 
           # See nixos/modules/apps/xwayland-forward.md.
@@ -135,7 +305,8 @@
               systemd + dedicatedUser only: bind jrt's ~/Downloads/${appName} in AS the
               app's ~/Downloads, so saved files land in a host-visible per-app subdir of
               jrt's real Downloads (on /large, persisted) instead of the app's hidden
-              home. The launcher ACL-grants the app uid on that subdir.
+              home (or, in its VM, the guest's tmpfs). The launcher ACL-grants the app
+              uid on that subdir. Container and VM mode.
             '';
           };
 
@@ -153,10 +324,10 @@
           type = lib.types.package;
           readOnly = true;
           description = ''
-            The final package emitted by the app's backend: the base package, or a
-            sandbox wrapper (nixpak/systemd, or the legacy in-session wrap when
-            sandbox.enable is set). This is what gets installed in
-            environment.systemPackages and should be used in customConfig.
+            The app's primary package, for sandbox.mode: the container backend's
+            (the base package for "none", a nixpak/systemd wrapper otherwise) or the
+            VM launcher. This is what gets installed in environment.systemPackages
+            and should be used in customConfig.
           '';
         };
 
@@ -172,257 +343,207 @@
       # Generate config from the app spec
       config =
         let
-          # Legacy in-session sandbox wrap (defaultBackend = "legacy" + sandbox.enable).
-          sandboxedPackage =
-            if cfg.sandbox.enable then
-              let
-                nixpakLib = inputs.nixpak or (builtins.throw "nixpak not available - add nixpak to flake inputs");
-                mkNixPak = nixpakLib.lib.nixpak {
-                  inherit lib pkgs;
-                };
-              in
-              (mkNixPak {
-                config =
-                  {
-                    config,
-                    lib,
-                    pkgs,
-                    sloth,
-                    ...
-                  }:
-                  {
-                    # Compose all nixpak modules from features and user
-                    imports =
-                      # Modules from features (gui.nix, electron.nix, etc.)
-                      appCfg.nixpakModules
-                      # Capability lowering: features increasingly declare
-                      # app.capabilities.* instead of raw nixpakModules; the legacy
-                      # path must lower them too or legacy apps silently lose
-                      # network/gpu/audio/fido. Behavior-preserving (empty caps →
-                      # no-op), so pre-capability legacy apps are unaffected.
-                      ++ [ (import ./capabilities-nixpak.nix { inherit lib; } appCfg.capabilities) ]
-                      # Per-host override modules
-                      ++ cfg.sandbox.nixpakModules;
-
-                    # Base configuration - set package and binPath
-                    app.package = cfg.package;
-                    app.binPath = "bin/${appCfg.packageName}";
-
-                    # Network disabled by default (slightly higher priority than mkDefault)
-                    bubblewrap.network = lib.mkOverride 999 false;
-
-                    # Bind persistence paths automatically
-                    # These are the paths that impermanence will mount to $HOME
-                    bubblewrap.bind.rw =
-                      # User's home directories from ALL persistence types
-                      (lib.optionals cfg.persistConfig (
-                        map (p: sloth.concat' sloth.homeDir "/${p}") appCfg.persistence.user.persist
-                      ))
-                      ++ (lib.optionals cfg.persistData (
-                        map (p: sloth.concat' sloth.homeDir "/${p}") appCfg.persistence.user.large
-                      ))
-                      ++ (lib.optionals cfg.enableCache (
-                        map (p: sloth.concat' sloth.homeDir "/${p}") appCfg.persistence.user.cache
-                      ))
-                      # User's extra binds (convert relative paths to absolute)
-                      ++ (map (
-                        p:
-                        if lib.hasPrefix "/" p then
-                          p # Absolute path
-                        else if lib.hasPrefix "." p then
-                          sloth.concat' (sloth.env "PWD") "/${p}"
-                        else
-                          sloth.concat' sloth.homeDir "/${p}" # Relative path
-                      ) cfg.sandbox.extraBinds);
-                  };
-              }).config.env
-            else
-              cfg.package;
-
           # Evaluate custom config with full nixos config
           customCfg = appCfg.customConfig { inherit config lib pkgs; };
 
-          # ── v2 backend dispatch (Layer 2) ─────────────────────────────────
-          # The effective backend comes from the app-spec (independent eval). It is
-          # NOT a cfg.sandbox.* option (and that's why no such override option is
-          # offered — see the sandbox options comment above): reading a cfg.sandbox.*
-          # option in a mkIf *condition* below would force the outer module merge to
-          # resolve that option while it is still collecting the very definitions the
-          # mkIf guards → infinite recursion. app.defaultBackend has no such
-          # dependency. Legacy apps (defaultBackend = "legacy") are untouched.
+          # ── Backend dispatch (Layer 2) ────────────────────────────────────
+          # Effective backend = app.defaultBackend (see the sandbox options comment
+          # for why there is no cfg.sandbox.* override).
           effectiveBackend = appCfg.defaultBackend;
-          isLegacy = effectiveBackend == "legacy";
+          dedicated = effectiveBackend == "systemd" && cfg.sandbox.dedicatedUser;
           storage = import ./storage.nix { inherit lib; } {
             inherit appName appCfg;
-            username = builtins.head appCfg.defaultUsernames;
+            username = appCfg.username;
             # nixpak/none → jrt-owned (traversable). systemd same-uid → root lock;
             # systemd + dedicatedUser → per-uid lock.
             stashOwner =
-              if effectiveBackend == "systemd" then
-                (if cfg.sandbox.dedicatedUser then "dedicated" else "root")
+              if dedicated then
+                "dedicated"
+              else if effectiveBackend == "systemd" then
+                "root"
               else
                 "user";
-            forceHome = (config.modules.sandbox.forceHomeLocation or false) || effectiveBackend == "none";
+            # Dedicated apps are never forced to "home" (see lib/storage.nix).
+            forceHome =
+              effectiveBackend == "none" || ((config.modules.sandbox.forceHomeLocation or false) && !dedicated);
           };
-          # Guard the registry lookup: the module system forces mkIf *content*
-          # while computing unmatchedDefns even when the condition is false, so a
-          # legacy app must NOT index the registry (it has no "legacy" key).
-          backendResult =
-            if isLegacy then
-              {
-                package = sandboxedPackage;
-                systemConfig = { };
+          # The container implementation (app.defaultBackend). It owns the app's
+          # storage lowering (tmpfiles, persistence, and the
+          # dedicated uid), which the VM implementation then reuses as-is.
+          backendResult = (import ./backends/default.nix).${effectiveBackend} {
+            inherit
+              appName
+              appCfg
+              cfg
+              config
+              lib
+              pkgs
+              inputs
+              storage
+              ;
+          };
+
+          # The VM implementation, always evaluated next to it (lazily: nothing of
+          # it is built unless the app runs in a VM or variants are on). Its VMM
+          # runs as whoever owns the stash, so both implementations share one copy
+          # of the app's data.
+          username = appCfg.username;
+          vmResult = import ./backends/vm.nix {
+            inherit
+              appName
+              appCfg
+              cfg
+              config
+              lib
+              pkgs
+              inputs
+              storage
+              ;
+            principal = if dedicated then "app-${appName}" else username;
+            principalGroup = if dedicated then "app-${appName}" else config.users.users.${username}.group;
+            desktopSource = backendResult.package;
+            inherit (backendResult) dbusArgs flatpakInfoFile appId;
+          };
+
+          implLock = import ./impl-lock.nix { inherit lib pkgs; };
+          lockArgs = {
+            backend = effectiveBackend;
+            inherit (storage) entries;
+            inherit (appCfg) multiInstance;
+          };
+
+          variants = import ./variants.nix { inherit lib pkgs; };
+          variantsOn = config.modules.sandbox.variants.enable;
+          vmWanted = cfg.sandbox.mode == "vm" || variantsOn;
+          # app.groupCommand in a group VM: the regular command stays the
+          # container's, and the group command enters the VM.
+          inGroup = lib.any (g: lib.elem appName g.apps) (lib.attrValues config.modules.sandbox.groups);
+          groupVm = cfg.sandbox.mode == "vm" && appCfg.groupCommand != null && inGroup;
+          selectedPkg =
+            if groupVm then
+              pkgs.symlinkJoin {
+                inherit (backendResult.package) name;
+                paths = [ backendResult.package ];
+                postBuild = ''
+                  ln -s ${vmResult.package}/bin/${appCfg.packageName} "$out/bin/${appCfg.groupCommand}"
+                '';
               }
+            else if cfg.sandbox.mode == "vm" then
+              vmResult.package
             else
-              (import ./backends/default.nix).${effectiveBackend} {
-                inherit
-                  appName
-                  appCfg
-                  cfg
-                  config
-                  lib
-                  pkgs
-                  inputs
-                  storage
-                  ;
-              };
-          finalPkg = backendResult.package;
+              backendResult.package;
+          # With variants on, the launcher lists "<App> (container)" / "<App> (vm)"
+          # instead of the plain entry, which stays for MIME/default-browser use.
+          finalPkg = if variantsOn then variants.hideDesktop selectedPkg else selectedPkg;
+          implVariants = [
+            (variants.mkVariant {
+              inherit appName;
+              pkg = backendResult.package;
+              bin = appCfg.packageName;
+              suffix = if effectiveBackend == "none" then "host" else "container";
+              label = if effectiveBackend == "none" then "host" else "container";
+            })
+            (variants.mkVariant {
+              inherit appName;
+              pkg = vmResult.package;
+              bin = appCfg.packageName;
+              suffix = "vm";
+              label = "vm";
+            })
+          ];
 
-          # Some command-line apps expose an explicit, more-privileged GPU
-          # entry point while keeping their normal launcher GPU-less. Reuse the
-          # same package, storage, and capabilities, changing only `gpu = true`,
-          # then give the resulting sandbox wrapper a distinct command name.
-          gpuCommandPkg =
-            if appCfg.gpuCommandName == null then
-              null
-            else if effectiveBackend != "nixpak" then
-              builtins.throw "${appName}: gpuCommandName is currently supported only by the nixpak backend"
+          # app.variantCommands: extra, more-privileged entry points (e.g.
+          # `claude-gpu`). Each reuses the same package and storage with the
+          # variant's capability overrides and extra nixpak modules, under its own
+          # command name; the regular command is unchanged.
+          variantPkgs =
+            if appCfg.variantCommands != { } && effectiveBackend != "nixpak" then
+              builtins.throw "${appName}: variantCommands is supported only by the nixpak backend"
             else
-              let
-                gpuAppCfg = appCfg // {
-                  capabilities = appCfg.capabilities // {
-                    gpu = true;
+              lib.mapAttrsToList (
+                name: v:
+                let
+                  variant = (import ./backends/default.nix).nixpak {
+                    inherit
+                      appName
+                      cfg
+                      config
+                      lib
+                      pkgs
+                      inputs
+                      storage
+                      ;
+                    appCfg = appCfg // {
+                      capabilities = appCfg.capabilities // v.capabilities;
+                      nixpakModules = appCfg.nixpakModules ++ v.nixpakModules;
+                    };
+                    joinGroup = false;
                   };
-                };
-                gpuBackend = (import ./backends/default.nix).nixpak {
-                  inherit
-                    appName
-                    cfg
-                    config
-                    lib
-                    pkgs
-                    inputs
-                    storage
-                    ;
-                  appCfg = gpuAppCfg;
-                };
-              in
-              pkgs.writeShellScriptBin appCfg.gpuCommandName ''
-                exec ${gpuBackend.package}/bin/${appCfg.packageName} "$@"
-              '';
+                in
+                pkgs.writeShellScriptBin name ''
+                  exec ${variant.package}/bin/${appCfg.packageName} "$@"
+                ''
+              ) appCfg.variantCommands;
         in
-        lib.mkMerge (
-          [
-            # Expose the final package
-            {
-              modules.apps.${appName}.finalPackage = finalPkg;
-            }
+        lib.mkMerge [
+          # Expose the final package
+          {
+            modules.apps.${appName}.finalPackage = finalPkg;
+          }
 
-            # Base config - always applied when enabled
-            (lib.mkIf cfg.enable {
-              environment.systemPackages = [ finalPkg ] ++ lib.optional (gpuCommandPkg != null) gpuCommandPkg;
-            })
+          # Base config - always applied when enabled
+          (lib.mkIf cfg.enable {
+            environment.systemPackages = [
+              finalPkg
+            ]
+            ++ variantPkgs
+            ++ lib.optionals variantsOn implVariants;
+          })
 
-            # v2: backend-emitted system config (tmpfiles, persistence, units).
-            # Inactive for legacy apps (their storage/backend paths stay unused).
-            (lib.mkIf (cfg.enable && !isLegacy) backendResult.systemConfig)
+          # The container and the VM share the app's data: whichever runs locks
+          # the other out (lib/impl-lock.nix).
+          (lib.mkIf (cfg.enable && implLock.wanted lockArgs) {
+            systemd.tmpfiles.settings."10-sandbox-impl" = implLock.tmpfiles appName;
+          })
 
-            # System-level persistence
-            (lib.mkIf (cfg.enable && appCfg.persistence.system.persist != [ ]) {
-              environment.persistence."/persist".directories = appCfg.persistence.system.persist;
-            })
+          # Backend-emitted system config (tmpfiles, persistence, units).
+          (lib.mkIf cfg.enable backendResult.systemConfig)
+          (lib.mkIf (cfg.enable && vmWanted) vmResult.systemConfig)
 
-            (lib.mkIf (cfg.enable && appCfg.persistence.system.large != [ ]) {
-              environment.persistence."/large".directories = appCfg.persistence.system.large;
-            })
+          # System-level persistence
+          (lib.mkIf (cfg.enable && appCfg.persistence.system.persist != [ ]) {
+            environment.persistence."/persist".directories = appCfg.persistence.system.persist;
+          })
 
-            (lib.mkIf (cfg.enable && appCfg.persistence.system.cache != [ ]) {
-              environment.persistence."/cache".directories = appCfg.persistence.system.cache;
-            })
+          (lib.mkIf (cfg.enable && appCfg.persistence.system.large != [ ]) {
+            environment.persistence."/large".directories = appCfg.persistence.system.large;
+          })
 
-            (lib.mkIf (cfg.enable && appCfg.persistence.system.baked != [ ]) {
-              environment.persistence."/baked".directories = appCfg.persistence.system.baked;
-            })
+          (lib.mkIf (cfg.enable && appCfg.persistence.system.cache != [ ]) {
+            environment.persistence."/cache".directories = appCfg.persistence.system.cache;
+          })
 
-            # Custom config from app spec
-            (lib.mkIf cfg.enable customCfg)
+          (lib.mkIf (cfg.enable && appCfg.persistence.system.baked != [ ]) {
+            environment.persistence."/baked".directories = appCfg.persistence.system.baked;
+          })
 
-            # Default browser XDG configuration
-            (lib.mkIf (cfg.enable && cfg.isDefaultBrowser && appCfg.desktopFileName != null) {
-              home-manager.users.jrt.xdg.mimeApps = {
-                enable = true;
-                defaultApplications = {
-                  "default-web-browser" = [ appCfg.desktopFileName ];
-                  "text/html" = [ appCfg.desktopFileName ];
-                  "x-scheme-handler/http" = [ appCfg.desktopFileName ];
-                  "x-scheme-handler/https" = [ appCfg.desktopFileName ];
-                  "x-scheme-handler/about" = [ appCfg.desktopFileName ];
-                  "x-scheme-handler/unknown" = [ appCfg.desktopFileName ];
-                };
+          # Custom config from app spec
+          (lib.mkIf cfg.enable customCfg)
+
+          # Default browser XDG configuration
+          (lib.mkIf (cfg.enable && cfg.isDefaultBrowser && appCfg.desktopFileName != null) {
+            home-manager.users.jrt.xdg.mimeApps = {
+              enable = true;
+              defaultApplications = {
+                "default-web-browser" = [ appCfg.desktopFileName ];
+                "text/html" = [ appCfg.desktopFileName ];
+                "x-scheme-handler/http" = [ appCfg.desktopFileName ];
+                "x-scheme-handler/https" = [ appCfg.desktopFileName ];
+                "x-scheme-handler/about" = [ appCfg.desktopFileName ];
+                "x-scheme-handler/unknown" = [ appCfg.desktopFileName ];
               };
-            })
-          ]
-          ++
-            # User-level persistence — LEGACY apps only. A v2 app gets its home
-            # binds from the backend (storage.homePersistence); if a feature it
-            # imports still sets persistence.user.* (e.g. chromium.nix on tetrio),
-            # emitting these too would double-mount against the stash binds — the
-            # very cross-authority desync this redesign removes.
-            (lib.optionals isLegacy (
-              lib.flatten (
-                map (username: [
-                  # User persistence - /persist directories
-                  (lib.mkIf (cfg.enable && cfg.persistConfig && appCfg.persistence.user.persist != [ ]) {
-                    environment.persistence."/persist".users.${username}.directories = appCfg.persistence.user.persist;
-                  })
-
-                  # User persistence - /persist files
-                  (lib.mkIf (cfg.enable && cfg.persistConfig && appCfg.persistence.user.persistFiles != [ ]) {
-                    environment.persistence."/persist".users.${username}.files = appCfg.persistence.user.persistFiles;
-                  })
-
-                  # User persistence - /large directories
-                  (lib.mkIf (cfg.enable && cfg.persistData && appCfg.persistence.user.large != [ ]) {
-                    environment.persistence."/large".users.${username}.directories = appCfg.persistence.user.large;
-                  })
-
-                  # User persistence - /large files
-                  (lib.mkIf (cfg.enable && cfg.persistData && appCfg.persistence.user.largeFiles != [ ]) {
-                    environment.persistence."/large".users.${username}.files = appCfg.persistence.user.largeFiles;
-                  })
-
-                  # User persistence - /cache directories
-                  (lib.mkIf (cfg.enable && cfg.enableCache && appCfg.persistence.user.cache != [ ]) {
-                    environment.persistence."/cache".users.${username}.directories = appCfg.persistence.user.cache;
-                  })
-
-                  # User persistence - /cache files
-                  (lib.mkIf (cfg.enable && cfg.enableCache && appCfg.persistence.user.cacheFiles != [ ]) {
-                    environment.persistence."/cache".users.${username}.files = appCfg.persistence.user.cacheFiles;
-                  })
-
-                  # User persistence - /baked directories
-                  (lib.mkIf (cfg.enable && appCfg.persistence.user.baked != [ ]) {
-                    environment.persistence."/baked".users.${username}.directories = appCfg.persistence.user.baked;
-                  })
-
-                  # User persistence - /baked files
-                  (lib.mkIf (cfg.enable && appCfg.persistence.user.bakedFiles != [ ]) {
-                    environment.persistence."/baked".users.${username}.files = appCfg.persistence.user.bakedFiles;
-                  })
-                ]) appCfg.defaultUsernames
-              )
-            ))
-        );
+            };
+          })
+        ];
     };
 }

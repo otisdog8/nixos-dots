@@ -18,12 +18,28 @@
 
     config.app = {
       name = "prismlauncher";
-      package = pkgs.prismlauncher;
+      # Prism probes GameMode during startup. GameMode 1.8.2 sends pidfds and
+      # aborts on a null pending D-Bus call when the transport cannot carry
+      # them. The VM's vsock relay cannot carry fds, and guest PIDs cannot be
+      # used by host GameMode. Disable the optional integration in our shared
+      # package (both VM and container variants).
+      package = pkgs.prismlauncher.override {
+        gamemodeSupport = false;
+        # In nixpkgs for Prism 11.1 this flag only changes the wrapper's library
+        # path. The unwrapped application still probes GameMode unconditionally
+        # on Linux, so explicitly suppress that probe and capability as well.
+        prismlauncher-unwrapped = pkgs.prismlauncher-unwrapped.overrideAttrs (old: {
+          postPatch = (old.postPatch or "") + ''
+            substituteInPlace launcher/Application.cpp --replace-fail \
+              'if (gamemode_query_status() >= 0)' \
+              'if (false) // GameMode is unavailable in this sandbox package.'
+          '';
+        });
+      };
       packageName = "prismlauncher";
 
-      # v2 unified storage (replaces persistence.user.* + impermanence). No nesting
-      # here — clean tiers: config backed up, game installs large (not backed up),
-      # cache disposable.
+      # No nesting here — clean tiers: config backed up, game installs large (not
+      # backed up), cache disposable.
       #
       # Dedicated-uid + XWayland forward. PrismLauncher (Qt) and the Minecraft it
       # launches (Java/LWJGL) both use X11; a dedicated uid can't auth to jrt's XWayland
@@ -83,6 +99,12 @@
         { config, lib, ... }:
         {
           modules.apps.prismlauncher.sandbox.dedicatedUser = true;
+          # Game VM sizing, as steam.nix.
+          modules.apps.prismlauncher.sandbox.vm.memory = lib.mkDefault 32768;
+          modules.apps.prismlauncher.sandbox.vm.gpuMemoryMiB = lib.mkDefault 24576;
+          modules.apps.prismlauncher.sandbox.vm.gpuMemoryProcessPercent = lib.mkDefault 90;
+          modules.apps.prismlauncher.sandbox.vm.vcpus = lib.mkDefault 12;
+          modules.apps.prismlauncher.sandbox.vm.tuning = lib.mkDefault "game";
           # X11 forward for the Qt launcher + Java/LWJGL game (see
           # xwayland-forward.md; shares jrt's X server).
           modules.apps.prismlauncher.sandbox.x11Forward = true;

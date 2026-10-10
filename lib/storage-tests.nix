@@ -61,12 +61,40 @@ let
   };
   test2_stringPrefixNotNested = siblings.assertions == [ ];
 
+  # location = "home" can't work for a dedicated uid (HOME=/home/app-<name>).
+  homeEntry = mkEntry ".config/app" "persist" // {
+    location = "home";
+  };
+  dedicatedHome = storage {
+    appName = "t";
+    stashOwner = "dedicated";
+    appCfg.storage = [ homeEntry ];
+  };
+  test5_dedicatedHomeFails = dedicatedHome.assertions != [ ];
+  sameUidHome = storage {
+    appName = "t";
+    appCfg.storage = [ homeEntry ];
+  };
+  test5_sameUidHomeOk = sameUidHome.assertions == [ ];
+
+  # Home-located directories keep the entry's mode (impermanence applies it).
+  test5_homeDirMode =
+    (lib.head sameUidHome.homePersistence.contents)."/persist".users.jrt.directories == [
+      {
+        directory = ".config/app";
+        mode = "0700";
+      }
+    ];
+
   results = {
     inherit
       test3_parentFirst
       test2_sameTierFails
       test2_crossTierOk
       test2_stringPrefixNotNested
+      test5_dedicatedHomeFails
+      test5_sameUidHomeOk
+      test5_homeDirMode
       ;
   };
 in

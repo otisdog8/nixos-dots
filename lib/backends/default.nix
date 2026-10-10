@@ -6,8 +6,15 @@
 # concrete config: `package` goes on PATH / into finalPackage, `systemConfig` is
 # merged into the host NixOS config (tmpfiles, persistence, units).
 #
-# "legacy" is not a backend here — it is the untouched pre-v2 code path in
-# lib/apps.nix. The vm backend is future work (not yet registered).
+# They also return the app's session-bus filter (`dbusArgs`, xdg-dbus-proxy
+# --talk/--own/… args; null when unsandboxed) and nixpak's `.flatpak-info`
+# (`flatpakInfoFile`), which the VM implementation's D-Bus proxy reuses.
+#
+# app.defaultBackend (lib/app-spec.nix) selects one of these as the app's
+# container implementation; "nixpak" is the default. The microVM implementation
+# (./vm.nix) is not in this registry: lib/apps.nix evaluates it next to whichever
+# container backend the app uses, and modules.apps.<name>.sandbox.mode picks
+# between the two.
 {
   none = import ./none.nix;
   nixpak = import ./nixpak.nix;

@@ -1,0 +1,20 @@
+{
+  "manifest_version": 3,
+  "name": "op-broker autofill",
+  "version": "0.1.0",
+  "description": "Fills 1Password logins through a per-item approval broker. Holds no credentials and reads no page until you ask it to fill.",
+  "permissions": ["activeTab", "scripting", "nativeMessaging", "contextMenus"],
+  "background": {
+    "service_worker": "background.js",
+    "scripts": ["background.js"]
+  },
+  "action": {
+    "default_title": "Fill 1Password login (op-broker)"
+  },
+  "commands": {
+    "fill-login": {
+      "suggested_key": { "default": "Ctrl+Shift+L" },
+      "description": "Fill the 1Password login on this page"
+    }
+  }
+}

@@ -5,17 +5,28 @@
 #   4. `defaults.action`
 #
 # Durations: approved = min(requested, matched rule's max_duration, defaults.max_duration)
-
 defaults:
-  action: surface          # deny | approve | llm | surface
+  action: surface # deny | approve | llm | surface
   max_duration: 24h
-
 llm:
-  model: deepseek/deepseek-v4-flash    # OpenRouter model id; per-rule override via constraints.llm_model
-  retry_budget: 2          # LLM denials the agent may retry before human escalation
+  model: deepseek/deepseek-v4.1-flash # OpenRouter model id; per-rule override via constraints.llm_model
+  retry_budget: 2 # LLM denials the agent may retry before human escalation
   timeout_secs: 60
-
 platforms:
+  # MCP servers that take the broker's own tokens (agent-auth README, "MCP
+  # servers"; the cluster side is the homelab repo's apps/infra/toolhive and
+  # docs/agent-infra). A grant is for one server and a set of its tools; its
+  # credential is a short-lived token the server's ToolHive proxy verifies
+  # against https://agent-auth.rooty.dev/.well-known/jwks.json.
+  # The server only answers once homelab PR #278 (ToolHive) is live.
+  # `issuer` must equal the issuer in the homelab's toolhive/auth.yaml,
+  # and each url the `audience` of its MCPServer.
+  mcp:
+    issuer: https://agent-auth.rooty.dev
+    servers:
+      playwright:
+        url: https://mcp-playwright.rooty.dev/mcp
+        description: "A browser: Playwright on the shared Steel instance"
   github:
     # GitHub account owners whose repos are brokered (the app must be
     # installed on each)
@@ -33,10 +44,10 @@ platforms:
     # Must be a subset of what the GitHub App itself was granted (keep this list
     # and the App's permissions in sync; keys are the API permission names).
     permission_ceiling:
-      metadata: read        # mandatory App baseline (repo listing/basic info);
-                            # listed so a request naming it isn't ceiling-denied
+      metadata: read # mandatory App baseline (repo listing/basic info);
+      # listed so a request naming it isn't ceiling-denied
       contents: write
-      workflows: write      # pushing .github/workflows/* needs this + contents
+      workflows: write # pushing .github/workflows/* needs this + contents
       secrets: write
       variables: write
       actions: read
@@ -56,6 +67,13 @@ platforms:
       - secrets
       - administration
       - organization_secrets
+    # New repos (capability "create", resource "uorux/<name>") only in this
+    # org. The broker creates them itself with an Administration token it
+    # never hands out — the App needs Administration: write on the uorux
+    # installation. Public repos always reach a human. Ignored by brokers that
+    # predate the capability.
+    create_owners:
+      - "uorux"
   homelab:
     # LLDAP groups the broker may join an agent into. Authelia rules per group
     # do the actual enforcement. Deliberately excluded: `admin`, plus
@@ -153,15 +171,15 @@ platforms:
     # this list widens the broker's own standing credential.
     role_allowlist:
       - view
-      - logs-reader       # get+list pods and pod logs
-      - traefik-patcher   # get+patch on deployments/traefik only
+      - logs-reader # get+list pods and pod logs
+      - traefik-patcher # get+patch on deployments/traefik only
       - edit
-      - workload-manager  # patch/scale deployments + statefulsets
-      - cm-editor         # update/patch existing configmaps
-      - port-forwarder    # pods/portforward
-      - job-runner        # create/delete batch jobs (arbitrary code in namespace)
-      - pod-exec          # pods/exec — sensitive
-      - secret-reader     # get/list secrets — sensitive
+      - workload-manager # patch/scale deployments + statefulsets
+      - cm-editor # update/patch existing configmaps
+      - port-forwarder # pods/portforward
+      - job-runner # create/delete batch jobs (arbitrary code in namespace)
+      - pod-exec # pods/exec — sensitive
+      - secret-reader # get/list secrets — sensitive
     # Cluster-wide grants: an agent requests namespace "*" and the broker binds
     # the role via a ClusterRoleBinding across every namespace. Only `view`
     # (read-only) is opted in — a cluster-wide `edit` ≈ cluster-admin. Every
@@ -197,7 +215,15 @@ platforms:
       - admin
       - pod-exec
       - secret-reader
-
+# Approval prompts on the desktops jrt is at (hostd's helper in the session;
+# modules/system/agent-auth-daemons.nix), next to the Discord message: the
+# first answer decides. Anything running as jrt on such a desktop can answer
+# them, so `agents` is the limit on what that can approve. Sensitive requests
+# and shells stay on Discord.
+desktop:
+  enabled: true
+  # By what the broker has on record for the agent, not by its name.
+  agents: [{placement: sandbox}, {runtime: hermes}]
 # No routing rules: everything falls through to defaults.action: surface, and
 # the nixos-dots ban lives in repo_denylist above (validator layer, stronger
 # than any rule). Upstream's example auto-approves the narrow k8s roles so

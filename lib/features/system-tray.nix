@@ -14,15 +14,20 @@
           # StatusNotifierWatcher - the system tray service
           "org.kde.StatusNotifierWatcher" = "talk";
 
-          # StatusNotifierItem - apps own these to register with the tray
-          # Apps dynamically create their own StatusNotifierItem service names
-          "org.kde.StatusNotifierItem.*" = "own";
-
-          # Alternative freedesktop tray protocol (legacy)
-          "org.freedesktop.StatusNotifierItem" = "own";
-          "org.freedesktop.StatusNotifierItem.*" = "own";
           "org.freedesktop.StatusNotifierWatcher" = "talk";
         };
+        # The item's own bus name, which the app registers with the watcher:
+        # <prefix>-<pid>-<id> (org.freedesktop: Chromium/Electron; org.kde: Qt,
+        # libappindicator). A "<prefix>.*" policy doesn't cover these (it
+        # matches <prefix>.x only), so our proxy build has --own-numbered
+        # (overlays/xdg-dbus-proxy-own-numbered.patch): the app may own
+        # <prefix>-<digits>[-<digits>...] and nothing else, and gets no access
+        # to another app's item by it. Apps that register under their
+        # connection's unique name (1Password) need neither.
+        dbus.args = [
+          "--own-numbered=org.kde.StatusNotifierItem"
+          "--own-numbered=org.freedesktop.StatusNotifierItem"
+        ];
       }
     )
   ];

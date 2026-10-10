@@ -7,20 +7,23 @@
     pkgs,
     ...
   }:
+  let
+    browserSettings = import ../../../lib/browser-settings.nix { inherit lib; };
+  in
   {
     imports = [
       ../../../lib/features/browser.nix
       ../../../lib/features/needs-gpu.nix
       ../../../lib/features/xdg-desktop.nix
-      ../../../lib/features/onepassword.nix
     ];
 
     config.app = {
       name = "zen-browser";
+      # Unconfigured base; customConfig swaps in the build with this host's
+      # policies (modules.apps.zen-browser.browser.*) baked in.
       package = pkgs.zen-browser;
       # The package ships ONLY bin/zen-beta, and zen-beta.desktop runs `zen-beta` —
-      # so that's the binary the systemd launcher must wrap (the old "zen" name only
-      # worked in the legacy nixpak path via extraEntrypoints, which systemd ignores).
+      # so that's the binary the systemd launcher must wrap.
       packageName = "zen-beta";
       desktopFileName = "zen-beta.desktop";
       # gecko registers org.mozilla.<app>.<profile-instance> on the session bus
@@ -40,6 +43,14 @@
       # blocks carving out just the disposable bits, and the profile is wanted in the
       # backup, so it stays whole on persist.
       defaultBackend = "systemd";
+      # The tailnet (Tailscale's CGNAT range and its ULA prefix, MagicDNS
+      # included): reachable in the restricted network modes too (its VM's
+      # default, "internet", blocks both). Other hosts' services on the tailnet,
+      # and this host's own on its tailnet address.
+      capabilities.networkPolicy.allow = [
+        "100.64.0.0/10"
+        "fd7a:115c:a1e0::/48"
+      ];
       storage = [
         {
           path = ".zen";
@@ -47,20 +58,47 @@
         }
       ];
 
-      customConfig =
-        { config, lib, ... }:
-        {
-          modules.apps.zen-browser.sandbox.dedicatedUser = true;
-          users.users."app-zen-browser".extraGroups = [
-            "video"
-            "audio"
-          ];
-          # Shared downloads under a per-app subdir: zen's ~/Downloads becomes jrt's
-          # ~/Downloads/zen-browser (host-visible, on /large where impermanence already
-          # persists Downloads; the launcher ACLs it + tmpfiles creates it). Keeps each
-          # dedicated app's downloads separate instead of a shared pool.
-          modules.apps.zen-browser.sandbox.sharedDownloads = true;
+      # modules.apps.zen-browser.browser.*: policies, extensions (uBlock Origin and
+      # Vimium by default; op-broker's when it serves zen-browser), search engine, …
+      # — see lib/browser-settings.nix. Policies only change settings and add
+      # extensions; the .zen profile itself is untouched.
+      customOptions =
+        _:
+        browserSettings.mkOptions {
+          appName = "zen-browser";
+          family = "gecko";
         };
+
+      customConfig =
+        { config, lib, ... }@args:
+        lib.mkMerge [
+          {
+            modules.apps.zen-browser.sandbox.dedicatedUser = true;
+            users.users."app-zen-browser".extraGroups = [
+              "video"
+              "audio"
+            ];
+            # Shared downloads under a per-app subdir: zen's ~/Downloads becomes jrt's
+            # ~/Downloads/zen-browser (host-visible, on /large where impermanence already
+            # persists Downloads; the launcher ACLs it + tmpfiles creates it). Keeps each
+            # dedicated app's downloads separate instead of a shared pool.
+            modules.apps.zen-browser.sandbox.sharedDownloads = true;
+            # VM sizing: 12 GiB, committed whole at start (a virtio-nvgpu VM
+            # prefaults). The default 4 GiB also holds the guest's tmpfs root,
+            # ~/.cache with gecko's disk cache in it, and a day of tabs ran the
+            # guest out: its kernel killed content processes.
+            modules.apps.zen-browser.sandbox.vm.memory = lib.mkDefault 12288;
+            # Zen upstream's one policy (its wrapper's): trust the system's CA
+            # store through p11-kit. Repeated here: our policies.json replaces
+            # upstream's (browser-settings.nix: the executable is copied, not linked).
+            modules.apps.zen-browser.browser.policies.SecurityDevices."System Trust" =
+              "${pkgs.p11-kit}/lib/pkcs11/p11-kit-trust.so";
+          }
+          (browserSettings.geckoConfig {
+            appName = "zen-browser";
+            basePackage = pkgs.zen-browser;
+          } args)
+        ];
     };
   }
 )

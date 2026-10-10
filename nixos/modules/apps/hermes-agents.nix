@@ -8,7 +8,9 @@
 # instances.<name>`. The config-generation logic (deep-merged settings →
 # config.yaml via their merge script, .env seeding, .managed marker) is
 # lifted from upstream so `hermes` binaries behave identically; container
-# mode, documents, plugins, and host-CLI sharing are deliberately dropped.
+# mode, documents, and host-CLI sharing are deliberately dropped. Plugins are
+# declarative only (`plugins`, `extraPythonPackages`): the package is sealed in
+# the store, so `hermes plugins install` cannot add a plugin's dependencies.
 #
 # Per instance this creates:
 #   - user/group <name> with home = stateDir (default /var/lib/<name>)
@@ -17,6 +19,7 @@
 #   - config.yaml deep-merged from `settings` on activation (Nix keys win,
 #     agent-added keys survive), .managed marker (HERMES_MANAGED drift guard)
 #   - $HERMES_HOME/.env seeded from `environment` + `environmentFiles` (sops)
+#   - $HERMES_HOME/plugins/<name> linked to each of `plugins`
 #   - /persist impermanence entry (opt-out via persist = false)
 #
 # The split that matters: everything in `settings`/`environment` is policy and
@@ -65,6 +68,16 @@ let
   };
 
   instances = lib.filterAttrs (_: i: i.enable) cfg.instances;
+
+  # The instance's package with its plugins' Python dependencies on PYTHONPATH
+  # (upstream's extraPythonPackages; its build refuses a package the sealed
+  # venv already has).
+  packageOf =
+    inst:
+    let
+      extra = inst.extraPythonPackages inst.package.python.pkgs;
+    in
+    if extra == [ ] then inst.package else inst.package.override { extraPythonPackages = extra; };
 
   # Units are named exactly after the instance — the zone name IS the agent
   # name (e.g. hermes-homelab-recusant.service). Put the runtime in the
@@ -135,6 +148,30 @@ let
           type = types.listOf types.str;
           default = [ ];
           description = "Extra arguments for `hermes gateway`.";
+        };
+
+        plugins = mkOption {
+          type = types.attrsOf types.path;
+          default = { };
+          description = ''
+            Directory plugins (plugin.yaml + __init__.py at the root), linked
+            to $HERMES_HOME/plugins/<name> before the gateway starts. The name
+            is what Hermes knows the plugin by: a memory provider is found by
+            its directory's name, so it must equal memory.provider. Their
+            Python dependencies go in extraPythonPackages.
+          '';
+        };
+
+        extraPythonPackages = mkOption {
+          type = types.functionTo (types.listOf types.package);
+          default = _: [ ];
+          defaultText = literalExpression "ps: [ ]";
+          description = ''
+            Python packages the plugins import, from the package set of the
+            interpreter hermes is built with (the argument). Only what the
+            hermes venv lacks: the build fails on a package it already has, a
+            dependency of one of these included.
+          '';
         };
 
         dashboard = {
@@ -222,6 +259,20 @@ let
       )}
       } > "$hermesHome/.env"
       chmod 0640 "$hermesHome/.env"
+
+      # Declared plugins: links into the store, the ones no longer declared
+      # removed. A real directory of the same name (the agent's own install)
+      # is left as it is.
+      find "$hermesHome/plugins" -maxdepth 1 -type l -lname '/nix/store/*' -delete
+      ${lib.concatStringsSep "\n" (
+        lib.mapAttrsToList (plugin: src: ''
+          if [ -e "$hermesHome/plugins/"${lib.escapeShellArg plugin} ]; then
+            echo "plugin ${plugin}: $hermesHome/plugins/${plugin} exists, not linking the declared one" >&2
+          else
+            ln -sT ${src} "$hermesHome/plugins/"${lib.escapeShellArg plugin}
+          fi
+        '') inst.plugins
+      )}
     '';
 
   # Shared unit scaffolding for gateway + dashboard: identity, env, hardening.
@@ -237,7 +288,7 @@ let
     };
 
     path = [
-      inst.package
+      (packageOf inst)
       pkgs.bash
       pkgs.coreutils
       pkgs.git
@@ -290,7 +341,7 @@ in
       # Per-user profile puts hermes + the zone's tools on login-shell PATH,
       # so bootstrap flows are just `sudo -u <name> -i hermes auth add
       # codex-oauth` (HOME is the stateDir, so ~/.hermes is the right store).
-      packages = [ inst.package ] ++ inst.extraPackages;
+      packages = [ (packageOf inst) ] ++ inst.extraPackages;
     }) instances;
 
     systemd.tmpfiles.rules = lib.concatLists (
@@ -350,7 +401,7 @@ in
               serviceConfig = {
                 ExecStart = lib.concatStringsSep " " (
                   [
-                    "${inst.package}/bin/hermes"
+                    "${packageOf inst}/bin/hermes"
                     "gateway"
                   ]
                   ++ inst.extraArgs
@@ -374,7 +425,7 @@ in
               # Same HERMES_HOME as the gateway: sessions, skills, approvals.
               serviceConfig = {
                 ExecStart = lib.concatStringsSep " " [
-                  "${inst.package}/bin/hermes"
+                  "${packageOf inst}/bin/hermes"
                   "dashboard"
                   "--host"
                   inst.dashboard.host

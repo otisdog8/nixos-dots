@@ -17,12 +17,6 @@ in
   options.modules.bundles.gaming = {
     enable = lib.mkEnableOption "gaming applications bundle";
 
-    enableSandboxing = lib.mkOption {
-      type = lib.types.bool;
-      default = true;
-      description = "Enable sandboxing for all gaming apps in the bundle";
-    };
-
     steam.enable = lib.mkOption {
       type = lib.types.bool;
       default = cfg.enable;
@@ -67,43 +61,57 @@ in
   };
 
   config = lib.mkIf cfg.enable {
+    # Steam and its mod tools share files (game folders, r2modman's profiles and
+    # its launch wrapper, Steam's launch options): as containers, one shared
+    # container (the user service sbx-group-games, lib/backends/nixpak-group.nix;
+    # it stops a minute after the last of them exits), each started in its home
+    # there (none takes $PWD); in VM mode (sandbox.mode = "vm", or their "(vm)"
+    # variants), one group VM with one guest home. Sized as Steam's own VM
+    # (apps/steam.nix).
+    modules.sandbox.groups.games = lib.mkIf cfg.steam.enable {
+      apps = [
+        "steam"
+      ]
+      ++ lib.optional cfg.r2modman.enable "r2modman"
+      ++ lib.optional cfg.slipstream.enable "slipstream";
+      persistent = false;
+      vm = {
+        memory = 32768;
+        vcpus = 12;
+        gpuMemoryMiB = 24576;
+        gpuMemoryProcessPercent = 90;
+        tuning = "game";
+      };
+    };
+
     modules.apps = {
       steam = {
         inherit (cfg.steam) enable;
-        sandbox.enable = lib.mkDefault cfg.enableSandboxing;
       };
 
       prismlauncher = {
         inherit (cfg.prismlauncher) enable;
-        sandbox.enable = lib.mkDefault cfg.enableSandboxing;
       };
 
       lunar-client = {
         inherit (cfg.lunar-client) enable;
-        sandbox.enable = lib.mkDefault cfg.enableSandboxing;
       };
 
       tetrio-desktop = {
         inherit (cfg.tetrio-desktop) enable;
-        sandbox.enable = lib.mkDefault cfg.enableSandboxing;
       };
 
       slipstream = {
         inherit (cfg.slipstream) enable;
-        sandbox.enable = lib.mkDefault cfg.enableSandboxing;
       };
 
       r2modman = {
         inherit (cfg.r2modman) enable;
-        sandbox.enable = false;
       };
 
-      # Wine runs arbitrary Windows binaries from arbitrary filesystem
-      # locations — sandboxing is off by default since it would block access
-      # to user-chosen game install dirs.
+      # Wine runs unsandboxed (backend "none", see apps/wine.nix).
       wine = {
         inherit (cfg.wine) enable;
-        sandbox.enable = false;
       };
     };
   };

@@ -47,6 +47,10 @@
   # This automatically enables: browsers, communication, productivity, media bundles
   # along with shared desktop modules (base, fonts, xdg, theming, printing)
   modules = {
+    # The agents' shared sandbox is a VM here (`claude-agents`, `codex-agents`,
+    # and the other agents' plain commands).
+    sandbox.agents.mode = "vm";
+
     # App sandboxes see ONLY the display GPU (4090). With both cards visible,
     # chromium/ANGLE picks a device by enumeration order and can land buffer
     # allocation on the compute-only 5070 while the compositor/window is on the

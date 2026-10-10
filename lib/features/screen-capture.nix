@@ -1,18 +1,11 @@
-# Screen recording and screenshot capabilities
+# Screen recording and screenshot capabilities (xdg-desktop-portal).
+# The host shows its own picker for every request; this only lets the app ASK.
 { config, lib, ... }:
 {
-  imports = [ ../app-spec.nix ];
+  imports = [ ./xdg.nix ];
 
-  config.app.nixpakModules = [
-    (
-      { lib, ... }:
-      {
-        dbus.enable = true;
-        dbus.policies = {
-          "org.freedesktop.portal.ScreenCast" = "talk";
-          "org.freedesktop.portal.Screenshot" = "talk";
-        };
-      }
-    )
+  config.app.portalInterfaces = [
+    "ScreenCast"
+    "Screenshot"
   ];
 }

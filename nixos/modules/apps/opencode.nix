@@ -1,4 +1,4 @@
-# opencode — AI coding agent (interactive TUI) — v2 nixpak backend.
+# opencode — AI coding agent (interactive TUI) — nixpak backend.
 #
 # Interactive CLIs stay on the in-session nixpak backend: a system-service stash
 # has no PTY, and the app's terminal is essential. So opencode runs as jrt in the
@@ -21,6 +21,8 @@
       ../../../lib/features/system-bin.nix
       ../../../lib/features/cwd.nix
       ../../../lib/features/git.nix
+      ../../../lib/features/nix-store.nix
+      ../../../lib/features/bin-sh.nix
       ../../../lib/features/agent-peers.nix
       ../../../lib/features/agent-gpu-command.nix
     ];
