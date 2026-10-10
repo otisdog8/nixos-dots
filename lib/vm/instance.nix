@@ -239,6 +239,12 @@ let
   # The guest's Wayland socket (mirrors guest-graphics.nix) and the host
   # compositor's, pinned like the systemd backend's.
   guestWaylandDisplay = if nvgpu then "/run/sbx/wl/wayland-0" else "wayland-0";
+  # Data-control copies (sandbox.vm.clipboard; lib/vm/clip-guest.py): the apps
+  # connect to the guest's clipboard endpoint, which is in front of the
+  # display proxy's socket, and the broker puts what they copy on the host's
+  # clipboard.
+  clip = gui && broker && lib.any (m: m.clipboard or false) members;
+  appWaylandDisplay = if clip then "${guestRuntimeDir}/wayland-clip" else guestWaylandDisplay;
   guestRuntimeDir = "/run/user/${guestUid}";
   hostRuntimeDir = "/run/user/${guestUid}";
   hostWaylandSocket = "wayland-1";
@@ -564,7 +570,7 @@ let
       entries = map (e: { inherit (e) tier path; }) entries;
       binds = map (b: { inherit (b) index target; }) binds;
       cwd = perCwd;
-      inherit grants fido docs;
+      inherit grants fido docs clip;
       # Which GPU/display stack the guest brings up (guest-graphics.nix).
       gpu = nvgpu;
       # The backend offers capture injection (/dev/nvgpu-capture in the guest).
@@ -610,7 +616,7 @@ let
     ++ lib.optionals gui (
       [
         "XDG_RUNTIME_DIR=${guestRuntimeDir}"
-        "WAYLAND_DISPLAY=${guestWaylandDisplay}"
+        "WAYLAND_DISPLAY=${appWaylandDisplay}"
       ]
       ++ lib.optional x11 "DISPLAY=:0"
       ++ (
@@ -881,6 +887,7 @@ let
       else
         "${guestRuntimeDir}/${guestWaylandDisplay}"
     }"
+    ++ lib.optional clip "test -S ${appWaylandDisplay}"
   );
   # While the VM runs, its members' containers can't start, and the other way
   # round (lib/impl-lock.nix): the VMM unit holds a lock per member with data,
@@ -2342,6 +2349,7 @@ in
       else
         "playback";
     inherit fido;
+    clipboard = if clip then "${pkgs.wl-clipboard}/bin/wl-copy" else null;
   };
 
   # This VM's own users and groups, for users.users/groups: its uid (unless

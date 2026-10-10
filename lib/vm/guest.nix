@@ -36,6 +36,10 @@ let
   fidoGuest = pkgs.writeScriptBin "sbx-fido-guest" (
     "#!${pkgs.python3}/bin/python3 -IS\n" + builtins.readFile ./fido-guest.py
   );
+  clipGuest = pkgs.writeScriptBin "sbx-clip-guest" (
+    "#!${pkgs.python3}/bin/python3 -IS\n" + builtins.readFile ./clip-guest.py
+  );
+  userRuntimeDir = "/run/user/${toString sbxHost.uid}";
 
   # Mount everything the spec describes. Runs as root before any SSH session.
   setup = pkgs.writeShellScript "sbx-setup" ''
@@ -192,6 +196,12 @@ let
         echo "WAYLAND_DISPLAY=wayland-0" > /run/sbx/display.env
         systemctl start --no-block sbx-wayland-cross-domain.service || true ;;
     esac
+
+    # Data-control copies to the host's clipboard (clip-guest.py), in front of
+    # the display just chosen.
+    if [ "$(jq '.clip' "$spec")" = true ]; then
+      systemctl start --no-block sbx-clip.service || true
+    fi
 
     # X11 apps: Xwayland on the guest's Wayland socket (guest-graphics.nix).
     if [ "$(jq '.x11' "$spec")" = true ]; then
@@ -416,6 +426,29 @@ in
       RestrictAddressFamilies = [ "AF_UNIX" ];
       # Its publishers hold every live share's tokens: no core dumps.
       LimitCORE = 0;
+    };
+  };
+
+  # The apps' Wayland socket in a VM with sandbox.vm.clipboard: everything
+  # passes to the display proxy (WAYLAND_DISPLAY, display.env) except the
+  # data-control protocols, answered here and sent to the host's broker.
+  systemd.services.sbx-clip = {
+    description = "Data-control copies to the host's clipboard";
+    after = [
+      "sbx-setup.service"
+      "sbx-wayland-nvgpu.service"
+      "sbx-wayland-cross-domain.service"
+    ];
+    environment.XDG_RUNTIME_DIR = userRuntimeDir;
+    serviceConfig = {
+      EnvironmentFile = "/run/sbx/display.env";
+      User = sbxHost.user;
+      ExecStart = pkgs.writeShellScript "sbx-clip" ''
+        case "$WAYLAND_DISPLAY" in /*) up="$WAYLAND_DISPLAY" ;; *) up="$XDG_RUNTIME_DIR/$WAYLAND_DISPLAY" ;; esac
+        exec ${clipGuest}/bin/sbx-clip-guest --listen "$XDG_RUNTIME_DIR/wayland-clip" --upstream "$up" --broker /run/sbx/broker.sock
+      '';
+      Restart = "always";
+      RestartSec = 1;
     };
   };
 

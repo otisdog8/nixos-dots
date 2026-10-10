@@ -161,6 +161,17 @@
                 Wayland. Nothing of the host's X server is shared, unlike
                 sandbox.x11Forward, and the container is unaffected.'';
             };
+            clipboard = lib.mkOption {
+              type = lib.types.bool;
+              default = false;
+              description = ''
+                For an app that copies through the data-control protocols
+                (wlr/ext-data-control) instead of the ordinary Wayland
+                clipboard: its VM gets a data-control endpoint
+                (lib/vm/clip-guest.py) whose copies the host's broker puts
+                on your clipboard, without asking. The VM can set and clear
+                the clipboard, never read it. Text only; VM mode only.'';
+            };
             hostKeyring = lib.mkOption {
               type = lib.types.bool;
               default = false;
