@@ -18,15 +18,15 @@ platforms:
   # docs/agent-infra). A grant is for one server and a set of its tools; its
   # credential is a short-lived token the server's ToolHive proxy verifies
   # against https://agent-auth.rooty.dev/.well-known/jwks.json.
-  # Uncomment once the broker has the mcp platform and homelab PR #278 is
-  # live. `issuer` must equal the issuer in the homelab's toolhive/auth.yaml,
+  # The server only answers once homelab PR #278 (ToolHive) is live.
+  # `issuer` must equal the issuer in the homelab's toolhive/auth.yaml,
   # and each url the `audience` of its MCPServer.
-  # mcp:
-  #   issuer: https://agent-auth.rooty.dev
-  #   servers:
-  #     playwright:
-  #       url: https://mcp-playwright.rooty.dev/mcp
-  #       description: "A browser: Playwright on the shared Steel instance"
+  mcp:
+    issuer: https://agent-auth.rooty.dev
+    servers:
+      playwright:
+        url: https://mcp-playwright.rooty.dev/mcp
+        description: "A browser: Playwright on the shared Steel instance"
   github:
     # GitHub account owners whose repos are brokered (the app must be
     # installed on each)
