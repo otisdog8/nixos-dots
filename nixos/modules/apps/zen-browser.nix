@@ -83,6 +83,11 @@
             # persists Downloads; the launcher ACLs it + tmpfiles creates it). Keeps each
             # dedicated app's downloads separate instead of a shared pool.
             modules.apps.zen-browser.sandbox.sharedDownloads = true;
+            # VM sizing: 12 GiB, committed whole at start (a virtio-nvgpu VM
+            # prefaults). The default 4 GiB also holds the guest's tmpfs root,
+            # ~/.cache with gecko's disk cache in it, and a day of tabs ran the
+            # guest out: its kernel killed content processes.
+            modules.apps.zen-browser.sandbox.vm.memory = lib.mkDefault 12288;
             # Zen upstream's one policy (its wrapper's): trust the system's CA
             # store through p11-kit. Kept, now that ours actually apply
             # (browser-settings.nix: the executable is copied, not linked).
