@@ -126,8 +126,10 @@ in
         # Commands as root: excelsior only, for bring-up. Always a human's
         # decision at the broker (never a rule or the LLM), and here: armed
         # with the root-arm code for at most an hour, or one command per
-        # root-direct code. Root shells stay off.
+        # root-direct code. Root shells too (30 minutes at most, opened with
+        # a root-direct code, every command shown on Discord first).
         tiers.root.enable = lib.mkDefault (hostName == "excelsior");
+        tiers.root.shell.enable = lib.mkDefault hostd.tiers.root.enable;
         # Time-boxed shells as the user (each opened with a TOTP code, every
         # command shown on Discord first): excelsior only, for bring-up. Here
         # and not in the host's file: the option may not exist yet.

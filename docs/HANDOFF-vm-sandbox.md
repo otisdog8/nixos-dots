@@ -48,8 +48,8 @@ shells, the kill switch and desktop approval prompts (its
 - Where the agent VM is enabled (excelsior): `vm.unit = agent-vm.service`
   (lockdown freezes it) and the user tier. hostd then runs as root, without
   capabilities (PID 1 starts the jobs; polkit authorizes uid 0), and its
-  state dir (persisted) is root's. User-tier shells
-  and the root tier (no root shells) are on on excelsior only; no `autoCommands`.
+  state dir (persisted) is root's. The root tier and
+  shells on both tiers are on on excelsior only; no `autoCommands`.
 - `modules.agentAuth.desktopPrompts.enable` (excelsior only): desktop
   prompts, with presence reported by hypridle (`hypridle.presenceCommand`:
   idle/active after 60 s, locked/unlocked around hyprlock), shown for 2 more
