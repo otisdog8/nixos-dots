@@ -2,7 +2,7 @@
 # the same broker key:
 #   - hostd, on every host: dials out to the broker on recusant, pairs once per
 #     host. Where the agent VM runs it freezes the VM on lockdown and runs
-#     approved commands as the user (the user tier; the root tier is off). It
+#     approved commands as the user (and, on excelsior, as root). It
 #     decides itself what runs, from this config, its own TOTP secrets
 #     (`sudo agent-auth-hostd totp-enroll`, once per host) and its arm state.
 #     With modules.agentAuth.desktopPrompts its helper in the user's session
@@ -121,8 +121,13 @@ in
         vm.unit = lib.mkIf config.modules.agentVm.enable (lib.mkDefault "agent-vm.service");
         # Commands as the user, where the agents are (bring-up, as the VM).
         # Nothing runs before `totp-enroll`, or while the tier is disarmed
-        # (no autoCommands here). Root tier: off.
+        # (no autoCommands here).
         tiers.user.enable = lib.mkDefault config.modules.agentVm.enable;
+        # Commands as root: excelsior only, for bring-up. Always a human's
+        # decision at the broker (never a rule or the LLM), and here: armed
+        # with the root-arm code for at most an hour, or one command per
+        # root-direct code. Root shells stay off.
+        tiers.root.enable = lib.mkDefault (hostName == "excelsior");
         # Time-boxed shells as the user (each opened with a TOTP code, every
         # command shown on Discord first): excelsior only, for bring-up. Here
         # and not in the host's file: the option may not exist yet.
