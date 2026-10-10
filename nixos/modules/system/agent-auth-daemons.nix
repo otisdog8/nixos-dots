@@ -1,8 +1,8 @@
 # agent-auth's daemons (agent-auth's docs/sandbox-design.md), both pinned to
 # the same broker key:
 #   - hostd, on every host: dials out to the broker on recusant, pairs once per
-#     host. Where the agent VM runs it freezes the VM on lockdown and runs
-#     approved commands as the user (and, on excelsior, as root). It
+#     host. Where the agent VM runs it freezes the VM on lockdown; with
+#     modules.agentAuth.hostCommands it runs approved commands. It
 #     decides itself what runs, from this config, its own TOTP secrets
 #     (`sudo agent-auth-hostd totp-enroll`, once per host) and its arm state.
 #     With modules.agentAuth.desktopPrompts its helper in the user's session
@@ -51,6 +51,7 @@ let
       "agent-auth-hostd";
   hypridle = config.modules.desktop.full.hyprland.hypridle;
   prompts = config.modules.agentAuth.desktopPrompts;
+  commands = config.modules.agentAuth.hostCommands;
   # hostd's "not now" check (exit 0 = show no prompt): the focused window is
   # fullscreen (a game, a video, a presentation), or Hyprland can't be asked
   # (unknown counts as away). The user service's environment may not carry
@@ -73,6 +74,37 @@ in
 {
   # Conditional on the input, never on config (imports can't depend on it).
   imports = lib.optional (modules ? hostd) modules.hostd;
+
+  # What hostd runs on this host for agents (agent-auth's "hostexec"). Every
+  # command is one a human approved at the broker; the host then decides for
+  # itself, from these settings, its TOTP secrets (`sudo agent-auth-hostd
+  # totp-enroll`) and whether the tier is armed. Nothing runs before the
+  # enrolment, or while a tier is disarmed without a code for that command.
+  options.modules.agentAuth.hostCommands = {
+    user = {
+      enable = lib.mkOption {
+        type = lib.types.bool;
+        default = config.modules.agentVm.enable;
+        defaultText = lib.literalExpression "config.modules.agentVm.enable";
+        description = "Commands as ${username}.";
+      };
+      shells = lib.mkEnableOption ''
+        time-boxed shells as ${username} (an hour at most): each opened with
+        a TOTP code, every command shown on Discord before it runs
+      '';
+    };
+    root = {
+      enable = lib.mkEnableOption ''
+        commands as root: always a human's decision at the broker (never a
+        rule or the LLM), and armed here for at most an hour
+      '';
+      shells = lib.mkEnableOption ''
+        time-boxed root shells (30 minutes at most), opened with a root TOTP
+        code, every command shown on Discord before it runs. Root on this
+        host for as long as one is open
+      '';
+    };
+  };
 
   options.modules.agentAuth.desktopPrompts = {
     enable = lib.mkEnableOption ''
@@ -119,21 +151,11 @@ in
         user = lib.mkDefault username;
         # Lockdown freezes the agent VM.
         vm.unit = lib.mkIf config.modules.agentVm.enable (lib.mkDefault "agent-vm.service");
-        # Commands as the user, where the agents are (bring-up, as the VM).
-        # Nothing runs before `totp-enroll`, or while the tier is disarmed
-        # (no autoCommands here).
-        tiers.user.enable = lib.mkDefault config.modules.agentVm.enable;
-        # Commands as root: excelsior only, for bring-up. Always a human's
-        # decision at the broker (never a rule or the LLM), and here: armed
-        # with the root-arm code for at most an hour, or one command per
-        # root-direct code. Root shells too (30 minutes at most, opened with
-        # a root-direct code, every command shown on Discord first).
-        tiers.root.enable = lib.mkDefault (hostName == "excelsior");
-        tiers.root.shell.enable = lib.mkDefault hostd.tiers.root.enable;
-        # Time-boxed shells as the user (each opened with a TOTP code, every
-        # command shown on Discord first): excelsior only, for bring-up. Here
-        # and not in the host's file: the option may not exist yet.
-        tiers.user.shell.enable = lib.mkDefault (hostName == "excelsior" && hostd.tiers.user.enable);
+        # modules.agentAuth.hostCommands; no autoCommands anywhere.
+        tiers.user.enable = lib.mkDefault commands.user.enable;
+        tiers.user.shell.enable = lib.mkDefault (commands.user.enable && commands.user.shells);
+        tiers.root.enable = lib.mkDefault commands.root.enable;
+        tiers.root.shell.enable = lib.mkDefault (commands.root.enable && commands.root.shells);
         desktop = lib.mkIf (prompts.enable && hypridle.enable) (
           {
             enable = true;

@@ -58,6 +58,11 @@
     # agent-auth's approval prompts as dialogs here too, while I'm at the desk
     # (modules/system/agent-auth-daemons.nix).
     agentAuth.desktopPrompts.enable = true;
+    # Approved commands for agents here: as me (shells too) and as root.
+    agentAuth.hostCommands = {
+      user.shells = true;
+      root.enable = true;
+    };
 
     # Physical layout, left to right: ASUS OLED, KTC, then the two Dells
     # stacked (4DGM884 bottom, GCGM884 top). All 4K@scale 1 at each panel's

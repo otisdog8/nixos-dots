@@ -82,6 +82,18 @@
   # and the other agents' plain commands).
   modules.sandbox.agents.mode = "vm";
 
+  # Approved commands for agents on this host (agent-auth's hostd,
+  # modules/system/agent-auth-daemons.nix): as jrt and as root, and root
+  # shells. This is the broker's own host: root here can change the broker,
+  # its policy and its database, so a root shell is as much as an agent can
+  # be given anywhere. Each one takes a root TOTP code that only this host
+  # can check, and shows every command on Discord before it runs.
+  modules.agentAuth.hostCommands = {
+    user.enable = true;
+    root.enable = true;
+    root.shells = true;
+  };
+
   # Enable Intel iGPU (for media transcoding)
   modules.system.hardware.intel = {
     enable = true;
