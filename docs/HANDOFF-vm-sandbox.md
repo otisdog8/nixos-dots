@@ -49,9 +49,10 @@ shells, the kill switch and desktop approval prompts (its
   (lockdown freezes it) and the user tier. hostd then runs as root with three
   capabilities, and its state dir (persisted) is root's. User-tier shells
   are on on excelsior only; the root tier is off everywhere; no `autoCommands`.
-- Where hypridle is enabled: desktop prompts, with presence reported by
-  hypridle (`hypridle.presenceCommand`: idle/active after 120 s, locked/unlocked
-  around hyprlock).
+- `modules.agentAuth.desktopPrompts.enable` (excelsior only): desktop
+  prompts, with presence reported by hypridle (`hypridle.presenceCommand`:
+  idle/active after 60 s, locked/unlocked around hyprlock), shown for 2 more
+  minutes at most, and never while the focused window is fullscreen.
 - `avm --host H …` runs H's own `avm` over SSH.
 - recusant: `/var/lib/private` forced to 0700 (systemd refused the broker's
   DynamicUser state dir under impermanence's 0755 parent).

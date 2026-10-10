@@ -5,8 +5,9 @@
 #     approved commands as the user (the user tier; the root tier is off). It
 #     decides itself what runs, from this config, its own TOTP secrets
 #     (`sudo agent-auth-hostd totp-enroll`, once per host) and its arm state.
-#     On desktops its helper in the user's session shows approval prompts
-#     while the user is there (presence: hypridle's hooks);
+#     With modules.agentAuth.desktopPrompts its helper in the user's session
+#     shows approval prompts while the user is there (presence: hypridle's
+#     hooks);
 #   - sandboxd, inside the agent VM (modules.agentVm's guest): runs the VM's
 #     agents (headless claude/codex per conversation), routes their a2a.
 #
@@ -28,6 +29,7 @@
   inputs,
   lib,
   options,
+  pkgs,
   username,
   ...
 }:
@@ -48,10 +50,51 @@ let
     else
       "agent-auth-hostd";
   hypridle = config.modules.desktop.full.hyprland.hypridle;
+  prompts = config.modules.agentAuth.desktopPrompts;
+  # hostd's "not now" check (exit 0 = show no prompt): the focused window is
+  # fullscreen (a game, a video, a presentation), or Hyprland can't be asked
+  # (unknown counts as away). The user service's environment may not carry
+  # Hyprland's instance: the newest one in the runtime dir is used then.
+  busy = pkgs.writeShellScript "agent-auth-desktop-busy" ''
+    if [ -z "''${HYPRLAND_INSTANCE_SIGNATURE:-}" ]; then
+      sock="$(ls -t "''${XDG_RUNTIME_DIR:-/run/user/$UID}"/hypr/*/.socket.sock 2>/dev/null | head -n1)"
+      [ -n "$sock" ] || exit 0
+      HYPRLAND_INSTANCE_SIGNATURE="$(basename "$(dirname "$sock")")"
+      export HYPRLAND_INSTANCE_SIGNATURE
+    fi
+    win="$(${pkgs.coreutils}/bin/timeout 3 ${config.programs.hyprland.package}/bin/hyprctl activewindow -j 2>/dev/null)" || exit 0
+    # 0 none, 1 maximized, 2 fullscreen (3 both); no window: {}.
+    case "$(printf '%s' "$win" | ${pkgs.jq}/bin/jq -r '.fullscreen // 0' 2>/dev/null)" in
+      0|1|false) exit 1 ;;
+      *) exit 0 ;;
+    esac
+  '';
 in
 {
   # Conditional on the input, never on config (imports can't depend on it).
   imports = lib.optional (modules ? hostd) modules.hostd;
+
+  options.modules.agentAuth.desktopPrompts = {
+    enable = lib.mkEnableOption ''
+      agent-auth approval prompts on this host's desktop, next to Discord
+      (needs hypridle: it reports whether the user is there). Shown only
+      while the session is unlocked, was used in the last few minutes, the
+      focused window isn't fullscreen and do-not-disturb
+      (`agent-auth-hostctl dnd 2h`) is off; Deny is the default button.
+      Which requests may be asked at a desk is the broker's policy
+      (recusant's agent-auth-policy.yaml, `desktop:`)
+    '';
+    idleAfter = lib.mkOption {
+      type = lib.types.ints.positive;
+      default = 60;
+      description = "Seconds without input before the user counts as idle.";
+    };
+    maxIdle = lib.mkOption {
+      type = lib.types.str;
+      default = "2m";
+      description = "How long after going idle prompts are still shown (the screen locks at 5 minutes anyway).";
+    };
+  };
 
   config = lib.mkMerge [
     (lib.optionalAttrs (modules ? hostd && pinned) {
@@ -84,13 +127,22 @@ in
         # command shown on Discord first): excelsior only, for bring-up. Here
         # and not in the host's file: the option may not exist yet.
         tiers.user.shell.enable = lib.mkDefault (hostName == "excelsior" && hostd.tiers.user.enable);
-        desktop.enable = lib.mkDefault hypridle.enable;
+        desktop = lib.mkIf (prompts.enable && hypridle.enable) (
+          {
+            enable = true;
+            inherit (prompts) maxIdle;
+          }
+          // lib.optionalAttrs (options.services.agent-auth-hostd.desktop ? busyCommand) {
+            busyCommand = [ "${busy}" ];
+          }
+        );
       };
       # hypridle and the lock screen tell hostd whether the user is there
       # (Hyprland keeps no logind idle or lock hints).
-      modules.desktop.full.hyprland.hypridle.presenceCommand = lib.mkIf hostd.desktop.enable (
-        lib.mkDefault "/run/current-system/sw/bin/agent-auth-hostctl presence"
-      );
+      modules.desktop.full.hyprland.hypridle = lib.mkIf hostd.desktop.enable {
+        presenceCommand = lib.mkDefault "/run/current-system/sw/bin/agent-auth-hostctl presence";
+        presenceTimeout = lib.mkDefault prompts.idleAfter;
+      };
     })
     (lib.optionalAttrs (modules ? sandboxd && pinned) {
       modules.agentVm.guestModules = [

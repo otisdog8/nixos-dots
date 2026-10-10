@@ -55,6 +55,10 @@
     # and the other agents' plain commands).
     sandbox.agents.mode = "vm";
 
+    # agent-auth's approval prompts as dialogs here too, while I'm at the desk
+    # (modules/system/agent-auth-daemons.nix).
+    agentAuth.desktopPrompts.enable = true;
+
     # Physical layout, left to right: ASUS OLED, KTC, then the two Dells
     # stacked (4DGM884 bottom, GCGM884 top). All 4K@scale 1 at each panel's
     # max refresh (highres alone picks the preferred rate), so each column
