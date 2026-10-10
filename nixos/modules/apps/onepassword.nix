@@ -43,27 +43,16 @@
 
     config.app = {
       name = "onepassword";
-      # In its container: force native Wayland (dedicated uid can't auth to
-      # XWayland; the hint alone falls back to X11), same as vesktop/brave.
-      # In its VM, with the guest's own X server (sandbox.vm.x11 below): X11.
-      # 1Password sets the clipboard itself, and on native Wayland through
-      # data-control, which a sandbox's Wayland socket doesn't have (and the
-      # guest's display proxy doesn't carry): nothing it copied reached the
-      # clipboard. As an X11 client its selection goes through Xwayland to the
-      # VM's ordinary Wayland clipboard. /run/sbx/display.env is the guest's
-      # (lib/vm/guest.nix); DISPLAY is set there only with vm.x11.
+      # Force native Wayland (dedicated uid can't auth to XWayland; the hint alone
+      # falls back to X11), same as vesktop/brave.
       package = pkgs.symlinkJoin {
         name = "1password-wayland";
         paths = [ pkgs._1password-gui ];
+        nativeBuildInputs = [ pkgs.makeWrapper ];
         postBuild = ''
           rm $out/bin/1password
-          cat > $out/bin/1password <<'EOF'
-          #!${pkgs.runtimeShell}
-          platform=wayland
-          if [ -e /run/sbx/display.env ] && [ -n "''${DISPLAY:-}" ]; then platform=x11; fi
-          exec ${pkgs._1password-gui}/bin/1password --ozone-platform="$platform" "$@"
-          EOF
-          chmod +x $out/bin/1password
+          makeWrapper ${pkgs._1password-gui}/bin/1password $out/bin/1password \
+            --add-flags "--ozone-platform=wayland"
         '';
       };
       packageName = "1password";
@@ -91,10 +80,13 @@
           # the container"); the container stays available per host.
           modules.apps.onepassword.sandbox.mode = lib.mkDefault "vm";
           modules.apps.onepassword.sandbox.vm.hostKeyring = lib.mkDefault true;
-          # An X server of its own in its VM, which 1Password then runs on
-          # (the package's wrapper above): copying works only that way. The
-          # host's X server isn't involved (unlike sandbox.x11Forward).
-          modules.apps.onepassword.sandbox.vm.x11 = lib.mkDefault true;
+          # 1Password copies through data-control (arboard / wl-clipboard-rs),
+          # which a sandbox's Wayland socket doesn't have: nothing it copied
+          # reached the clipboard, not even for pasting back into it. Its VM
+          # gets a data-control endpoint whose copies go to the host's
+          # clipboard (marked as secrets for clipboard managers, as 1Password
+          # marks them); it can't read the clipboard through it.
+          modules.apps.onepassword.sandbox.vm.clipboard = lib.mkDefault true;
           users.users."app-onepassword".extraGroups = [
             "video"
             "audio"
