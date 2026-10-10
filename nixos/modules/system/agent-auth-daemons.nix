@@ -70,6 +70,16 @@ let
       *) exit 0 ;;
     esac
   '';
+  # The dialog: sbx-prompt, the one every sandbox broker here uses (Deny has
+  # the focus, plain text). It doesn't wrap, and a command can be long: the
+  # fields are folded here, continuation lines indented so that none can pose
+  # as a line of the dialog's own.
+  sbxPrompt = import ../../../lib/broker/prompt.nix pkgs;
+  promptDialog = pkgs.writeShellScript "agent-auth-desk-prompt" ''
+    fold() { printf '%s' "$1" | ${pkgs.coreutils}/bin/fold -s -w 96 | ${pkgs.gnused}/bin/sed '2,$s/^/      /'; }
+    exec ${sbxPrompt}/bin/sbx-prompt --timeout "$1" --no-session -- "$2" "$(fold "$3")" "$(fold "$4")"
+  '';
+  desktopOptions = options.services.agent-auth-hostd.desktop or { };
 in
 {
   # Conditional on the input, never on config (imports can't depend on it).
@@ -126,6 +136,24 @@ in
       default = "2m";
       description = "How long after going idle prompts are still shown (the screen locks at 5 minutes anyway).";
     };
+    approve = {
+      user = lib.mkEnableOption ''
+        Allow at this desk as this host's own approval of a command on this
+        host as ${username}: the dialog shows what the host would run, and
+        no arming or TOTP code is needed. Whatever runs as ${username} here
+        can answer that dialog, and could run the command itself
+      '';
+      root = lib.mkEnableOption ''
+        the same for root commands on this host, followed by
+        ${username}'s password (polkit; its dialog shows the command too)
+      '';
+    };
+    sound = lib.mkOption {
+      type = lib.types.nullOr lib.types.path;
+      default = "${pkgs.sound-theme-freedesktop}/share/sounds/freedesktop/stereo/message-new-instant.oga";
+      defaultText = lib.literalExpression ''"''${pkgs.sound-theme-freedesktop}/share/sounds/freedesktop/stereo/message-new-instant.oga"'';
+      description = "Played when a prompt, or a notification an agent asked for (notify_operator), arrives. null: silent.";
+    };
   };
 
   config = lib.mkMerge [
@@ -161,8 +189,24 @@ in
             enable = true;
             inherit (prompts) maxIdle;
           }
-          // lib.optionalAttrs (options.services.agent-auth-hostd.desktop ? busyCommand) {
+          // lib.optionalAttrs (desktopOptions ? busyCommand) {
             busyCommand = [ "${busy}" ];
+          }
+          # Approval at this host's own desk, sbx-prompt as the dialog, the
+          # attention sound: once the agent-auth input has them.
+          // lib.optionalAttrs (desktopOptions ? approve) {
+            inherit (prompts) approve;
+            promptCommand = [
+              "${promptDialog}"
+              "{timeout}"
+              "{who}"
+              "{what}"
+              "{detail}"
+            ];
+            attentionCommand = lib.optionals (prompts.sound != null) [
+              "${pkgs.pipewire}/bin/pw-play"
+              "${prompts.sound}"
+            ];
           }
         );
       };

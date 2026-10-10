@@ -37,6 +37,13 @@ and the comments on each unit. **Not run on hardware.**
 
 ## Update 2026-10-10: hostd's local policy, desktop prompts, `avm --host`
 
+Later the same day (agent-auth `68aee01`): on excelsior a command on that host
+is approved in a dialog at its own desk (`desktopPrompts.approve.user` /
+`.root`; root also takes the password through polkit), the dialog is
+sbx-prompt (folded by a small wrapper, since sbx-prompt doesn't wrap), and
+prompts and `notify_operator` notifications play a sound. All of it waits for
+the agent-auth input to have those options, and none of it has run.
+
 agent-auth's `agent-sandbox` branch now has commands on hosts (hostexec),
 shells, the kill switch and desktop approval prompts (its
 `docs/sandbox-design.md`, Status table). This repo's side, in

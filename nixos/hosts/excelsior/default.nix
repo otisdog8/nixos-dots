@@ -57,7 +57,13 @@
 
     # agent-auth's approval prompts as dialogs here too, while I'm at the desk
     # (modules/system/agent-auth-daemons.nix).
-    agentAuth.desktopPrompts.enable = true;
+    agentAuth.desktopPrompts = {
+      enable = true;
+      # A command on this host, approved in the dialog here: no TOTP code;
+      # for root, my password as well.
+      approve.user = true;
+      approve.root = true;
+    };
     # Approved commands for agents here: as me (shells too) and as root.
     agentAuth.hostCommands = {
       user.shells = true;
