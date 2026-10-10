@@ -201,6 +201,14 @@ platforms:
       - admin
       - pod-exec
       - secret-reader
+# Approval prompts on the desktops jrt is at (hostd's helper in the session;
+# modules/system/agent-auth-daemons.nix), next to the Discord message: the
+# first answer decides. Anything running as jrt on such a desktop can answer
+# them, so `agents` is the limit on what that can approve. Sensitive requests
+# and shells stay on Discord.
+desktop:
+  enabled: true
+  agents: ["*-sandbox", "hermes-*"]
 # No routing rules: everything falls through to defaults.action: surface, and
 # the nixos-dots ban lives in repo_denylist above (validator layer, stronger
 # than any rule). Upstream's example auto-approves the narrow k8s roles so
