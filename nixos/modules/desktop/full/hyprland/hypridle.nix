@@ -41,6 +41,14 @@ let
 
   # Exit 0 only when on battery. Glob over A* (AC0/ACAD/ADP1/…) instead of the
   # old hardcoded AC0, so it works on any laptop's supply naming.
+  # cfg.presenceCommand, told "idle", "active", "locked" or "unlocked". Never
+  # in the way of locking: in the background, its failure ignored.
+  presence =
+    state: lib.optionalString (cfg.presenceCommand != null) "(${cfg.presenceCommand} ${state} >/dev/null 2>&1 &) ; ";
+  # After hyprlock exits: unlocked, unless this was a second lock_cmd while
+  # the screen was already locked (that hyprlock exits at once).
+  presenceUnlocked = lib.optionalString (cfg.presenceCommand != null) " ; ${pkgs.procps}/bin/pgrep -x hyprlock >/dev/null || ${cfg.presenceCommand} unlocked >/dev/null 2>&1";
+
   onBattery = ''test "$(cat /sys/class/power_supply/A*/online 2>/dev/null | head -n1)" = 0'';
 in
 {
@@ -60,6 +68,23 @@ in
       '';
     };
 
+    presenceCommand = lib.mkOption {
+      type = lib.types.nullOr lib.types.str;
+      default = null;
+      description = ''
+        A command told whether the user is at this desktop: called with
+        "idle" / "active" (presenceTimeout without input, and back) and
+        "locked" / "unlocked" (around hyprlock). Set by agent-auth's hostd
+        (modules/system/agent-auth-daemons.nix) for its desktop prompts.
+      '';
+    };
+
+    presenceTimeout = lib.mkOption {
+      type = lib.types.int;
+      default = 120;
+      description = "Seconds without input before presenceCommand is told \"idle\".";
+    };
+
     oledTimeout = lib.mkOption {
       type = lib.types.int;
       default = 150;
@@ -77,7 +102,7 @@ in
           general = {
             ignore_dbus_inhibit = false;
             ignore_systemd_inhibit = false;
-            lock_cmd = "${blankAfterLock} sudo -K && hyprlock";
+            lock_cmd = "${presence "locked"}${blankAfterLock} sudo -K && hyprlock${presenceUnlocked}";
             unlock_cmd = "pkill -USR1 hyprlock && rm -f ${idleFlag}";
             # Lock on EVERY suspend path, not just the idle ladder. Without this,
             # a suspend triggered outside the idle timeouts — lid close, manual
@@ -103,6 +128,11 @@ in
               timeout = cfg.oledTimeout;
               on-timeout = lib.concatMapStringsSep " && " (dpms "off") cfg.oledMonitors;
               on-resume = dpms "on" null;
+            }
+            ++ lib.optional (cfg.presenceCommand != null) {
+              timeout = cfg.presenceTimeout;
+              on-timeout = "${cfg.presenceCommand} idle";
+              on-resume = "${cfg.presenceCommand} active";
             }
             ++ [
             {
