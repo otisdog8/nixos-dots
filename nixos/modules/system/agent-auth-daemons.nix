@@ -79,6 +79,65 @@ let
     exec ${sbxPrompt}/bin/sbx-prompt --timeout "$1" --no-session -- "$2" "$(fold "$3")" "$(fold "$4")"
   '';
   desktopOptions = options.services.agent-auth-hostd.desktop or { };
+
+  # The deploy steps as hostd templates (capability `tpl.<name>`): one named
+  # command per step, with checked parameters, in place of an `sh -c` line an
+  # agent wrote. Mirrored, names and patterns, in recusant's
+  # agent-auth-policy.yaml (platforms.hostexec.templates) so the broker shows
+  # what a request expands to; what runs is this host's copy.
+  checkout = commands.checkout;
+  branchPattern = "[A-Za-z0-9][A-Za-z0-9._/-]*";
+  revPattern = "[0-9a-f]{40}";
+  deployPath = lib.makeBinPath [
+    pkgs.git
+    pkgs.git-crypt
+    pkgs.openssh
+    pkgs.coreutils
+  ];
+  # As the user: the checkout's branch to GitHub. No force, no refspec (the
+  # pattern admits neither a leading "+" or "-" nor a ":").
+  dotsPush = pkgs.writeShellScriptBin "nixos-dots-push" ''
+    set -euo pipefail
+    export PATH=${deployPath}:$PATH
+    exec git -C ${lib.escapeShellArg checkout} push origin "refs/heads/$1"
+  '';
+  # As the user: the checkout fast-forwarded to exactly that commit of the
+  # branch, fetched over https (the repo is public; a headless host has no
+  # SSH key for GitHub).
+  dotsPull = pkgs.writeShellScriptBin "nixos-dots-pull" ''
+    set -euo pipefail
+    export PATH=${deployPath}:$PATH
+    cd ${lib.escapeShellArg checkout}
+    git fetch ${lib.escapeShellArg commands.remote} "refs/heads/$1"
+    got="$(git rev-parse FETCH_HEAD)"
+    if [ "$got" != "$2" ]; then
+      echo "nixos-dots-pull: $1 is at $got, not $2; nothing changed" >&2
+      exit 1
+    fi
+    git merge --ff-only FETCH_HEAD
+    git log --oneline -1
+  '';
+  # As root: this host rebuilt from the checkout, only at that commit with
+  # nothing uncommitted in tracked files. The checkout is the user's, so git
+  # is told it is safe and nix gets SUDO_UID, as under sudo; the GitHub copy
+  # can't be built (its secrets.nix is git-crypt's ciphertext).
+  dotsRebuild = pkgs.writeShellScriptBin "nixos-dots-rebuild" ''
+    set -euo pipefail
+    export PATH=${deployPath}:$PATH
+    d=${lib.escapeShellArg checkout}
+    g() { git -c safe.directory="$d" -C "$d" "$@"; }
+    at="$(g rev-parse HEAD)"
+    if [ "$at" != "$1" ]; then
+      echo "nixos-dots-rebuild: the checkout is at $at, not $1; nothing built" >&2
+      exit 1
+    fi
+    if [ -n "$(g status --porcelain --untracked-files=no)" ]; then
+      echo "nixos-dots-rebuild: the checkout has uncommitted changes; nothing built" >&2
+      g status --short --untracked-files=no >&2
+      exit 1
+    fi
+    SUDO_UID="$(stat -c %u "$d")" exec nixos-rebuild switch --flake "$d#${hostName}"
+  '';
 in
 {
   # Conditional on the input, never on config (imports can't depend on it).
@@ -101,6 +160,16 @@ in
         time-boxed shells as ${username} (an hour at most): each opened with
         a TOTP code, every command shown on Discord before it runs
       '';
+    };
+    checkout = lib.mkOption {
+      type = lib.types.path;
+      default = "/persist/home/${username}/Documents/nixos-dots";
+      description = "This host's nixos-dots checkout: what the nixos-dots-* templates push, fast-forward and rebuild from.";
+    };
+    remote = lib.mkOption {
+      type = lib.types.str;
+      default = "https://github.com/otisdog8/nixos-dots.git";
+      description = "Where nixos-dots-pull fetches from (https: no key needed).";
     };
     root = {
       enable = lib.mkEnableOption ''
@@ -184,6 +253,36 @@ in
         tiers.root.enable = lib.mkDefault commands.root.enable;
         tiers.root.shell.enable = lib.mkDefault (commands.root.enable && commands.root.shells);
         tiers.root.shell.maxDuration = lib.mkDefault "2h";
+        templates = {
+          nixos-dots-push = {
+            tier = "user";
+            argv = [
+              "nixos-dots-push"
+              "{branch}"
+            ];
+            params.branch = branchPattern;
+          };
+          nixos-dots-pull = {
+            tier = "user";
+            argv = [
+              "nixos-dots-pull"
+              "{branch}"
+              "{rev}"
+            ];
+            params = {
+              branch = branchPattern;
+              rev = revPattern;
+            };
+          };
+          nixos-dots-rebuild = {
+            tier = "root";
+            argv = [
+              "nixos-dots-rebuild"
+              "{rev}"
+            ];
+            params.rev = revPattern;
+          };
+        };
         desktop = lib.mkIf (prompts.enable && hypridle.enable) (
           {
             enable = true;
@@ -210,6 +309,13 @@ in
           }
         );
       };
+      # The templates' commands, on hostd's job PATH
+      # (/run/current-system/sw/bin).
+      environment.systemPackages = [
+        dotsPush
+        dotsPull
+        dotsRebuild
+      ];
       # hypridle and the lock screen tell hostd whether the user is there
       # (Hyprland keeps no logind idle or lock hints).
       modules.desktop.full.hyprland.hypridle = lib.mkIf hostd.desktop.enable {
