@@ -96,10 +96,15 @@
       storage-health.enable = lib.mkDefault true;
     };
     # The agent VM (modules/system/agent-vm.nix; agent-auth's
-    # docs/sandbox-design.md). On excelsior here, and on recusant (its own
-    # file); galaxy follows.
+    # docs/sandbox-design.md). On the desktops here (galaxy's with its GPU:
+    # its own file), and on recusant (its own file).
     agentVm = {
-      enable = lib.mkDefault (hostname == "excelsior");
+      enable = lib.mkDefault (
+        lib.elem hostname [
+          "excelsior"
+          "galaxy"
+        ]
+      );
       network = {
         # The homelab gateways (whatever they resolve to).
         allowNames = [

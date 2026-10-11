@@ -106,6 +106,56 @@
     LimitCORE = 0;
   };
 
+  # virtio-nvgpu's backend for a VM (vhost-user-nvgpu), under the fork's own
+  # unit's settings (contrib/systemd/vhost-user-nvgpu@.service): the backend
+  # sandboxes itself (network namespace, Landlock, seccomp) and this adds a
+  # read-only host, no home, no capabilities and a closed device policy. The
+  # unit adds ExecStart, a user of the VM's own, DeviceAllow (the GPU's nodes)
+  # and the paths it may see. The same settings as an app VM's -gpu unit
+  # (lib/vm/instance.nix `gpuService`), for the agent VM's.
+  nvgpuBackend = {
+    NoNewPrivileges = true;
+    CapabilityBoundingSet = "";
+    AmbientCapabilities = "";
+    ProtectSystem = "strict";
+    ProtectHome = "tmpfs";
+    PrivateTmp = true;
+    PrivateIPC = true;
+    PrivateNetwork = true;
+    ProtectKernelTunables = true;
+    ProtectKernelModules = true;
+    ProtectKernelLogs = true;
+    ProtectControlGroups = true;
+    ProtectClock = true;
+    ProtectHostname = true;
+    LockPersonality = true;
+    RestrictRealtime = true;
+    RestrictSUIDSGID = true;
+    RestrictAddressFamilies = [
+      "AF_UNIX"
+      "AF_NETLINK"
+    ];
+    SystemCallArchitectures = "native";
+    DevicePolicy = "closed";
+    KeyringMode = "private";
+    UMask = "0077";
+    LimitCORE = 0;
+    Type = "exec";
+    # The device nodes' groups: render nodes, card nodes, /dev/udmabuf (kvm).
+    SupplementaryGroups = [
+      "video"
+      "render"
+      "kvm"
+    ];
+    MemoryMax = "2G";
+    MemorySwapMax = 0;
+    TasksMax = 256;
+    OOMScoreAdjust = 500;
+    TimeoutStopSec = 10;
+    MemoryDenyWriteExecute = true;
+    ProtectProc = "invisible";
+  };
+
   # The VMM (crosvm run). The unit adds what's per-VM: ExecStart, User/Group,
   # SystemCallFilter (jailedSyscallFilter + extras), the paths it may see,
   # DeviceAllow, MemoryMax.

@@ -64,7 +64,7 @@ in
       "overlay"
     ];
     initrd.supportedFilesystems = [ "btrfs" ];
-    kernelModules = [ "vmw_vsock_virtio_transport" ];
+    kernelModules = [ "vmw_vsock_virtio_transport" ] ++ lib.optional (agentVmHost.nvgpu != null) "virtio_gpu_nv";
     kernelParams = [
       "console=ttyS0"
       # Reboot (= crosvm exits, the unit restarts) instead of hanging on a panic.
@@ -229,7 +229,33 @@ in
   i18n.defaultLocale = agentVmHost.locale;
   time.timeZone = agentVmHost.timeZone;
   documentation.enable = false;
-  environment.systemPackages = [ pkgs.kitty.terminfo ];
+  environment.systemPackages = [
+    pkgs.kitty.terminfo
+  ]
+  # nvidia-smi.
+  ++ lib.optional (agentVmHost.nvgpu != null) agentVmHost.nvgpu.nvidiaPackage.bin;
+
+  # The host's NVIDIA GPU, for compute (modules.agentVm.gpu on the host):
+  # virtio-nvgpu's guest module registers /dev/nvidia* (0666, as on the host)
+  # and a DRM device; NVIDIA's own userspace, at the host driver's exact
+  # release, drives them. No display stack: no Wayland proxy, no EGL platforms.
+  boot.extraModulePackages = lib.optional (agentVmHost.nvgpu != null) agentVmHost.nvgpu.kmod;
+  boot.blacklistedKernelModules = lib.optionals (agentVmHost.nvgpu != null) [
+    # virtio-nvgpu uses virtio device ID 45, which Linux also assigns to
+    # virtio-spi; keep that driver from claiming the GPU.
+    "spi_virtio"
+    # The host driver's modules never belong in the guest.
+    "nvidia"
+    "nvidia_drm"
+    "nvidia_modeset"
+    "nvidia_uvm"
+    "nouveau"
+  ];
+  hardware.graphics = lib.mkIf (agentVmHost.nvgpu != null) {
+    enable = true;
+    # /run/opengl-driver/lib: libcuda, NVML, the video and OpenCL libraries.
+    extraPackages = [ agentVmHost.nvgpu.nvidiaPackage.out ];
+  };
 
   # No login prompts on the consoles; the only way in is vsock SSH.
   console.enable = false;

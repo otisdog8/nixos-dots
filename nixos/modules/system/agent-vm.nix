@@ -27,6 +27,10 @@
 #                          the same view, writing only its socket's dir. If
 #                          it fails while the VM runs (crosvm doesn't
 #                          reconnect), the VM is restarted (-net-failed)
+#   agent-vm-gpu.service  with modules.agentVm.gpu: virtio-nvgpu's backend, as
+#                          sbx-agentvm-gpu, serving the host's NVIDIA GPU to
+#                          the guest for compute (CUDA); -gpu-open (root,
+#                          confined) hands its socket to the VMM's uid
 # Operators (members of agent-vm-users) get `agent-vm ssh|status|log|restart`,
 # and `avm` for the agents inside (agent-auth's sandboxd).
 {
@@ -48,6 +52,39 @@ let
   netUser = "sbx-agentvm-net";
   group = "sbx-agentvm";
   operators = "agent-vm-users";
+  # The host's NVIDIA GPU in the guest, for compute (modules.agentVm.gpu):
+  # virtio-nvgpu, the pieces the app VMs use (lib/vm/nvgpu.nix), with no
+  # display. The backend is a host process of its own uid; the VMM is the
+  # fork's patched crosvm.
+  gpu = cfg.gpu.enable;
+  nvgpu = config.modules.sandbox.vm.nvgpu;
+  gpuUser = "sbx-agentvm-gpu";
+  gpuWindowArgs = nvgpu.windowArgs {
+    windowMiB = cfg.gpu.windowMiB;
+    ownerPercent = cfg.gpu.windowProcessPercent;
+    compute = true;
+  };
+  # The GPU's nodes for the backend: the host's narrowing when it has one (a
+  # multi-GPU host), else every NVIDIA and DRM node. As an app VM's
+  # (lib/vm/instance.nix `nvgpuDeviceAllow`).
+  gpuDeviceAllow =
+    (
+      if cfg.gpu.devices != null then
+        map (d: if d == "/dev/dri" then "char-drm rw" else "${d} rw") cfg.gpu.devices
+      else
+        [
+          "char-nvidia rw"
+          "char-nvidia-frontend rw"
+          "char-drm rw"
+        ]
+    )
+    ++ [
+      "/dev/nvidiactl rw"
+      "/dev/nvidia-modeset rw"
+      "/dev/udmabuf rw"
+      "/dev/nvidia-uvm rw"
+    ];
+  rootTool = "${import ../../../lib/vm/root.nix pkgs}/bin/sbx-vm-root";
   diskTarget = "${rt}/disk.img";
   blockDisk = cfg.disk.type == "block";
   # What crosvm opens: the image's bind mount point, or the device itself.
@@ -62,6 +99,16 @@ let
       stateVersion = config.system.stateVersion;
       # Same kernel as the host: nothing extra to build, and it has virtio-fs/vsock.
       kernelPackages = config.boot.kernelPackages;
+      # virtio-nvgpu's guest module for that kernel, and NVIDIA's userspace at
+      # exactly the host driver's release (the guest's must be the host's).
+      nvgpu =
+        if gpu then
+          {
+            kmod = nvgpu.kmod config.boot.kernelPackages;
+            nvidiaPackage = config.hardware.nvidia.package;
+          }
+        else
+          null;
     };
     modules = [
       ../../../lib/vm/agent-guest.nix
@@ -104,7 +151,7 @@ let
   };
 
   co = "${pkgs.coreutils}/bin";
-  crosvm = "${pkgs.crosvm}/bin/crosvm";
+  crosvm = "${if gpu then nvgpu.crosvm else pkgs.crosvm}/bin/crosvm";
   setpriv = "${pkgs.util-linux}/bin/setpriv";
 
   # Root never works inside a directory another uid owns, nor reads from one
@@ -144,6 +191,10 @@ let
     # passt (sbx-agentvm-net) makes the socket; the VMM connects as the group.
     ${co}/install -d -m 0750 -o ${netUser} -g ${group} ${rt}/net
     ${co}/install -d -m 0750 -g ${operators} ${rt}/client
+    ${lib.optionalString gpu ''
+      # The backend's, until -gpu-open takes it back with the socket in it.
+      ${co}/install -d -m 0700 -o ${gpuUser} -g ${gpuUser} ${rt}/gpu
+    ''}
     ${pkgs.openssh}/bin/ssh-keygen -q -t ed25519 -N "" -C "${unit}" -f ${rt}/meta/ssh_host_ed25519_key
     ${pkgs.openssh}/bin/ssh-keygen -q -t ed25519 -N "" -C "operators@${unit}" -f ${rt}/client/id_ed25519
     ${co}/install -m 0644 ${rt}/client/id_ed25519.pub ${rt}/meta/authorized_keys
@@ -257,6 +308,13 @@ let
       --block "path=${diskArg}"
       --vhost-user "type=net,socket=${rt}/net/passt.sock"
     )
+    ${lib.optionalString gpu ''
+      if [ ! -S ${rt}/gpu/gpu.sock ]; then
+        echo "${unit}: no GPU backend socket; see the journal of ${unit}-gpu and ${unit}-gpu-open" >&2
+        exit 1
+      fi
+      args+=(--vhost-user "type=nvgpu,socket=${rt}/gpu/gpu.sock,max-queue-size=256" --no-pci-hotplug-port)
+    ''}
     for p in ${lib.escapeShellArgs guestKernelParams}; do args+=(-p "$p"); done
     exec ${crosvm} "''${args[@]}" \
       --initrd ${guest.config.system.build.initialRamdisk}/${guest.config.system.boot.loader.initrdFile} \
@@ -432,6 +490,56 @@ in
       default = [ "cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY=" ];
     };
 
+    gpu = {
+      enable = lib.mkEnableOption ''
+        the host's NVIDIA GPU in the agent VM, for compute (CUDA, NVENC/NVDEC
+        through CUDA, OpenCL): virtio-nvgpu, as the app VMs', with no display.
+        Every project in the VM can use it (the guest's /dev/nvidia* are
+        0666), and they share its video memory with each other and with the
+        host. The guest gets the host driver's interface, filtered by the
+        backend's allowlist, not the device: attack-surface reduction, not a
+        hardware boundary (virtio-nvgpu's SECURITY.md). Takes effect at the
+        next `agent-vm restart`
+      '';
+      devices = lib.mkOption {
+        type = lib.types.nullOr (lib.types.listOf lib.types.str);
+        default = config.modules.sandbox.gpuDevices;
+        defaultText = lib.literalExpression "config.modules.sandbox.gpuDevices";
+        description = ''
+          The host device nodes of the GPU the VM gets (one card's
+          /dev/dri/cardN, /dev/dri/renderDN and /dev/nvidiaN; the shared
+          control nodes are added). null: every NVIDIA and DRM node. By
+          default the card the app sandboxes use.
+        '';
+      };
+      windowMiB = lib.mkOption {
+        type = lib.types.ints.positive;
+        default = 1024;
+        description = ''
+          virtio-nvgpu's shared window in MiB (a multiple of 64, 256-64512):
+          how much GPU memory the VM's processes can have CPU-mapped at once.
+          Address space, not guest RAM or video memory; the VMM's memory limit
+          grows by it. A mapping that doesn't fit fails with ENOMEM in the
+          guest (`SHM alloc failed` in the journal of agent-vm-gpu).
+        '';
+      };
+      windowProcessPercent = lib.mkOption {
+        type = lib.types.ints.between 1 95;
+        default = 50;
+        description = "The share of each window zone one guest process may hold.";
+      };
+      vramLimitMiB = lib.mkOption {
+        type = lib.types.nullOr (lib.types.ints.between 64 1048576);
+        default = null;
+        example = 8192;
+        description = ''
+          Hold the VM to this much video memory: allocations past it fail as
+          on a smaller GPU, and the guest is told it as the GPU's size. null:
+          whatever the card has free.
+        '';
+      };
+    };
+
     guestModules = lib.mkOption {
       type = lib.types.listOf lib.types.deferredModule;
       default = [ ];
@@ -465,7 +573,18 @@ in
         assertion = cfg.network.allowNames == [ ] || config.services.resolved.enable;
         message = "modules.agentVm.network.allowNames needs systemd-resolved on the host.";
       }
+      {
+        assertion =
+          !gpu || (lib.elem "nvidia" config.services.xserver.videoDrivers && config.hardware.nvidia.open);
+        message = "modules.agentVm.gpu needs NVIDIA's open kernel modules on the host (virtio-nvgpu).";
+      }
     ];
+
+    # vsock is how operators reach the guest (a host without the app VMs
+    # doesn't load it otherwise). --allow-compute needs UVM loaded before the
+    # backend starts: its unit and its own sandbox keep it from being loaded on
+    # demand.
+    boot.kernelModules = [ "vhost_vsock" ] ++ lib.optional gpu "nvidia_uvm";
 
     users.groups.${group} = { };
     users.groups.${operators}.members = cfg.operators;
@@ -478,6 +597,14 @@ in
       isSystemUser = true;
       inherit group;
       description = "agent VM network (passt)";
+    };
+    # A user and group of the backend's own: neither the VMM's nor passt's, so
+    # a compromised backend is not a step from either.
+    users.groups.${gpuUser} = lib.mkIf gpu { };
+    users.users.${gpuUser} = lib.mkIf gpu {
+      isSystemUser = true;
+      group = gpuUser;
+      description = "agent VM GPU (virtio-nvgpu backend)";
     };
 
     environment.systemPackages = [
@@ -518,11 +645,19 @@ in
         requires = [
           "${unit}-prep.service"
           "${unit}-net.service"
+        ]
+        ++ lib.optionals gpu [
+          "${unit}-gpu.service"
+          "${unit}-gpu-open.service"
         ];
         after = [
           "${unit}-prep.service"
           "${unit}-net.service"
           "network-online.target"
+        ]
+        ++ lib.optionals gpu [
+          "${unit}-gpu.service"
+          "${unit}-gpu-open.service"
         ];
         wants = [ "network-online.target" ];
         # A rebuild never kills running agents; a changed guest takes effect on
@@ -540,7 +675,10 @@ in
 
           User = vmUser;
           Group = group;
-          SystemCallFilter = core.hardening.jailedSyscallFilter;
+          # With the GPU: the guest's UVM semaphore pools are checked resident
+          # with mincore before they get a KVM slot (virtio-nvgpu's crosvm
+          # patch 0007); it is not in @system-service.
+          SystemCallFilter = core.hardening.jailedSyscallFilter ++ lib.optional gpu "mincore";
           # Nothing of the host's data is visible (hostView, below): the disk
           # image is bound to a mount point in the runtime dir (from root's
           # directory, so the source systemd resolves passes through nothing
@@ -559,8 +697,14 @@ in
             "/dev/kvm rw"
             "/dev/vhost-vsock rw"
           ]
-          ++ lib.optional blockDisk "${cfg.disk.path} rw";
-          MemoryMax = "${toString (cfg.memory + 512)}M";
+          ++ lib.optional blockDisk "${cfg.disk.path} rw"
+          # The pool check also asks whether this uid could open the
+          # backend's UVM file for writing; the device cgroup is part of the
+          # answer. The VMM never opens UVM itself.
+          ++ lib.optional gpu "/dev/nvidia-uvm w";
+          # Guest RAM, plus virtio-nvgpu's window: shared memory a guest
+          # kernel could fault in and charge here, up to its size.
+          MemoryMax = "${toString (cfg.memory + 512 + (if gpu then cfg.gpu.windowMiB else 0))}M";
         }
         // core.hardening.vmm
         // view;
@@ -634,6 +778,97 @@ in
             # The socket must be connectable by the VMM (same group).
             UMask = "0007";
           };
+      };
+
+      # virtio-nvgpu's backend: the VM's GPU device, over vhost-user. Compute
+      # only, no display. Whoever connects to its socket gets the guest's
+      # memory: the socket is in a folder of the backend's own until
+      # -gpu-open hands it to the VMM's uid.
+      "${unit}-gpu" = lib.mkIf gpu {
+        description = "Agent VM GPU (virtio-nvgpu)";
+        bindsTo = [ "${unit}.service" ];
+        requires = [ "${unit}-prep.service" ];
+        after = [
+          "${unit}-prep.service"
+          "systemd-modules-load.service"
+        ];
+        onFailure = [ "${unit}-gpu-failed.service" ];
+        restartIfChanged = false;
+        stopIfChanged = false;
+        environment.RUST_LOG = "warn";
+        serviceConfig =
+          core.hardening.nvgpuBackend
+          // view
+          // {
+            ExecStart = lib.escapeShellArgs (
+              [
+                "${nvgpu.backend}/bin/vhost-user-nvgpu"
+                "--socket"
+                "${rt}/gpu/gpu.sock"
+                "--allow-compute"
+              ]
+              ++ gpuWindowArgs
+              ++ lib.optionals (cfg.gpu.vramLimitMiB != null) [
+                "--vram-limit"
+                (toString cfg.gpu.vramLimitMiB)
+              ]
+            );
+            User = gpuUser;
+            Group = gpuUser;
+            DeviceAllow = gpuDeviceAllow;
+            ReadWritePaths = [ "${rt}/gpu" ];
+          };
+      };
+
+      # Root (confined), once the backend has bound its socket: the folder
+      # becomes root's, so the backend can no longer swap what is in it, and
+      # the socket, opened without following a link and checked to be the
+      # backend's, gets an ACL for the VMM's uid (lib/vm/root.py `gpu-open`,
+      # as for an app VM).
+      "${unit}-gpu-open" = lib.mkIf gpu {
+        description = "Agent VM GPU socket (handover)";
+        bindsTo = [ "${unit}.service" ];
+        requires = [
+          "${unit}-prep.service"
+          "${unit}-gpu.service"
+        ];
+        after = [
+          "${unit}-prep.service"
+          "${unit}-gpu.service"
+        ];
+        restartIfChanged = false;
+        stopIfChanged = false;
+        serviceConfig =
+          core.hardening.rootStep [
+            "CAP_CHOWN"
+            "CAP_FOWNER"
+            "CAP_SETUID"
+            "CAP_SETGID"
+          ]
+          // {
+            Type = "oneshot";
+            RemainAfterExit = true;
+            ExecStart = "${rootTool} gpu-open ${rt} ${gpuUser} ${vmUser} ${pkgs.acl}/bin/setfacl";
+            ReadWritePaths = [ rt ];
+            PrivateDevices = true;
+            ProtectKernelTunables = true;
+          };
+      };
+
+      # The backend gone while the VM runs: the guest's GPU device is dead
+      # and crosvm doesn't reconnect. Restart the VM (the backend with it),
+      # as for its network below.
+      "${unit}-gpu-failed" = lib.mkIf gpu {
+        description = "Restart the agent VM after its GPU backend failed";
+        serviceConfig = core.hardening.rootStep "" // {
+          Type = "oneshot";
+          ExecStart = pkgs.writeShellScript "${unit}-gpu-failed" ''
+            if ${pkgs.systemd}/bin/systemctl is-active --quiet ${unit}.service; then
+              echo "${unit}: its GPU backend failed; restarting the VM" >&2
+              exec ${pkgs.systemd}/bin/systemctl restart --no-block ${unit}.service
+            fi
+          '';
+        };
       };
 
       # passt gone while the VM runs: crosvm's vhost-user net doesn't
