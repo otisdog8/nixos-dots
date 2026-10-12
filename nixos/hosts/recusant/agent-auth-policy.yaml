@@ -286,7 +286,7 @@ platforms:
 desktop:
   enabled: true
   # By what the broker has on record for the agent, not by its name.
-  agents: [{placement: sandbox}, {runtime: hermes}]
+  agents: [{placement: sandbox}, {runtime: hermes, project: homelab}]
 # The agents' shared wiki: what they know about the homelab, in one place
 # they all read (the wiki_* tools, no grant) and each writes its part of.
 # Markdown in this repo, which only the broker touches, as its GitHub App;
@@ -359,7 +359,7 @@ rules:
   # Hermes on the gitops repo for a project agent that asked it to deploy
   # (branches and PRs; merging stays Jacob's).
   - match:
-      agent: {runtime: hermes}
+      agent: {runtime: hermes, project: homelab}
       platform: github
       capability: repo
       resource: uorux/homelab
@@ -380,14 +380,14 @@ rules:
     constraints: {max_duration: 8h}
   # Hermes reading for a project agent that asked.
   - match:
-      agent: {runtime: hermes}
+      agent: {runtime: hermes, project: homelab}
       platform: kubernetes
       capability: view
       delegator: {runtime: [claude, codex]}
     action: approve
     constraints: {max_duration: 4h}
   - match:
-      agent: {runtime: hermes}
+      agent: {runtime: hermes, project: homelab}
       platform: kubernetes
       capability: logs-reader
       delegator: {runtime: [claude, codex]}
@@ -418,7 +418,7 @@ rules:
     action: approve
     constraints: {max_duration: 8h}
   - match:
-      agent: {runtime: hermes}
+      agent: {runtime: hermes, project: homelab}
       platform: kubernetes
       capability: crd-reader
       delegator: {runtime: [claude, codex]}
@@ -432,27 +432,27 @@ rules:
   # what it finds as cluster-admin. It is narrower than edit, and still a
   # human's call. A job or a patched workload can read
   # what its namespace holds, which is why these are a list and not a glob.
-  - match: {agent: {runtime: hermes}, platform: kubernetes, capability: port-forwarder, resource: monitoring}
+  - match: {agent: {runtime: hermes, project: homelab}, platform: kubernetes, capability: port-forwarder, resource: monitoring}
     action: approve
     constraints: {max_duration: 2h}
   - match:
-      agent: {runtime: hermes}
+      agent: {runtime: hermes, project: homelab}
       platform: kubernetes
       capability: port-forwarder
       resource: monitoring
       delegator: {runtime: [claude, codex]}
     action: approve
     constraints: {max_duration: 2h}
-  - match: {agent: {runtime: hermes}, platform: kubernetes, capability: job-runner, resource: backup-verify}
+  - match: {agent: {runtime: hermes, project: homelab}, platform: kubernetes, capability: job-runner, resource: backup-verify}
     action: approve
     constraints: {max_duration: 2h}
-  - match: {agent: {runtime: hermes}, platform: kubernetes, capability: workload-manager, resource: media}
+  - match: {agent: {runtime: hermes, project: homelab}, platform: kubernetes, capability: workload-manager, resource: media}
     action: approve
     constraints: {max_duration: 2h}
-  - match: {agent: {runtime: hermes}, platform: kubernetes, capability: workload-manager, resource: immich}
+  - match: {agent: {runtime: hermes, project: homelab}, platform: kubernetes, capability: workload-manager, resource: immich}
     action: approve
     constraints: {max_duration: 2h}
-  - match: {agent: {runtime: hermes}, platform: kubernetes, capability: workload-manager, resource: paperless}
+  - match: {agent: {runtime: hermes, project: homelab}, platform: kubernetes, capability: workload-manager, resource: paperless}
     action: approve
     constraints: {max_duration: 2h}
   # Anything else Hermes changes, and pod-exec, secret-reader and edit
@@ -507,7 +507,7 @@ rules:
     action: approve
     constraints: {max_duration: 12h}
   # Hermes reaching the agents in the VMs.
-  - match: {agent: {runtime: hermes}, platform: a2a, capability: talk, resource: "*-sandbox"}
+  - match: {agent: {runtime: hermes, project: homelab}, platform: a2a, capability: talk, resource: "*-sandbox"}
     action: approve
     constraints: {max_duration: 12h}
 
