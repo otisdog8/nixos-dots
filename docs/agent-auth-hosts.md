@@ -2,7 +2,7 @@
 
 How to bring a host under agent-auth, written for the k3s nodes (arquitens,
 carrack, munificent) and valid for any host in this flake. The nodes get
-hostd only (commands as jrt and as root, root shells) and no agent VM:
+hostd only (commands and shells as jrt and as root) and no agent VM:
 sections 1 to 5. Section 6 is for the hosts that have the VM. Design:
 agent-auth's `docs/sandbox-design.md`. Modules here:
 `nixos/modules/system/agent-auth-daemons.nix` (both daemons),
@@ -19,8 +19,8 @@ What exists after it:
   `orchestrator-<host>-sandbox`.
 
 State as of 2026-10-12: excelsior and recusant are paired and run commands;
-excelsior's VM runs agents. The k3s nodes' config has both tiers and root
-shells and has not been rebuilt with them (before that they ran hostd
+excelsior's VM runs agents. The k3s nodes' config has both tiers and shells
+in both and has not been rebuilt with them (before that they ran hostd
 unprivileged, connecting only); the broker lists none of them as a host, so
 expect to pair each. galaxy has the VM and both tiers in its config and has
 not been rebuilt with them. Not confirmed on hardware anywhere: recusant's
@@ -57,8 +57,8 @@ In `nixos/hosts/<host>/default.nix`:
 modules.agentAuth.hostCommands = {
   user.enable = true;   # commands as jrt
   root.enable = true;   # commands as root: always approved by a human
-  root.shells = true;   # root shells, each opened with a TOTP code
-  # user.shells = true;
+  user.shells = true;   # shells as jrt, each opened with a TOTP code
+  root.shells = true;   # root shells, the same with a root code
 };
 
 # Only for a host that gets the VM (not the nodes):

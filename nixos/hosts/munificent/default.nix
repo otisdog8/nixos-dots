@@ -71,12 +71,13 @@
 
     # Approved commands for agents on this node (agent-auth's hostd,
     # modules/system/agent-auth-daemons.nix; docs/agent-auth-hosts.md): as jrt
-    # and as root, and root shells. Root on a node is the cluster (the
+    # and as root, and shells as either. Root on a node is the cluster (the
     # kubelet's credentials, etcd): every root command and every shell is a
     # human's decision at the broker, and a shell takes this node's own root
     # TOTP code. No agent VM here.
     agentAuth.hostCommands = {
       user.enable = true;
+      user.shells = true;
       root.enable = true;
       root.shells = true;
     };
