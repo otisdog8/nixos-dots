@@ -47,6 +47,10 @@
   # This automatically enables: browsers, communication, productivity, media bundles
   # along with shared desktop modules (base, fonts, xdg, theming, printing)
   modules = {
+    # The agents' shared sandbox is a VM here (`claude-agents`, `codex-agents`,
+    # and the other agents' plain commands).
+    sandbox.agents.mode = "vm";
+
     # App sandboxes see ONLY the display GPU (4090). With both cards visible,
     # chromium/ANGLE picks a device by enumeration order and can land buffer
     # allocation on the compute-only 5070 while the compositor/window is on the
@@ -69,6 +73,29 @@
       "/dev/nvidia-uvm"
       "/dev/nvidia-uvm-tools"
     ];
+
+    # The agent VM (enabled for the desktops in nixos/default.nix) gets a GPU
+    # here, for compute (CUDA) only: the display card, the one node set above,
+    # which the app VMs already use through the same backend. Every project in
+    # the VM shares it with the desktop, games and llama.cpp (./llm.nix), with
+    # no cap on video memory; `vramLimitMiB` sets one. To give the VM the 5070
+    # instead (headless, llama.cpp's), name its nodes:
+    #   agentVm.gpu.devices = [ "/dev/dri/card0" "/dev/dri/renderD129" "/dev/nvidia1" ];
+    # (not run on this host yet: no VM here has had that card).
+    agentVm.gpu.enable = true;
+
+    # agent-auth's approval prompts as dialogs here too, while I'm at the desk,
+    # and approved commands for agents: as on excelsior
+    # (modules/system/agent-auth-daemons.nix).
+    agentAuth.desktopPrompts = {
+      enable = true;
+      approve.user = true;
+      approve.root = true;
+    };
+    agentAuth.hostCommands = {
+      user.shells = true;
+      root.enable = true;
+    };
 
     desktop.full.enable = true;
 

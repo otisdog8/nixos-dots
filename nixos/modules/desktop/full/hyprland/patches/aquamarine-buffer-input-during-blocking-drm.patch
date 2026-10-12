@@ -1,0 +1,222 @@
+From 71410eb36ac0e099dc207cc85a713d085636233e Mon Sep 17 00:00:00 2001
+From: Jacob Root <jacob@otisroot.com>
+Date: Tue, 29 Sep 2026 02:25:08 +0000
+Subject: [PATCH] drm: buffer input into libinput during blocking DRM ioctls
+
+Blocking modesets (DPMS on, ~hundreds of ms each on nvidia) and the forced
+connector probes run on every hotplug uevent (~200ms per connector on nvidia)
+stall the compositor's main thread. Meanwhile the kernel's per-device evdev
+buffer (64 events, ~10 keystrokes) overflows: libinput reports SYN_DROPPED
+and typed keys are lost - e.g. a password typed into the lock screen while
+the monitors wake.
+
+Run those ioctls on a helper thread and keep calling libinput_dispatch() on
+the main thread until they return. That only moves kernel events into
+libinput's own growable queue; they are handled afterwards by the normal
+dispatch (scheduled as an idle event, since the fd no longer polls readable).
+---
+ include/aquamarine/backend/DRM.hpp     |  1 +
+ include/aquamarine/backend/Session.hpp |  8 ++++
+ src/backend/Session.cpp                | 58 ++++++++++++++++++++++++++
+ src/backend/drm/DRM.cpp                | 26 +++++++++++-
+ src/backend/drm/impl/Atomic.cpp        |  8 +++-
+ 5 files changed, 98 insertions(+), 3 deletions(-)
+
+diff --git a/include/aquamarine/backend/DRM.hpp b/include/aquamarine/backend/DRM.hpp
+index cd99f4f..c4376bf 100644
+--- a/include/aquamarine/backend/DRM.hpp
++++ b/include/aquamarine/backend/DRM.hpp
+@@ -468,6 +468,7 @@ namespace Aquamarine {
+         bool grabFormats();
+         bool shouldBlit();
+         void scanConnectors();
++        void runBufferingInput(const std::function<int()>& fn);
+         void scanLeases();
+         void restoreAfterVT();
+         void recheckOutputs();
+diff --git a/include/aquamarine/backend/Session.hpp b/include/aquamarine/backend/Session.hpp
+index 5d072b5..d1ba0f3 100644
+--- a/include/aquamarine/backend/Session.hpp
++++ b/include/aquamarine/backend/Session.hpp
+@@ -4,6 +4,7 @@
+ #include <hyprutils/signal/Signal.hpp>
+ #include <hyprutils/memory/SharedPtr.hpp>
+ #include "../input/Input.hpp"
++#include <functional>
+ #include <vector>
+ 
+ struct udev;
+@@ -223,6 +224,13 @@ namespace Aquamarine {
+         bool                                                            switchVT(uint32_t vt);
+         void                                                            onReady();
+ 
++        /* Runs fn on a helper thread and, until it returns, keeps moving kernel input into libinput's own queue.
++           For slow blocking DRM ioctls (modesets, forced connector probes) on the compositor's main thread: while
++           that thread is stuck, the kernel's small per-device evdev buffers overflow (SYN_DROPPED) and keystrokes
++           are lost. The buffered events are dispatched from an idle event afterwards. Returns fn's result, with
++           fn's errno. */
++        int                                                             runBufferingInput(const std::function<int()>& fn);
++
+         struct SAddDrmCardEvent {
+             std::string path;
+         };
+diff --git a/src/backend/Session.cpp b/src/backend/Session.cpp
+index bc84a69..491a6a2 100644
+--- a/src/backend/Session.cpp
++++ b/src/backend/Session.cpp
+@@ -1,6 +1,8 @@
+ #include <aquamarine/backend/Backend.hpp>
+ #include <cerrno>
+ #include <fcntl.h>
++#include <thread>
++#include <system_error>
+ #include "Shared.hpp"
+ 
+ extern "C" {
+@@ -13,6 +15,8 @@ extern "C" {
+ #include <xf86drmMode.h>
+ #include <linux/input.h>
+ #include <unistd.h>
++#include <poll.h>
++#include <sys/eventfd.h>
+ }
+ 
+ using namespace Aquamarine;
+@@ -498,6 +502,60 @@ void Aquamarine::CSession::dispatchLibinputEvents() {
+     }
+ }
+ 
++int Aquamarine::CSession::runBufferingInput(const std::function<int()>& fn) {
++    if (!libinputHandle)
++        return fn();
++
++    const int doneFD = eventfd(0, EFD_CLOEXEC);
++    if (doneFD < 0)
++        return fn();
++
++    int         ret = 0, err = 0;
++    std::thread worker;
++    try {
++        worker = std::thread([&] {
++            ret                = fn();
++            err                = errno;
++            const uint64_t ONE = 1;
++            write(doneFD, &ONE, sizeof(ONE));
++        });
++    } catch (const std::system_error&) {
++        close(doneFD);
++        return fn();
++    }
++
++    // Only buffer here (libinput_dispatch); handling events means running compositor code, which
++    // must not happen in the middle of the caller's commit/scan.
++    bool   buffered = false;
++    pollfd fds[2]   = {{.fd = doneFD, .events = POLLIN, .revents = 0}, {.fd = libinput_get_fd(libinputHandle), .events = POLLIN, .revents = 0}};
++    while (!(fds[0].revents & POLLIN)) {
++        if (poll(fds, 2, -1) < 0) {
++            if (errno == EINTR)
++                continue;
++            break; // just wait for the worker
++        }
++
++        if (fds[1].revents & POLLIN) {
++            libinput_dispatch(libinputHandle);
++            buffered = true;
++        } else if (fds[1].revents & (POLLERR | POLLHUP | POLLNVAL))
++            fds[1].fd = -1;
++    }
++
++    worker.join();
++    close(doneFD);
++
++    // the libinput fd no longer polls readable for what was buffered, so hand it to the normal dispatch
++    if (buffered && backend)
++        backend->addIdleEvent(makeShared<std::function<void()>>([weak = self] {
++            if (auto session = weak.lock())
++                session->dispatchLibinputEvents();
++        }));
++
++    errno = err;
++    return ret;
++}
++
+ void Aquamarine::CSession::dispatchLibseatEvents() {
+     if (libseat_dispatch(libseatHandle, 0) == -1)
+         backend->log(AQ_LOG_ERROR, "Couldn't dispatch libseat events");
+diff --git a/src/backend/drm/DRM.cpp b/src/backend/drm/DRM.cpp
+index df61bee..07bc5d7 100644
+--- a/src/backend/drm/DRM.cpp
++++ b/src/backend/drm/DRM.cpp
+@@ -1009,7 +1009,11 @@ void Aquamarine::CDRMBackend::recheckOutputs() {
+ 
+             backend->log(AQ_LOG_DEBUG, std::format("drm: Connector {} connected", conn->szName));
+ 
+-            auto drmConn = drmModeGetConnector(gpu->fd, conn->id);
++            drmModeConnector* drmConn = nullptr;
++            runBufferingInput([&] {
++                drmConn = drmModeGetConnector(gpu->fd, conn->id);
++                return 0;
++            });
+ 
+             // ??? was valid 5 sec ago...
+             if (!drmConn) {
+@@ -1026,6 +1030,15 @@ void Aquamarine::CDRMBackend::recheckOutputs() {
+         backend->log(AQ_LOG_ERROR, std::format("drm: Failed to update renderer state for {}", gpu->path));
+ }
+ 
++// Forced connector probes are slow (nvidia re-reads the EDID, ~200ms per connector) and run on the compositor's
++// main thread on every hotplug uevent; keep input flowing into libinput meanwhile.
++void Aquamarine::CDRMBackend::runBufferingInput(const std::function<int()>& fn) {
++    if (backend && backend->session)
++        backend->session->runBufferingInput(fn);
++    else
++        fn();
++}
++
+ void Aquamarine::CDRMBackend::scanConnectors() {
+     backend->log(AQ_LOG_DEBUG, std::format("drm: Scanning connectors for {}", gpu->path));
+ 
+@@ -1035,11 +1048,20 @@ void Aquamarine::CDRMBackend::scanConnectors() {
+         return;
+     }
+ 
++    // drmModeGetConnector forces a probe; batch them so input is buffered across all of them
++    std::vector<drmModeConnector*> probed(resources->count_connectors, nullptr);
++    runBufferingInput([&] {
++        for (int i = 0; i < resources->count_connectors; ++i) {
++            probed[i] = drmModeGetConnector(gpu->fd, resources->connectors[i]);
++        }
++        return 0;
++    });
++
+     for (int i = 0; i < resources->count_connectors; ++i) {
+         uint32_t          connectorID = resources->connectors[i];
+ 
+         SP<SDRMConnector> conn;
+-        auto              drmConn = drmModeGetConnector(gpu->fd, connectorID);
++        auto              drmConn = probed[i];
+ 
+         backend->log(AQ_LOG_DEBUG, std::format("drm: Scanning connector id {}", connectorID));
+ 
+diff --git a/src/backend/drm/impl/Atomic.cpp b/src/backend/drm/impl/Atomic.cpp
+index 421acaf..de9ccf1 100644
+--- a/src/backend/drm/impl/Atomic.cpp
++++ b/src/backend/drm/impl/Atomic.cpp
+@@ -378,7 +378,13 @@ bool Aquamarine::CDRMAtomicRequest::commit(uint32_t flagssss) {
+     const bool WANTSFLIP = conn && conn->crtc && (flagssss & DRM_MODE_PAGE_FLIP_EVENT) && !(flagssss & DRM_MODE_ATOMIC_TEST_ONLY);
+     const auto FLIPID    = WANTSFLIP ? conn->crtc->armPageFlip(conn, flagssss & DRM_MODE_PAGE_FLIP_ASYNC) : uintptr_t{0};
+ 
+-    if (auto ret = drmModeAtomicCommit(backend->gpu->fd, req, flagssss, rc<void*>(FLIPID)); ret) {
++    // Blocking commits are modesets, which on nvidia take hundreds of ms each (link training) on the main
++    // thread; keep input flowing into libinput meanwhile so it can't overflow and drop keystrokes.
++    const auto COMMIT   = [&] { return drmModeAtomicCommit(backend->gpu->fd, req, flagssss, rc<void*>(FLIPID)); };
++    const auto SESSION  = backend->backend ? backend->backend->session : nullptr;
++    const bool BLOCKING = !(flagssss & (DRM_MODE_ATOMIC_NONBLOCK | DRM_MODE_ATOMIC_TEST_ONLY));
++
++    if (auto ret = BLOCKING && SESSION ? SESSION->runBufferingInput(COMMIT) : COMMIT(); ret) {
+         backend->log((flagssss & DRM_MODE_ATOMIC_TEST_ONLY) ? AQ_LOG_DEBUG : AQ_LOG_ERROR,
+                      std::format("atomic drm request: failed to commit: {}, flags: {}", strerror(ret == -1 ? errno : -ret), flagsToStr(flagssss)));
+ 
+-- 
+2.55.0
+

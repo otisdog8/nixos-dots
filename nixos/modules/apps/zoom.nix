@@ -12,7 +12,7 @@
       ../../../lib/features/gui.nix
       ../../../lib/features/needs-gpu.nix
       ../../../lib/features/network.nix
-      ../../../lib/features/audio.nix
+      ../../../lib/features/microphone.nix
       ../../../lib/features/camera.nix
       ../../../lib/features/screen-capture.nix
       ../../../lib/features/xdg-desktop.nix
@@ -24,24 +24,22 @@
       package = pkgs.zoom-us;
       packageName = "zoom";
 
-      # Dedicated-uid, persistent: login/settings (.zoom + the two confs) run as
-      # app-zoom — hidden from a compromised jrt — and kept across reboots. Screen
-      # share rides the PipeWire portal (works cross-uid already).
+      # Dedicated-uid, persistent: login/settings (.zoom + .config) run as app-zoom —
+      # hidden from a compromised jrt — and kept across reboots. Screen share rides
+      # the PipeWire portal (works cross-uid already).
       defaultBackend = "systemd";
       storage = [
         {
           path = ".zoom";
           tier = "persist";
         }
+        # zoom.conf / zoomus.conf live here. Persist the DIRECTORY, not the two
+        # files: Qt's QSettings saves via write-temp-then-rename(), and renaming
+        # over a single-file bind mount fails (EBUSY), so settings never stuck.
+        # The home belongs to app-zoom alone, so the whole .config is safe to keep.
         {
-          path = ".config/zoom.conf";
+          path = ".config";
           tier = "persist";
-          type = "file";
-        }
-        {
-          path = ".config/zoomus.conf";
-          tier = "persist";
-          type = "file";
         }
       ];
 

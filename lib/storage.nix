@@ -13,7 +13,9 @@
 #   stash → data at /<tier>/sandbox/<app>/<path>; the sandbox binds it to ~/<path>.
 #   home  → data at ~/<path> via impermanence (host-visible); bound as-is.
 # `forceHome` (from the global toggle, or backend = "none") rewrites every entry
-# to "home".
+# to "home". Dedicated-uid apps (stashOwner = "dedicated") can't use "home": the
+# data is persisted under jrt's home while the app runs with HOME=/home/app-<name>,
+# so lib/apps.nix never forces them and an explicit home entry is an assertion.
 #
 # Ownership / the per-app lock. The per-app root AND every intermediate dir are
 # ROOT-owned; only the leaf is owned by the app principal. This is deliberate:
@@ -37,6 +39,8 @@
   forceHome ? false,
 }:
 let
+  paths = import ./paths.nix { inherit lib; };
+
   tierMount = {
     persist = "/persist";
     large = "/large";
@@ -76,7 +80,7 @@ let
     e:
     let
       appRoot = "${tierMount.${e.tier}}/sandbox/${appName}";
-      comps = lib.filter (c: c != "") (lib.splitString "/" e.path);
+      comps = paths.components e.path;
       # Intermediate dirs = every path component except the final leaf (which is
       # the leaf dir, or the file itself). Root-owned; the leaf carries app perms.
       innerDirs = if comps == [ ] then [ ] else lib.init comps;
@@ -105,7 +109,12 @@ let
         tier:
         let
           es = lib.filter (e: e.tier == tier) homeEntries;
-          dirs = map (e: e.path) (lib.filter (e: e.type == "dir") es);
+          # Directories carry the entry's mode (impermanence applies it to the
+          # persistent dir); files have no mode of their own in impermanence.
+          dirs = map (e: {
+            directory = e.path;
+            inherit (e) mode;
+          }) (lib.filter (e: e.type == "dir") es);
           files = map (e: e.path) (lib.filter (e: e.type == "file") es);
         in
         lib.optionalAttrs (es != [ ]) {
@@ -126,26 +135,18 @@ let
   # (#3) Parent-first ordering. Nested bind TARGETS (e.g. a chromium cache dir
   # inside a persisted profile) must bind parent-before-child, so backends bind in
   # this order. Sorting by path depth guarantees any parent precedes its child.
-  pathDepth = p: lib.length (lib.filter (c: c != "") (lib.splitString "/" p));
+  pathDepth = p: lib.length (paths.components p);
   sortedEntries = lib.sort (a: b: pathDepth a.path < pathDepth b.path) entries;
 
   # (#2) Same-tier nesting is illegal: the inner leaf's path would traverse the
   # jrt-owned outer leaf and hit systemd-tmpfiles' unsafe-path-transition, so the
   # inner leaf is silently never created. Cross-tier nesting is fine (each tier is
   # a separate on-disk root with its own all-root intermediate chain).
-  compsOf = p: lib.filter (c: c != "") (lib.splitString "/" p);
-  strictPrefix =
-    a: b:
-    let
-      ca = compsOf a;
-      cb = compsOf b;
-    in
-    lib.length ca < lib.length cb && lib.take (lib.length ca) cb == ca;
   nestingMsgs = lib.concatMap (
     a:
     lib.concatMap (
       b:
-      lib.optional (a.tier == b.tier && strictPrefix a.path b.path)
+      lib.optional (a.tier == b.tier && paths.isStrictParent a.path b.path)
         "sandbox app '${appName}': storage paths '${a.path}' and '${b.path}' are nested on the same tier '${a.tier}'. systemd-tmpfiles cannot create the inner leaf (unsafe path transition through the jrt-owned outer leaf). Put them on different tiers, or merge into one entry."
     ) stashEntries
   ) stashEntries;
@@ -156,7 +157,7 @@ let
   badPathMsgs = lib.concatMap (
     e:
     let
-      comps = compsOf e.path;
+      comps = paths.components e.path;
       ok =
         e.path != ""
         && !(lib.hasPrefix "/" e.path)
@@ -167,10 +168,15 @@ let
     lib.optional (!ok)
       "sandbox app '${appName}': invalid storage path '${e.path}'. Must be a normalized home-relative path (no leading '/', no '.'/'..' components, chars in [A-Za-z0-9._/ -])."
   ) entries;
+  homeDedicatedMsgs =
+    lib.optional (stashOwner == "dedicated" && homeEntries != [ ])
+      "sandbox app '${appName}': location = \"home\" storage (${
+        lib.concatMapStringsSep ", " (e: e.path) homeEntries
+      }) is not supported with sandbox.dedicatedUser — the app's HOME is /home/app-${appName}, not ${username}'s. Use location = \"stash\".";
   assertions = map (m: {
     assertion = false;
     message = m;
-  }) (nestingMsgs ++ badPathMsgs);
+  }) (nestingMsgs ++ badPathMsgs ++ homeDedicatedMsgs);
 in
 {
   inherit

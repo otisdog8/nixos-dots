@@ -5,17 +5,55 @@
 #   4. `defaults.action`
 #
 # Durations: approved = min(requested, matched rule's max_duration, defaults.max_duration)
-
 defaults:
-  action: surface          # deny | approve | llm | surface
+  action: surface # deny | approve | llm | surface
   max_duration: 24h
-
 llm:
-  model: deepseek/deepseek-v4-flash    # OpenRouter model id; per-rule override via constraints.llm_model
-  retry_budget: 2          # LLM denials the agent may retry before human escalation
+  model: deepseek/deepseek-v4.1-flash # OpenRouter model id; per-rule override via constraints.llm_model
+  retry_budget: 2 # LLM denials the agent may retry before human escalation
   timeout_secs: 60
-
 platforms:
+  # MCP servers that take the broker's own tokens (agent-auth README, "MCP
+  # servers"; the cluster side is the homelab repo's apps/infra/toolhive and
+  # docs/agent-infra). A grant is for one server and a set of its tools; its
+  # credential is a short-lived token the server's ToolHive proxy verifies
+  # against https://agent-auth.rooty.dev/.well-known/jwks.json.
+  # `issuer` must equal the issuer in the homelab's toolhive/auth.yaml,
+  # and each url the `audience` of its MCPServer.
+  mcp:
+    issuer: https://agent-auth.rooty.dev
+    servers:
+      playwright:
+        url: https://mcp-playwright.rooty.dev/mcp
+        description: "A browser: Playwright on the shared Steel instance"
+  # Commands on hosts (each host's hostd; modules/system/agent-auth-daemons.nix).
+  # A host runs only what its own config admits; nothing here loosens that.
+  hostexec:
+    # The deploy steps as named commands, mirrored from the hosts' own
+    # templates (agent-auth-daemons.nix, same names and patterns) so a request
+    # shows what it expands to. Capability `tpl.<name>`, scope {tier, params}.
+    # The commands themselves are scripts in each host's nix store.
+    templates:
+      # This checkout's branch to GitHub, never forced. Works where jrt's SSH
+      # key is (the desktops).
+      nixos-dots-push:
+        tier: user
+        argv: ["nixos-dots-push", "{branch}"]
+        params: {branch: "[A-Za-z0-9][A-Za-z0-9._/-]*"}
+        description: "git push of the nixos-dots checkout's branch (fast-forward only)"
+      # The host's checkout fast-forwarded to exactly that commit of the branch.
+      nixos-dots-pull:
+        tier: user
+        argv: ["nixos-dots-pull", "{branch}", "{rev}"]
+        params: {branch: "[A-Za-z0-9][A-Za-z0-9._/-]*", rev: "[0-9a-f]{40}"}
+        description: "fast-forward the host's nixos-dots checkout to that exact commit"
+      # nixos-rebuild switch of the host from its checkout, only at that commit
+      # with nothing uncommitted.
+      nixos-dots-rebuild:
+        tier: root
+        argv: ["nixos-dots-rebuild", "{rev}"]
+        params: {rev: "[0-9a-f]{40}"}
+        description: "nixos-rebuild switch from the host's checkout, at that exact commit"
   github:
     # GitHub account owners whose repos are brokered (the app must be
     # installed on each)
@@ -29,14 +67,17 @@ platforms:
     # grant there is policy self-escalation; the glob covers forks anywhere.
     repo_denylist:
       - "*/nixos-dots"
+      # The wiki (`wiki:` below) is written through the broker only: a token
+      # for its repo would write past the per-project rule.
+      - "uorux/agent-wiki"
     # Hard ceiling — requests above this are denied before any policy rule runs.
     # Must be a subset of what the GitHub App itself was granted (keep this list
     # and the App's permissions in sync; keys are the API permission names).
     permission_ceiling:
-      metadata: read        # mandatory App baseline (repo listing/basic info);
-                            # listed so a request naming it isn't ceiling-denied
+      metadata: read # mandatory App baseline (repo listing/basic info);
+      # listed so a request naming it isn't ceiling-denied
       contents: write
-      workflows: write      # pushing .github/workflows/* needs this + contents
+      workflows: write # pushing .github/workflows/* needs this + contents
       secrets: write
       variables: write
       actions: read
@@ -56,26 +97,41 @@ platforms:
       - secrets
       - administration
       - organization_secrets
+    # New repos (capability "create", resource "uorux/<name>") only in this
+    # org. The broker creates them itself with an Administration token it
+    # never hands out — the App needs Administration: write on the uorux
+    # installation. Public repos always reach a human. Ignored by brokers that
+    # predate the capability.
+    create_owners:
+      - "uorux"
   homelab:
     # LLDAP groups the broker may join an agent into. Authelia rules per group
-    # do the actual enforcement. Deliberately excluded: `admin`, plus
+    # do the actual enforcement (homelab: apps/infra/authelia/chart.yaml; keep
+    # this list to groups that file names). Deliberately excluded: `admin`, plus
     # `lldap_admin` and `lldap_password_manager` — either of those is the keys
     # to the directory the broker itself provisions through (an agent holding
     # them could join itself to any group / reset any password, bypassing every
-    # ceiling here).
+    # ceiling here) — and `metamcp-admins`: MetaMCP's admin UI manages the API
+    # keys of every MCP endpoint behind it.
     allowed_groups:
       - alertmanager-users
+      - appt-search-users
       - bazarr-anime-users
       - bazarr-users
+      - bentopdf-users
       - bin-users
       - calibre-admins
       - calibre-users
       - cyberchef-users
+      - dawarich-users
       - enclosed-users
+      - food-tracker-users
       - gitea-admins
       - gitea-users
       - grafana-admins
       - grafana-users
+      - health-ingest-users
+      - homebox-users
       - homepage-users
       - hubble-users
       - immich-admins
@@ -88,16 +144,22 @@ platforms:
       - lidarr-users
       - linkwarden-users
       - lldap_strict_readonly
+      - logs-users
       - paperless-users
       - prowlarr-users
       - radarr-anime-users
       - radarr-users
       - rook-users
+      - searxng-users
       - sonarr-anime-users
       - sonarr-users
+      - spotify-classifier-users
       - spotify-dashboard-users
-      - stirling-pdf-users
+      - status-users
+      - steel-users
       - suwayomi-users
+      - task-tracker-users
+      - technitium-users
       - thelounge-users
       - traefik-users
     # Per-group blurbs surfaced to agents via GET /v1/catalog so they request
@@ -105,17 +167,23 @@ platforms:
     # that are wrong.
     group_descriptions:
       alertmanager-users: "Alertmanager UI — view and silence alerts"
+      appt-search-users: "appt-search — appointment search"
       bazarr-anime-users: "Bazarr (anime library) — subtitle management"
       bazarr-users: "Bazarr — subtitle management"
+      bentopdf-users: "BentoPDF — PDF manipulation tools (pdf.rooty.dev)"
       bin-users: "bin — pastebin"
       calibre-admins: "Calibre-Web admin — manage the ebook library"
       calibre-users: "Calibre-Web — read/download ebooks"
       cyberchef-users: "CyberChef — data transformation toolbox"
+      dawarich-users: "Dawarich — location history (personal data)"
       enclosed-users: "Enclosed — encrypted note sharing"
+      food-tracker-users: "Larder (food tracker) — pantry, recipes, meal plan"
       gitea-admins: "Gitea admin — full forge administration (broad)"
       gitea-users: "Gitea — git hosting, per-repo permissions apply"
       grafana-admins: "Grafana admin — manage dashboards and datasources (broad)"
       grafana-users: "Grafana — view dashboards (the right pick for metrics questions)"
+      health-ingest-users: "health-ingest — POST endpoint for Health Auto Export (ingest only)"
+      homebox-users: "Homebox — home inventory"
       homepage-users: "Homepage — service directory/links"
       hubble-users: "Hubble UI — Cilium network flow observability"
       immich-admins: "Immich admin — photo library administration (broad)"
@@ -128,16 +196,22 @@ platforms:
       lidarr-users: "Lidarr — music download automation"
       linkwarden-users: "Linkwarden — bookmark manager"
       lldap_strict_readonly: "LLDAP directory — strict read-only view of users/groups"
+      logs-users: "Logs UI — search the cluster's logs (the right pick for log questions)"
       paperless-users: "Paperless-ngx — document archive"
       prowlarr-users: "Prowlarr — indexer management"
       radarr-anime-users: "Radarr (anime library) — movie download automation"
       radarr-users: "Radarr — movie download automation"
       rook-users: "Rook/Ceph dashboard — storage cluster status"
+      searxng-users: "SearXNG — web metasearch for agents (search.rooty.dev, HTTP basic auth with your service account)"
       sonarr-anime-users: "Sonarr (anime library) — TV download automation"
       sonarr-users: "Sonarr — TV download automation"
+      spotify-classifier-users: "Spotify classifier — the library tagging app (spc.rooty.dev)"
       spotify-dashboard-users: "Spotify dashboard — listening stats"
-      stirling-pdf-users: "Stirling-PDF — PDF manipulation tools"
+      status-users: "Status page — service health (Gatus)"
+      steel-users: "Steel — the shared browser: session viewer and REST/CDP API (steel-api.rooty.dev, HTTP basic auth with your service account). For browsing, the playwright MCP server is the narrower pick"
       suwayomi-users: "Suwayomi — manga server"
+      task-tracker-users: "Task tracker — tasks, timers and journal (tasks.rooty.dev)"
+      technitium-users: "Technitium DNS dashboard — reaches its login page; DNS admin itself has its own account"
       thelounge-users: "The Lounge — IRC web client"
       traefik-users: "Traefik dashboard — ingress/router status"
   kubernetes:
@@ -153,15 +227,20 @@ platforms:
     # this list widens the broker's own standing credential.
     role_allowlist:
       - view
-      - logs-reader       # get+list pods and pod logs
-      - traefik-patcher   # get+patch on deployments/traefik only
+      - logs-reader # get+list pods and pod logs
+      - traefik-patcher # get+patch on deployments/traefik only
       - edit
-      - workload-manager  # patch/scale deployments + statefulsets
-      - cm-editor         # update/patch existing configmaps
-      - port-forwarder    # pods/portforward
-      - job-runner        # create/delete batch jobs (arbitrary code in namespace)
-      - pod-exec          # pods/exec — sensitive
-      - secret-reader     # get/list secrets — sensitive
+      - workload-manager # patch/scale deployments + statefulsets
+      - cm-editor # update/patch existing configmaps
+      - port-forwarder # pods/portforward
+      - job-runner # create/delete batch jobs (arbitrary code in namespace)
+      - pod-exec # pods/exec — sensitive
+      - secret-reader # get/list secrets — sensitive
+      # The next two are defined in the homelab repo's
+      # apps/infra/agent-auth/rbac.yaml; until that is merged and applied a
+      # grant of either fails when it is set up.
+      - flux-reconciler # get + patch Flux sources and kustomizations
+      - crd-reader # read the custom resources `view` leaves out
     # Cluster-wide grants: an agent requests namespace "*" and the broker binds
     # the role via a ClusterRoleBinding across every namespace. Only `view`
     # (read-only) is opted in — a cluster-wide `edit` ≈ cluster-admin. Every
@@ -189,6 +268,8 @@ platforms:
       job-runner: "create/watch/delete batch Jobs and read their pod logs — runs arbitrary code in the namespace"
       pod-exec: "exec into running pods (get/list pods + create pods/exec)"
       secret-reader: "read secrets in the namespace (get/list)"
+      flux-reconciler: "ask Flux to reconcile: get/list/watch + patch on GitRepositories, Kustomizations and HelmReleases (the reconcile annotation) — in place of edit in flux-system"
+      crd-reader: "read-only on the custom resources view leaves out: CNPG clusters and backups, Velero backups, schedules and locations (not download requests), Traefik routes and middlewares, ToolHive MCP servers — in place of pod-exec or edit just to look. Their specs are what the homelab repo holds"
     # Always human-reviewed, even if the commented auto-approve rules below
     # are ever adopted — none of these ever ride an auto-approval or LLM
     # verdict.
@@ -197,28 +278,258 @@ platforms:
       - admin
       - pod-exec
       - secret-reader
+# Approval prompts on the desktops jrt is at (hostd's helper in the session;
+# modules/system/agent-auth-daemons.nix), next to the Discord message: the
+# first answer decides. Anything running as jrt on such a desktop can answer
+# them, so `agents` is the limit on what that can approve. Sensitive requests
+# and shells stay on Discord.
+desktop:
+  enabled: true
+  # By what the broker has on record for the agent, not by its name.
+  agents: [{placement: sandbox}, {runtime: hermes, project: homelab}]
+# The agents' shared wiki: what they know about the homelab, in one place
+# they all read (the wiki_* tools, no grant) and each writes its part of.
+# Markdown in this repo, which only the broker touches, as its GitHub App;
+# each write is a commit authored as the agent. An agent writes under
+# projects/<its project>/ and nowhere else; the homelab project (Hermes, the
+# homelab folder's agents) keeps the shared pages. Edit it by hand on GitHub
+# like any repo. A page is what some agent wrote, not something checked.
+wiki:
+  repo: uorux/agent-wiki
+  editors: [{project: homelab}]
+# The projects agents work on, by the `project` each agent has on record
+# (`agent-auth admin agents`; set with `agent-set --project`). A rule below
+# says "its own" with {agent.project} (the project's name: also its namespace
+# and its `<project>-users` group, where those exist) and {agent.repos} (the
+# repos listed here). A project that isn't listed, or has no repos, simply has
+# no "own repo": its requests reach a human as before.
+projects:
+  agent-auth:
+    description: "This broker"
+    repos: [uorux/agent-auth]
+  homelab:
+    description: "The k8s cluster's gitops repo; Hermes operates it"
+    repos: [uorux/homelab]
+  spotify-classifier:
+    repos: [uorux/spotify-playlist-generator]
+  task-tracker:
+    repos: [uorux/task-tracker]
+  # Their repos aren't on record yet: add them to get the own-repo rule.
+  food-tracker: {}
+  health-auto-export-adapter: {}
+# Routing, first match wins; whatever matches nothing reaches a human
+# (defaults.action). Friction follows blast radius: an agent's own project and
+# read-only access are approved, things that run code or change another
+# project are reviewed by the LLM or by a human.
+#
+# What no rule here can do, whatever it says (the validator and the
+# sensitive gate come first):
+#   - nixos-dots (repo_denylist), anything above permission_ceiling;
+#   - secrets permissions, pod-exec, secret-reader, edit, cluster-wide roles,
+#     anything as root on a host and every shell: always a human, unless a
+#     saved rule of yours pins that exact request;
+#   - creating a repo, a command on a host, minting an agent, MCP tools: only
+#     a rule that names that capability exactly.
+# A rule without `delegator` never approves a request made on another agent's
+# behalf; the delegated ones are spelled out.
+#
+# Saved rules (made from Discord's Edit, kept in the database) are checked
+# before these and stay valid. The ones that only repeat a rule below can be
+# deleted (`agent-auth admin rules`).
+#
+# A rule can't yet tell GitHub read from write: "its own repos" approves any
+# non-sensitive permission on them, and access to another project's repo is
+# a human's call even when it is read-only.
+rules:
+  # ── GitHub ────────────────────────────────────────────────────────────────
+  # An agent's own project's repos. `capability: repo`, so never a create.
+  - match: {platform: github, capability: repo, resource: "{agent.repos}"}
+    action: approve
+    constraints: {max_duration: 8h}
+    reason: the agent's own project's repo
+  # Where agents propose changes to this configuration: branches and pull
+  # requests in the fork, for any agent. nixos-dots itself stays unbrokered
+  # (repo_denylist); what reaches it from here is what Jacob merges. A rule
+  # can't yet tell read from write, so this approves every non-sensitive
+  # permission on the fork, not only contents and pull_requests.
+  - match: {platform: github, capability: repo, resource: uorux/nixos-docs-agent-fork}
+    action: approve
+    constraints: {max_duration: 8h}
+    reason: proposing a change to nixos-dots in the agents' fork
+  # Hermes on the gitops repo for a project agent that asked it to deploy
+  # (branches and PRs; merging stays Jacob's).
+  - match:
+      agent: {runtime: hermes, project: homelab}
+      platform: github
+      capability: repo
+      resource: uorux/homelab
+      delegator: {runtime: [claude, codex]}
+    action: approve
+    constraints: {max_duration: 4h}
+    reason: Hermes deploying for a project agent
 
-# No routing rules: everything falls through to defaults.action: surface, and
-# the nixos-dots ban lives in repo_denylist above (validator layer, stronger
-# than any rule). Upstream's example auto-approves the narrow k8s roles so
-# friction scales with blast radius — uncomment to adopt:
-rules: []
-#rules:
-#  - match: {platform: kubernetes, capability: view}
-#    action: approve
-#    constraints: {max_duration: 8h}
-#  - match: {platform: kubernetes, capability: logs-reader}
-#    action: approve
-#    constraints: {max_duration: 8h}
-#  - match: {platform: kubernetes, capability: traefik-patcher}
-#    action: approve
-#    constraints: {max_duration: 1h}   # narrow verb on one named resource
-#  # Delegated auth ("on behalf of"): a request anchored to an OPEN a2a thread
-#  # carries the thread's other participant as `delegator` (broker-derived, never
-#  # client-asserted). Only a rule that spells out `delegator:` can auto-approve
-#  # such a request — rules above never do, so nothing here is laundered through
-#  # delegation. Example: let hermes run homelab jobs when a claude folder asked:
-#  #  - match: {agent: "hermes-homelab-*", platform: kubernetes, capability: job-runner,
-#  #            delegator: "claude-*"}
-#  #    action: approve
-#  #    constraints: {max_duration: 2h}   # capped further by the backing a2a grant
+  # ── Kubernetes ────────────────────────────────────────────────────────────
+  # The capability is the role. Cluster-wide ("*") is always a human's call.
+  # The homelab project (Hermes, the homelab folder's agents) reads any
+  # namespace.
+  - match: {agent: {project: homelab}, platform: kubernetes, capability: view}
+    action: approve
+    constraints: {max_duration: 8h}
+  - match: {agent: {project: homelab}, platform: kubernetes, capability: logs-reader}
+    action: approve
+    constraints: {max_duration: 8h}
+  # Hermes reading for a project agent that asked.
+  - match:
+      agent: {runtime: hermes, project: homelab}
+      platform: kubernetes
+      capability: view
+      delegator: {runtime: [claude, codex]}
+    action: approve
+    constraints: {max_duration: 4h}
+  - match:
+      agent: {runtime: hermes, project: homelab}
+      platform: kubernetes
+      capability: logs-reader
+      delegator: {runtime: [claude, codex]}
+    action: approve
+    constraints: {max_duration: 4h}
+  # A project agent in its own namespace (the namespace named as its project):
+  # read, and restart/scale; config edits, port-forwards and jobs are reviewed.
+  - match: {platform: kubernetes, capability: view, resource: "{agent.project}"}
+    action: approve
+    constraints: {max_duration: 8h}
+  - match: {platform: kubernetes, capability: logs-reader, resource: "{agent.project}"}
+    action: approve
+    constraints: {max_duration: 8h}
+  - match: {platform: kubernetes, capability: workload-manager, resource: "{agent.project}"}
+    action: approve
+    constraints: {max_duration: 4h}
+  - match: {platform: kubernetes, capability: cm-editor, resource: "{agent.project}"}
+    action: llm
+    constraints: {max_duration: 2h}
+  - match: {platform: kubernetes, capability: port-forwarder, resource: "{agent.project}"}
+    action: llm
+    constraints: {max_duration: 2h}
+  - match: {platform: kubernetes, capability: job-runner, resource: "{agent.project}"}
+    action: llm
+    constraints: {max_duration: 2h}
+  # The custom resources `view` can't read, for the homelab project: read-only.
+  - match: {agent: {project: homelab}, platform: kubernetes, capability: crd-reader}
+    action: approve
+    constraints: {max_duration: 8h}
+  - match:
+      agent: {runtime: hermes, project: homelab}
+      platform: kubernetes
+      capability: crd-reader
+      delegator: {runtime: [claude, codex]}
+    action: approve
+    constraints: {max_duration: 4h}
+  # Hermes operating the cluster, by what it has asked for most (its grants
+  # from July to October 2026), each in the namespaces named and no other:
+  # metrics queries, the backup verification jobs, restarts of the apps on
+  # NFS. Not flux-reconciler: its patch isn't limited to the reconcile
+  # annotation, so it can point Flux at another source, and Flux applies
+  # what it finds as cluster-admin. It is narrower than edit, and still a
+  # human's call. A job or a patched workload can read
+  # what its namespace holds, which is why these are a list and not a glob.
+  - match: {agent: {runtime: hermes, project: homelab}, platform: kubernetes, capability: port-forwarder, resource: monitoring}
+    action: approve
+    constraints: {max_duration: 2h}
+  - match:
+      agent: {runtime: hermes, project: homelab}
+      platform: kubernetes
+      capability: port-forwarder
+      resource: monitoring
+      delegator: {runtime: [claude, codex]}
+    action: approve
+    constraints: {max_duration: 2h}
+  - match: {agent: {runtime: hermes, project: homelab}, platform: kubernetes, capability: job-runner, resource: backup-verify}
+    action: approve
+    constraints: {max_duration: 2h}
+  - match: {agent: {runtime: hermes, project: homelab}, platform: kubernetes, capability: workload-manager, resource: media}
+    action: approve
+    constraints: {max_duration: 2h}
+  - match: {agent: {runtime: hermes, project: homelab}, platform: kubernetes, capability: workload-manager, resource: immich}
+    action: approve
+    constraints: {max_duration: 2h}
+  - match: {agent: {runtime: hermes, project: homelab}, platform: kubernetes, capability: workload-manager, resource: paperless}
+    action: approve
+    constraints: {max_duration: 2h}
+  # Anything else Hermes changes, and pod-exec, secret-reader and edit
+  # everywhere: no rule, so a human's call (or a saved rule of yours for that
+  # role and namespace).
+
+  # ── Homelab services (LLDAP groups) ───────────────────────────────────────
+  # The agents' own infrastructure: web search and the shared browser.
+  - match: {platform: homelab, capability: group, resource: searxng-users}
+    action: approve
+    constraints: {max_duration: 12h}
+  - match: {platform: homelab, capability: group, resource: steel-users}
+    action: approve
+    constraints: {max_duration: 4h}
+  # A project agent in its own app (<project>-users, where that group exists).
+  - match: {platform: homelab, capability: group, resource: "{agent.project}-users"}
+    action: approve
+    constraints: {max_duration: 8h}
+  # The homelab project looking at the cluster: dashboards, logs, status.
+  - match: {agent: {project: homelab}, platform: homelab, capability: group, resource: grafana-users}
+    action: approve
+    constraints: {max_duration: 8h}
+  - match: {agent: {project: homelab}, platform: homelab, capability: group, resource: logs-users}
+    action: approve
+    constraints: {max_duration: 8h}
+  - match: {agent: {project: homelab}, platform: homelab, capability: group, resource: status-users}
+    action: approve
+    constraints: {max_duration: 8h}
+  - match: {agent: {project: homelab}, platform: homelab, capability: group, resource: hubble-users}
+    action: approve
+    constraints: {max_duration: 8h}
+  - match: {agent: {project: homelab}, platform: homelab, capability: group, resource: kubedash-users}
+    action: approve
+    constraints: {max_duration: 8h}
+  - match: {agent: {project: homelab}, platform: homelab, capability: group, resource: traefik-users}
+    action: approve
+    constraints: {max_duration: 8h}
+  - match: {agent: {project: homelab}, platform: homelab, capability: group, resource: rook-users}
+    action: approve
+    constraints: {max_duration: 8h}
+  # Anyone else asking for metrics or logs: reviewed.
+  - match: {platform: homelab, capability: group, resource: grafana-users}
+    action: llm
+    constraints: {max_duration: 4h}
+  - match: {platform: homelab, capability: group, resource: logs-users}
+    action: llm
+    constraints: {max_duration: 4h}
+
+  # ── Agents talking to agents ──────────────────────────────────────────────
+  # A grant only lets an agent open threads; the other side may still refuse.
+  - match: {agent: {runtime: [claude, codex]}, platform: a2a, capability: talk, resource: "hermes-homelab-*"}
+    action: approve
+    constraints: {max_duration: 12h}
+  # Hermes reaching the agents in the VMs.
+  - match: {agent: {runtime: hermes, project: homelab}, platform: a2a, capability: talk, resource: "*-sandbox"}
+    action: approve
+    constraints: {max_duration: 12h}
+
+  # ── The agent VMs ─────────────────────────────────────────────────────────
+  # A VM's orchestrator minting an agent for a project in its own VM (the
+  # validator holds it to that VM and to platforms.agents.runtimes).
+  - match: {agent: {runtime: orchestrator, placement: sandbox}, platform: agents, capability: mint}
+    action: approve
+  # Reading another project's files in the same VM. Writing them is always a
+  # human's call.
+  - match: {agent: {placement: sandbox}, platform: sandbox, capability: project.read}
+    action: llm
+    constraints: {max_duration: 4h}
+
+  # ── MCP servers ───────────────────────────────────────────────────────────
+  # The browser. It reaches the internet from the cluster and nothing in it.
+  - match: {platform: mcp, capability: use, resource: playwright}
+    action: approve
+    constraints: {max_duration: 4h}
+
+  # ── Commands on hosts ─────────────────────────────────────────────────────
+  # No rule: each one is yours to approve. Root commands and shells would be
+  # whatever stood here, and for the rest the hosts accept only a human's
+  # approval (acceptMachineApprovals is off on all of them). The templates
+  # above make each deploy step one legible request.

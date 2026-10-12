@@ -4,9 +4,6 @@
 # winetricks for installing Windows redistributables, and DXVK/VKD3D for
 # Direct3D -> Vulkan translation. Also enables gamemode and mangohud for
 # performance tuning and overlays.
-#
-# Sandboxing is opt-in (off by default in the gaming bundle) since games
-# may be installed in arbitrary locations and need broad filesystem access.
 
 (import ../../../lib/apps.nix).mkApp (
   {
@@ -31,25 +28,37 @@
       package = pkgs.wineWow64Packages.staging;
       packageName = "wine";
 
+      # Unsandboxed: wine runs arbitrary Windows binaries from arbitrary install
+      # locations, so a sandbox would only block user-chosen game dirs. The "none"
+      # backend keeps storage at ~ via impermanence (host-visible).
+      defaultBackend = "none";
+
       # Wine prefixes, registry, and downloaded redistributables.
       # The default prefix lives at ~/.wine; users may also point WINEPREFIX
       # elsewhere - those custom prefixes won't auto-persist.
-      persistence.user = {
-        persist = [
-          ".wine"
-          ".config/wine"
-        ];
-
+      storage = [
+        {
+          path = ".wine";
+          tier = "persist";
+        }
+        {
+          path = ".config/wine";
+          tier = "persist";
+        }
         # Game installs and large redistributables can grow significantly.
-        large = [
-          ".local/share/wineprefixes"
-        ];
-
-        cache = [
-          ".cache/wine"
-          ".cache/winetricks"
-        ];
-      };
+        {
+          path = ".local/share/wineprefixes";
+          tier = "large";
+        }
+        {
+          path = ".cache/wine";
+          tier = "cache";
+        }
+        {
+          path = ".cache/winetricks";
+          tier = "cache";
+        }
+      ];
 
       customConfig =
         {

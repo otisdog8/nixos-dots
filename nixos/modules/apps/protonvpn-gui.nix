@@ -20,9 +20,15 @@
       package = pkgs.protonvpn-gui;
       packageName = "protonvpn-app";
 
+      # Unsandboxed: it drives NetworkManager over the system bus.
+      defaultBackend = "none";
+
       # ProtonVPN config and credentials
-      persistence.user.persist = [
-        ".config/Proton"
+      storage = [
+        {
+          path = ".config/Proton";
+          tier = "persist";
+        }
       ];
     };
   }

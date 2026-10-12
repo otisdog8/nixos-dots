@@ -39,14 +39,14 @@ caps:
   ...
 }:
 let
-  # Extra binds declared as capabilities: absolute → as-is, "." / "./x" → under
-  # $PWD, otherwise home-relative. (Matches the extraBinds resolution in
-  # nixpak-pkg.nix; the dedicated sharedHome nuance stays on extraBinds for now.)
+  bindPath = import ./paths.nix { inherit lib; };
+  # Same resolution as extraBinds (lib/paths.nix), minus the dedicated sharedHome
+  # remap.
   resolveBind =
     p:
-    if lib.hasPrefix "/" p then
+    if bindPath.isAbsolute p then
       p
-    else if lib.hasPrefix "." p then
+    else if bindPath.isPwdRelative p then
       sloth.concat' (sloth.env "PWD") "/${p}"
     else
       sloth.concat' sloth.homeDir "/${p}";
@@ -85,11 +85,19 @@ lib.mkMerge [
     ];
   })
 
+  # Audio: PulseAudio only, at $XDG_RUNTIME_DIR/pulse/native — the sandbox
+  # broker's filtered socket (playback; recording only with the microphone
+  # capability and your approval), which the backends put there. Never
+  # PipeWire's own socket: that is the whole media graph (every microphone,
+  # every app's sound, screen casts) with nothing in between. No shared memory:
+  # descriptors don't cross the filter.
   (lib.mkIf caps.audio {
-    bubblewrap.sockets = {
-      pulse = true;
-      pipewire = true;
-    };
+    bubblewrap.sockets.pulse = true;
+    bubblewrap.env.PULSE_CLIENTCONFIG = "${pkgs.writeText "sandbox-pulse-client.conf" ''
+      enable-shm = no
+      enable-memfd = no
+      autospawn = no
+    ''}";
   })
 
   (lib.mkIf caps.wayland {
@@ -100,21 +108,27 @@ lib.mkMerge [
     bubblewrap.bind.ro = [ "/tmp/.X11-unix" ];
   })
 
+  # Every sandbox gets a private /tmp. bwrap's root is an empty tmpfs, so without
+  # it /tmp doesn't exist: here-docs, mktemp, Node's os.tmpdir() and Chromium's
+  # ProcessSingleton ("Failed to create socket directory", exit 21) all fail.
+  # Binds under /tmp (X11 socket, a $PWD there) sit on top of it: our patched
+  # nixpak mounts tmpfs before binds (nixpak-pkg.nix).
+  {
+    bubblewrap.tmpfs = [ "/tmp" ];
+    bubblewrap.env.TMPDIR = "/tmp";
+  }
+
   # FIDO/WebAuthn hardware keys — raw HID. Deliberately NOT part of `gui`: only
   # apps that actually use security keys (browsers) should reach /dev/hidraw*.
+  # Nodes are bound individually (bind-try skips absent ones), so only keys
+  # plugged in when the app starts are visible; a later key needs a restart.
+  # Dedicated uids can open them via the `fido` group (modules/system/sandbox.nix).
+  # TODO: better handling of FIDO keys. Known gaps: a key plugged in after
+  # the app starts isn't seen, and a fixed range of hidraw nodes is bound
+  # rather than the keys themselves. VMs get keys through the broker (hotplug,
+  # prompted); containers could too.
   (lib.mkIf caps.fido {
-    bubblewrap.bind.dev = [
-      "/dev/hidraw0"
-      "/dev/hidraw1"
-      "/dev/hidraw2"
-      "/dev/hidraw3"
-      "/dev/hidraw4"
-      "/dev/hidraw5"
-      "/dev/hidraw6"
-      "/dev/hidraw7"
-      "/dev/hidraw8"
-      "/dev/hidraw9"
-    ];
+    bubblewrap.bind.dev = map (n: "/dev/hidraw${toString n}") (lib.range 0 31);
     # libudev needs these to enumerate and identify FIDO devices.
     bubblewrap.bind.ro = [
       "/run/udev"

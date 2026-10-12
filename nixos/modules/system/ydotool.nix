@@ -1,22 +1,30 @@
-# ydotool - generic command-line input automation (used by scripts/hotkeys).
+# ydotool - generic command-line input automation.
 #
-# ydotool injects through /dev/uinput (writing a virtual device); it does NOT
-# need to READ /dev/hidraw*. The old config added jrt to a `hidraw` group and
-# opened ALL /dev/hidraw* (which includes physical keyboards) to it — a
-# keylogging surface that also leaked into in-session sandboxed apps (they run
-# as jrt and inherit its groups). That's removed: uinput access comes from the
-# `ydotool` group that programs.ydotool wires up, and FIDO keys stay reachable
-# via their per-device `uaccess` ACL, not a blanket group.
+# OFF by default: membership in the `ydotool` group lets ANY process running as
+# the user (including every same-uid sandbox) type into any window via ydotoold,
+# which undoes the "no input group" hardening in nixos/default.nix. Enable per
+# host only where something actually needs it.
+#
+# Injection goes through /dev/uinput only (the `ydotool` group); ydotool never
+# needs to read /dev/hidraw*, so the user gets no hidraw group (that would expose
+# physical keyboards).
 {
   config,
   lib,
-  pkgs,
   username,
   ...
 }:
+let
+  cfg = config.modules.system.ydotool;
+in
 {
-  programs.ydotool.enable = true;
+  options.modules.system.ydotool.enable =
+    lib.mkEnableOption "ydotool input injection (grants the user uinput injection)";
 
-  # uinput injection only. No hidraw group, no all-HID udev rule.
-  users.users.${username}.extraGroups = [ "ydotool" ];
+  config = lib.mkIf cfg.enable {
+    programs.ydotool.enable = true;
+
+    # uinput injection only. No hidraw group, no all-HID udev rule.
+    users.users.${username}.extraGroups = [ "ydotool" ];
+  };
 }

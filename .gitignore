@@ -1,2 +1,15 @@
 *.key
 .direnv
+__pycache__/
+/result
+/result-*
+/*.log
+# Local checkouts of the virtio-nvgpu / vm-dbus-proxy flake inputs, not part of this tree
+/virtio-nvgpu/
+/vm-dbus-proxy/
+# Agent tool state
+/.claude/settings.local.json
+/.claude/worktrees/
+/.codex
+/.gsd/
+/.bg-shell/

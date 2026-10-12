@@ -34,10 +34,9 @@ helper.mkApp (
       packageName = "nvim";
       package = nixvimPackage;
 
-      # v2 nixpak backend (replaces the legacy sandbox.enable path). location = "home"
-      # for every entry: nvim is a same-uid dev editor (it edits $PWD as jrt), so a
-      # hidden stash buys ~nothing, and home keeps its state at the normal ~ paths —
-      # zero data movement on conversion, host-visible, and no risk of shadowing any
+      # location = "home" for every entry: nvim is a same-uid dev editor (it edits
+      # $PWD as jrt), so a hidden stash buys ~nothing, and home keeps its state at
+      # the normal ~ paths — host-visible, and no risk of shadowing any
       # home-manager-managed ~/.config/nvim.
       defaultBackend = "nixpak";
       storage = [
@@ -66,7 +65,6 @@ helper.mkApp (
             bubblewrap = {
               dieWithParent = true;
               sockets.wayland = false;
-              tmpfs = [ "/tmp" ];
               bind = {
                 rw = [
                   (sloth.concat' (sloth.envOr "XDG_RUNTIME_DIR" "/") "/wayland-1")

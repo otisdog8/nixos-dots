@@ -11,6 +11,10 @@
   ];
 
   config.app = {
+    # Backend-agnostic: the VM backend wires the display from this (the bwrap
+    # backends get the same socket from the nixpak module below too).
+    capabilities.wayland = true;
+
     # GUI apps should specify their own persistence paths
     # (removed automatic .config/${name} and .cache/${name} defaults)
 
@@ -63,8 +67,10 @@
               # Read-only bind mounts
               # All soft binds (nixpak bind.ro = --ro-bind-try): a path that
               # doesn't exist for this app's HOME/host is skipped, not fatal.
+              # No /tmp/.X11-unix here: X11 is the separate `x11` capability
+              # (features/x11.nix, or sandbox.x11Forward), so Wayland-only apps
+              # don't get the X socket.
               ro = [
-                "/tmp/.X11-unix"
                 "/run/current-system/sw/share/fonts"
                 "/etc/localtime"
                 "/etc/zoneinfo"

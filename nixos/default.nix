@@ -31,6 +31,12 @@
     # System modules (unconditionally enabled)
     modules/system/impermanence.nix
     modules/system/sandbox.nix
+    modules/system/sandbox-vm.nix
+    modules/system/sandbox-agents.nix
+    modules/system/sandbox-broker.nix
+    modules/system/sandbox-dnsallow.nix
+    modules/system/agent-vm.nix
+    modules/system/agent-auth-daemons.nix
     modules/system/kernel.nix
     modules/system/locale.nix
     modules/system/networking.nix
@@ -65,6 +71,8 @@
     modules/apps/agent-auth-client.nix
     modules/apps/hermes-agents.nix
     modules/apps/sandbox-shell.nix
+    modules/apps/op-broker.nix
+    modules/apps/onepassword-system-auth.nix
     modules/apps/nixvim.nix
     modules/apps/jellyfin.nix
     modules/apps/sabnzbd.nix
@@ -86,6 +94,49 @@
       # Disk-health hygiene (scrubs/TRIM/SMART). Every piece is a no-op on hosts
       # lacking the relevant hardware/filesystem, so it's on by default fleet-wide.
       storage-health.enable = lib.mkDefault true;
+    };
+    # The agent VM (modules/system/agent-vm.nix; agent-auth's
+    # docs/sandbox-design.md). On the desktops here (galaxy's with its GPU:
+    # its own file), and on recusant (its own file).
+    agentVm = {
+      enable = lib.mkDefault (
+        lib.elem hostname [
+          "excelsior"
+          "galaxy"
+        ]
+      );
+      network = {
+        # The homelab gateways (whatever they resolve to).
+        allowNames = [
+          "gateway.rooty.dev"
+          "ion-1.rooty.dev"
+          "ovh-1.rooty.dev"
+        ];
+        allowPorts = [
+          # recusant's nginx: agent-auth (the broker) and attic.
+          {
+            addr = "100.110.239.45";
+            ports = [ 443 ];
+          }
+        ]
+        # The k3s nodes (arquitens, carrack, munificent): the API server and
+        # the ingress, nothing else.
+        ++
+          map
+            (addr: {
+              inherit addr;
+              ports = [
+                6443
+                443
+                80
+              ];
+            })
+            [
+              "100.126.30.73"
+              "100.103.225.29"
+              "100.65.16.13"
+            ];
+      };
     };
     apps = {
       jellyfin.enable = lib.mkDefault false;

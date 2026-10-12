@@ -78,6 +78,35 @@
   # Flip back to true to use it as a workstation again.
   modules.desktop.full.enable = false;
 
+  # The agents' shared sandbox is a VM here (`claude-agents`, `codex-agents`,
+  # and the other agents' plain commands).
+  modules.sandbox.agents.mode = "vm";
+
+  # The agent VM (modules/system/agent-vm.nix): headless coding agents, run by
+  # agent-auth's sandboxd in the guest. The memory is a ceiling, not a
+  # reservation: the host commits pages as the guest touches them and gets
+  # freed ones back.
+  modules.agentVm = {
+    enable = true;
+    memory = 32768;
+    vcpus = 16;
+  };
+
+  # Approved commands for agents on this host (agent-auth's hostd,
+  # modules/system/agent-auth-daemons.nix): as jrt and as root, and shells as
+  # either. This is the broker's own host: root here can change the broker,
+  # its policy and its database, so a root shell is as much as an agent can
+  # be given anywhere. Each shell takes a TOTP code of its tier that only this
+  # host can check, and shows every command on Discord before it runs. The
+  # user shell is the smaller ask for work that needs no root (the nixos-dots
+  # checkout, reading logs jrt can read).
+  modules.agentAuth.hostCommands = {
+    user.enable = true;
+    user.shells = true;
+    root.enable = true;
+    root.shells = true;
+  };
+
   # Enable Intel iGPU (for media transcoding)
   modules.system.hardware.intel = {
     enable = true;

@@ -55,6 +55,9 @@
           # Firefox uses org.mozilla.firefox.<profile> service name
           "org.mozilla.firefox.*" = lib.mkDefault "talk";
           "org.mozilla.Firefox.*" = lib.mkDefault "talk";
+          # Firefox Developer Edition (the firefox app): RemotingName
+          # firefox-devedition, D-Bus-sanitised
+          "org.mozilla.firefox_devedition.*" = lib.mkDefault "talk";
           # Zen browser uses org.mozilla.zen.<profile>
           "org.mozilla.zen.*" = lib.mkDefault "talk";
           # Chromium-based browsers

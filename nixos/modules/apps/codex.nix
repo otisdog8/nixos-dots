@@ -20,6 +20,7 @@
       ../../../lib/features/agent-gpu-command.nix
     ];
 
+    # $PWD comes from cwd.nix; the stash binds provide ~/.codex.
     config.app = {
       name = "codex";
       packageName = "codex";
@@ -30,6 +31,11 @@
 
       defaultBackend = "nixpak";
 
+      # As claude-code: plain `codex` runs in its own sandbox, `codex-agents`
+      # in the shared agents sandbox; sessions share ~/.codex.
+      groupCommand = "codex-agents";
+      multiInstance = true;
+
       storage = [
         # Parent catches auth/config/state (goals/memories/state sqlite, skills,
         # sessions, models_cache.json) + anything codex writes we don't carve out.
@@ -37,15 +43,9 @@
           path = ".codex";
           tier = "persist";
         }
-        # 24M of churny SQLite logs — keep locally, out of backups.
-        # NOTE: filename is versioned (logs_2 → may bump). If codex rotates to
-        # logs_3.sqlite this carve goes stale (new logs land in the persist parent);
-        # update the path on the next bump.
-        {
-          path = ".codex/logs_2.sqlite";
-          tier = "large";
-          type = "file";
-        }
+        # .codex/logs_*.sqlite is NOT carved out: a single-file carve would move only
+        # the main db (SQLite puts -wal/-shm beside it, in the persist parent), and
+        # a file bind breaks SQLite's rename-based recovery.
         {
           path = ".codex/plugins";
           tier = "large";
@@ -58,19 +58,6 @@
           path = ".codex/.tmp";
           tier = "cache";
         }
-      ];
-
-      # $PWD comes from cwd.nix; the stash binds provide ~/.codex. /tmp is a
-      # PRIVATE tmpfs (not the shared host /tmp) so scratch files are per-app and
-      # invisible to other sandboxes/the host; TMPDIR is pinned into it.
-      nixpakModules = [
-        (
-          { ... }:
-          {
-            bubblewrap.tmpfs = [ "/tmp" ];
-            bubblewrap.env.TMPDIR = "/tmp";
-          }
-        )
       ];
     };
   }

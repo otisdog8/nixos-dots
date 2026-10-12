@@ -96,14 +96,54 @@ in
       qt = {
         enable = true;
         platformTheme.name = "qt6ct";
+        # qt6ct and the Kvantum plugin must be in the per-user profile:
+        # home-manager points QT_PLUGIN_PATH (incl. for systemd user services like
+        # the portal share picker) only at /etc/profiles/per-user, never
+        # /run/current-system/sw, and installs nothing itself for the name "qt6ct"
+        # (its package map only knows "qtct"). qt6ct with an unloadable
+        # style=kvantum recurses in QProxyStyle and segfaults. style.name stays
+        # unset so qt6ct.conf keeps picking the style.
+        platformTheme.package = pkgs.qt6Packages.qt6ct;
+        style.package = pkgs.kdePackages.qtstyleplugin-kvantum;
+        qt6ctSettings = {
+          Appearance = {
+            # Resolved from the installed qt6ct, not a hardcoded store path that
+            # goes stale on update and gets garbage-collected.
+            color_scheme_path = "${pkgs.qt6Packages.qt6ct}/share/qt6ct/colors/airy.conf";
+            custom_palette = false;
+            icon_theme = "candy-icons";
+            standard_dialogs = "default";
+            style = "kvantum";
+          };
+          Fonts = {
+            fixed = ''"DejaVu Sans,12,-1,5,400,0,0,0,0,0,0,0,0,0,0,1"'';
+            general = ''"DejaVu Sans,12,-1,5,400,0,0,0,0,0,0,0,0,0,0,1"'';
+          };
+          Interface = {
+            activate_item_on_single_click = 1;
+            buttonbox_layout = 0;
+            cursor_flash_time = 1000;
+            dialog_buttons_have_icons = 1;
+            double_click_interval = 400;
+            gui_effects = "@Invalid()";
+            keyboard_scheme = 2;
+            menus_have_icons = true;
+            show_shortcuts_in_context_menus = true;
+            stylesheets = "@Invalid()";
+            toolbutton_style = 4;
+            underline_shortcut = 1;
+            wheel_scroll_lines = 3;
+          };
+          Troubleshooting = {
+            force_raster_widgets = 1;
+            ignored_applications = "@Invalid()";
+          };
+        };
       };
 
       home.file = {
         ".config/Kvantum/kvantum.kvconfig" = {
           text = builtins.readFile (inputs.self + "/config/kvantum");
-        };
-        ".config/qt6ct/qt6ct.conf" = {
-          text = builtins.readFile (inputs.self + "/config/qt6ct");
         };
         ".config/rofi/config.rasi" = {
           text = builtins.readFile (inputs.self + "/config/rofi");

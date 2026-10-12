@@ -20,8 +20,7 @@ in
 
   config = lib.mkIf cfg.enable {
     # Sandboxed 1Password GUI (systemd dedicated-uid). Its .config/1Password + .1password
-    # move to an app-onepassword-owned stash (hidden from jrt); the migration handles the
-    # move on switch (quit 1Password first for a clean migrate).
+    # live in an app-onepassword-owned stash (hidden from jrt).
     modules.apps.onepassword.enable = true;
 
     environment = {

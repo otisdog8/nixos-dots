@@ -11,6 +11,8 @@
     imports = [
       ../../../lib/features/gui.nix
       ../../../lib/features/xdg-desktop.nix
+      # Java Swing/AWT is X11-only (XWayland).
+      ../../../lib/features/x11.nix
     ];
 
     config.app = {
@@ -18,13 +20,17 @@
       package = pkgs.slipstream;
       packageName = "slipstream";
 
-      # Left on the legacy path pending validation on the constitution host (where
-      # slipstream/FTL actually runs). To convert: mirror r2modman — nixpak backend with
-      # a `location = "home"` storage entry for .local/share/slipstream, since it patches
-      # FTL's files inside Steam's host-visible library, so its own data must stay
-      # host-visible too (and location=home means zero data movement).
-      persistence.user.large = [
-        ".local/share/slipstream"
+      # Mirrors r2modman: a `location = "home"` storage entry, since slipstream
+      # patches FTL's files inside Steam's host-visible library, so its own data must
+      # stay host-visible too (location = "home" also leaves existing data in place).
+      # TODO: runtime-test on constitution (where slipstream/FTL actually runs).
+      defaultBackend = "nixpak";
+      storage = [
+        {
+          path = ".local/share/slipstream";
+          tier = "large";
+          location = "home";
+        }
       ];
 
       # Need access to Steam folder for FTL game files

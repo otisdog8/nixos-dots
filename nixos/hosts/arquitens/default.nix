@@ -73,6 +73,19 @@
       device = "/dev/disk/by-id/ata-MTFDDAK1T9TDS_221436ADEA78";
     };
 
+    # Approved commands for agents on this node (agent-auth's hostd,
+    # modules/system/agent-auth-daemons.nix; docs/agent-auth-hosts.md): as jrt
+    # and as root, and shells as either. Root on a node is the cluster (the
+    # kubelet's credentials, etcd): every root command and every shell is a
+    # human's decision at the broker, and a shell takes this node's own root
+    # TOTP code. No agent VM here.
+    agentAuth.hostCommands = {
+      user.enable = true;
+      user.shells = true;
+      root.enable = true;
+      root.shells = true;
+    };
+
     # Compressed swap (zswap). Backing LV lives in vg (see disks.nix), already
     # encrypted. writeback disabled on system.slice keeps the k3s/etcd cold pages
     # off the encrypted backing swap. Defaults: 20% pool, swappiness 30.

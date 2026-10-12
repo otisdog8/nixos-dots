@@ -13,10 +13,13 @@
       ../../../lib/features/system-bin.nix
       ../../../lib/features/cwd.nix
       ../../../lib/features/git.nix
+      ../../../lib/features/nix-store.nix
+      ../../../lib/features/bin-sh.nix
       ../../../lib/features/agent-peers.nix
       ../../../lib/features/agent-gpu-command.nix
     ];
 
+    # $PWD comes from cwd.nix; the stash bind provides ~/.gemini.
     config.app = {
       name = "gemini-cli";
       # Google retired Gemini CLI in favor of Antigravity CLI. Keep the app
@@ -33,19 +36,6 @@
           path = ".gemini";
           tier = "persist";
         }
-      ];
-
-      # $PWD comes from cwd.nix; the stash bind provides ~/.gemini. /tmp is a
-      # PRIVATE tmpfs (not the shared host /tmp) so scratch files are per-app and
-      # invisible to other sandboxes/the host; TMPDIR is pinned into it.
-      nixpakModules = [
-        (
-          { ... }:
-          {
-            bubblewrap.tmpfs = [ "/tmp" ];
-            bubblewrap.env.TMPDIR = "/tmp";
-          }
-        )
       ];
     };
   }

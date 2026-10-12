@@ -22,7 +22,6 @@
       package = inputs.nix-warez.packages.${pkgs.stdenv.hostPlatform.system}.blender_5_0;
       packageName = "blender";
 
-      # v2 unified storage (replaces persistence.user.* + impermanence).
       storage = [
         {
           path = ".config/blender";
@@ -38,8 +37,6 @@
       # access), not a blanket rw bind of ~/Documents — .blend files can carry
       # auto-executing Python, so no standing write into persistent jrt dirs.
 
-      # v2 nixpak backend: storage-driven binds + tmpfiles instead of the legacy
-      # persistence.user.* + impermanence path.
       defaultBackend = "nixpak";
     };
   }

@@ -24,9 +24,8 @@
       name = "sandbox-shell";
       packageName = "sandbox-zsh";
 
-      # v2 nixpak backend (replaces the legacy sandbox.enable path). No app.storage:
-      # this shell is intentionally EPHEMERAL — a tmpfs $HOME where writes vanish on
-      # exit — so there is nothing to persist.
+      # No app.storage: this shell is intentionally EPHEMERAL — $HOME is only the
+      # sandbox's own tmpfs root, so writes vanish on exit.
       defaultBackend = "nixpak";
       # zsh resolves its module/function paths from compile-time absolute
       # store paths, so a renamed symlink to bin/zsh is sufficient.

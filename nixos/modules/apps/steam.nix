@@ -12,12 +12,14 @@
       ../../../lib/features/gui.nix
       ../../../lib/features/needs-gpu.nix
       ../../../lib/features/network.nix
-      ../../../lib/features/audio.nix
+      ../../../lib/features/microphone.nix # in-game voice chat (asks you first)
       ../../../lib/features/xdg-desktop.nix
-      # Proton, game wrapper scripts, and r2modman's modded-launch scripts all exec a
-      # hardcoded /bin/sh, absent from a bwrap tmpfs root. Same fix r2modman needs; the
-      # full modded-launch chain (steam ↔ r2modman) still wants runtime testing.
+      # Proton, game wrapper scripts, and r2modman's modded-launch wrapper
+      # (web_start_wrapper.sh, see r2modman.nix) all exec a hardcoded /bin/sh,
+      # absent from a bwrap tmpfs root.
       ../../../lib/features/bin-sh.nix
+      # The Steam client (and most Proton games) are X11/XWayland-only.
+      ../../../lib/features/x11.nix
     ];
 
     config.app = {
@@ -25,14 +27,14 @@
       package = pkgs.steam;
       packageName = "steam";
 
-      # v2 storage, but every entry is location = "home" (host-visible at ~, NOT a
-      # hidden stash). Two reasons this is mandatory:
+      # Every storage entry is location = "home" (host-visible at ~, NOT a hidden
+      # stash). Two reasons this is mandatory:
       #   1. r2modman (a separate same-uid sandbox) binds ~/.steam and
       #      ~/.local/share/Steam rw to install mods into Steam's game dirs — a stash
       #      would hide them from r2modman and break modding. (Full isolation waits on
       #      the steam+r2modman shared-namespace work.)
-      #   2. location=home is the SAME impermanence path the legacy layout used, so
-      #      converting moves ZERO data — the 135G library stays exactly where it is.
+      #   2. the 135G library stays at its existing impermanence path — no data
+      #      movement.
       # Same-uid nixpak (not dedicated): steam runs as jrt so jrt/r2modman can reach
       # the library; the sandbox is the boundary, not host-hiding.
       defaultBackend = "nixpak";
@@ -86,9 +88,25 @@
       # binary with the CAP_SYS_NICE capability needed for realtime scheduling.
       # Use via Steam per-game launch options: `gamescope -- %command%`.
       customConfig =
-        { ... }:
+        { lib, ... }:
         {
+          # Game VM sizing (shared by prismlauncher, lunar-client): 12 vCPUs, pinned
+          # in pairs on six whole cores of the second CCD (two left free beside
+          # them; at 16, which fills the CCD, the fork finds no layout wins);
+          # 32 GiB, committed whole at start; a 24 GiB window, of which one game
+          # may hold 90% of each zone.
+          modules.apps.steam.sandbox.vm.vcpus = lib.mkDefault 12;
+          modules.apps.steam.sandbox.vm.memory = lib.mkDefault 32768;
+          modules.apps.steam.sandbox.vm.gpuMemoryMiB = lib.mkDefault 24576;
+          modules.apps.steam.sandbox.vm.gpuMemoryProcessPercent = lib.mkDefault 90;
+          # Slice, shared core-scheduling cookie, smt pinning, THP, ntsync.
+          modules.apps.steam.sandbox.vm.tuning = lib.mkDefault "game";
           programs.gamescope.enable = true;
+          # The OpenURI portal hands steam:// links (r2modman's modded launches,
+          # store links) to the default handler: Steam's own sandboxed launcher.
+          home-manager.users.jrt.xdg.mimeApps.defaultApplications."x-scheme-handler/steam" = [
+            "steam.desktop"
+          ];
         };
     };
   }

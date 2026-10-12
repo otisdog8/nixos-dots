@@ -107,6 +107,14 @@
     }
   ];
 
+  # systemd refuses a DynamicUser state directory unless /var/lib/private is
+  # 0700; impermanence creates it 0755, as the parent of the bind mounts (here
+  # and on /persist). The same directory serves garage and attic.
+  systemd.tmpfiles.rules = [
+    "d /var/lib/private 0700 root root -"
+    "d /persist/var/lib/private 0700 root root -"
+  ];
+
   # ── TLS + reverse proxy ────────────────────────────────────────────────────
   # Covered by the existing *.recusant.rooty.dev wildcard cert (secrets.nix),
   # same as the other services on this host.
@@ -120,6 +128,9 @@
     listenAddresses = [ "100.110.239.45" ];
     locations."/" = {
       proxyPass = "http://127.0.0.1:${toString config.services.agent-auth.port}";
+      # Paired daemons (hostd, sandboxd) hold a WebSocket at /v1/daemons/connect;
+      # their 30 s heartbeats keep it well inside the read timeout below.
+      proxyWebsockets = true;
       extraConfig = ''
         # Long-polls clamp to 300s server-side: /v1/requests/{id}/wait and the
         # a2a reads (/v1/a2a/threads/{id}/messages?wait, /v1/a2a/events?wait).

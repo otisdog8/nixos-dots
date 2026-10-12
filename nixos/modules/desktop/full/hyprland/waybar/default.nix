@@ -34,6 +34,17 @@ in
 {
   options.modules.desktop.full.hyprland.waybar = {
     enable = lib.mkEnableOption "Waybar status bar";
+
+    hiddenMonitors = lib.mkOption {
+      type = lib.types.listOf lib.types.str;
+      default = [ ];
+      example = [ "desc:ASUSTek COMPUTER INC PG32UCDM3 W4LMAV007023" ];
+      description = ''
+        Monitors (connector name or `desc:` selector, same form as the
+        Hyprland monitor rules) that get no bar. A static bar is the classic
+        OLED burn-in source, so OLED panels belong here.
+      '';
+    };
   };
 
   config = lib.mkIf cfg.enable {
@@ -44,8 +55,17 @@ in
         enable = true;
         package = pkgs.waybar;
         settings = [
+          (
           {
             "spacing" = 0;
+          }
+          # waybar matches outputs by connector name or "make model serial",
+          # which is what Hyprland's desc: selector holds. With exclusions the
+          # trailing "*" is required or no output matches at all.
+          // lib.optionalAttrs (cfg.hiddenMonitors != [ ]) {
+            "output" = map (m: "!" + lib.removePrefix "desc:" m) cfg.hiddenMonitors ++ [ "*" ];
+          }
+          // {
 
             "modules-left" = [
               "hyprland/workspaces"
@@ -186,6 +206,7 @@ in
               "spacing" = 10;
             };
           }
+          )
         ];
         style = builtins.readFile (inputs.self + "/config/waybar");
       };

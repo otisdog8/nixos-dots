@@ -20,6 +20,19 @@
       url = "github:otisdog8/nixpak/hard-bind";
       inputs.nixpkgs.follows = "nixpkgs";
     };
+    # virtio-nvgpu: GPU + Wayland display for the VM sandbox tier
+    # (lib/vm/nvgpu.nix). The fork's display-passthrough branch. Update with
+    # `nix flake update virtio-nvgpu`.
+    virtio-nvgpu = {
+      url = "github:otisdog8/virtio-nvgpu/display-passthrough";
+      flake = false;
+    };
+    # Standalone guest D-Bus transport adapter (lib/vm). Update with
+    # `nix flake update vm-dbus-proxy`.
+    vm-dbus-proxy = {
+      url = "github:uorux/vm-dbus-proxy";
+      flake = false;
+    };
     nixpkgs-older.url = "github:NixOS/nixpkgs?rev=3e042434c17eff8ed5528faa4c4503facc2bdf6c";
     # nixpkgs-unstable branch: carries fixes ahead of the nixos-* channels
     # (e.g. the cantarell-fonts 0.311 rebuild). Used for isolated package pins.
@@ -40,7 +53,9 @@
     # agent-auth: credential broker for AI agents; runs on recusant as a native
     # NixOS service (nixos/hosts/recusant/agent-auth.nix).
     agent-auth = {
-      url = "github:uorux/agent-auth";
+      # agent-sandbox: hostd and sandboxd (nixos/modules/system/agent-auth-daemons.nix).
+      # Back to main once it's merged there.
+      url = "github:uorux/agent-auth/agent-sandbox";
       # Drop the follows if the package fails against nixos-unstable and you'd
       # rather build with agent-auth's own pinned nixpkgs.
       inputs.nixpkgs.follows = "nixpkgs";
@@ -54,8 +69,9 @@
     };
     # hindsight: shared agent-memory service on recusant (hosts/recusant/
     # hindsight.nix). Not a flake — we build hindsight-api-slim from its
-    # uv.lock with hermes-agent's uv2nix inputs. Keep roughly in step with
-    # the hindsight-client pinned by hermes-agent's pyproject.
+    # uv.lock with hermes-agent's uv2nix inputs. The Hermes side comes from
+    # here too (hermes-homelab-recusant.nix): the memory-provider plugin and
+    # its hindsight-client, so server, plugin and client move together.
     hindsight = {
       url = "github:vectorize-io/hindsight";
       flake = false;
@@ -221,9 +237,16 @@
               # starts from a clean slate (a dangling mapper makes `cryptsetup
               # open` fail with "already exists", and a stale install root makes
               # the store copy go to the host instead of the stick).
-              umount -R /mnt/disko-install-root 2>/dev/null || true
+              # Never delete recursively: if anything is still mounted there,
+              # abort rather than risk wiping a live filesystem.
+              root=/mnt/disko-install-root
+              if mountpoint -q "$root"; then
+                umount -R "$root" || { echo "failed to unmount $root, aborting" >&2; exit 1; }
+              fi
               cryptsetup close cryptliveusb 2>/dev/null || true
-              rm -rf /mnt/disko-install-root 2>/dev/null || true
+              if [ -d "$root" ]; then
+                rmdir "$root" || { echo "$root is not empty (still mounted?), aborting" >&2; exit 1; }
+              fi
               exec disko-install --flake "${self}#liveusb" --disk main "$dev"
             '';
           };
@@ -248,15 +271,41 @@
               # nixos-install build instead.
               export TMPDIR=/nix/var/nix/build
               mkdir -p "$TMPDIR"
+              # Resolve partitions strictly beneath the selected disk (not the
+              # global by-partlabel links, which are ambiguous with two sticks).
+              disk="$(readlink -f "$1")"
+              [ "$(lsblk -dnro TYPE "$disk" 2>/dev/null)" = disk ] || { echo "$1 is not a whole disk" >&2; exit 1; }
+              part_by_label() {
+                local name pk label found=""
+                while read -r name pk label; do
+                  if [ "$label" = "$1" ] && [ "$pk" = "$disk" ]; then
+                    [ -z "$found" ] || { echo "multiple '$1' partitions on $disk" >&2; return 1; }
+                    found="$name"
+                  fi
+                done < <(lsblk -nrpo NAME,PKNAME,PARTLABEL "$disk")
+                [ -n "$found" ] || { echo "no '$1' partition on $disk" >&2; return 1; }
+                echo "$found"
+              }
+              luks_part="$(part_by_label disk-main-luks)"
+              esp_part="$(part_by_label disk-main-ESP)"
+              mapper="luks-upgrade-$$"
               mnt="$(mktemp -d)"
-              cleanup() { umount -R "$mnt" 2>/dev/null || true; cryptsetup close luks-upgrade 2>/dev/null || true; rmdir "$mnt" 2>/dev/null || true; }
+              # Only tear down what this invocation actually set up.
+              opened="" mounted=""
+              cleanup() {
+                if [ -n "$mounted" ]; then umount -R "$mnt" || echo "warning: failed to unmount $mnt" >&2; fi
+                if [ -n "$opened" ]; then cryptsetup close "$mapper" || echo "warning: failed to close $mapper" >&2; fi
+                rmdir "$mnt" 2>/dev/null || true
+              }
               trap cleanup EXIT
-              cryptsetup open /dev/disk/by-partlabel/disk-main-luks luks-upgrade
-              mount -o subvol=root,compress=zstd,noatime /dev/mapper/luks-upgrade "$mnt"
+              cryptsetup open "$luks_part" "$mapper"
+              opened=1
+              mount -o subvol=root,compress=zstd,noatime "/dev/mapper/$mapper" "$mnt"
+              mounted=1
               mkdir -p "$mnt"/{nix,persist,boot}
-              mount -o subvol=nix,compress=zstd,noatime /dev/mapper/luks-upgrade "$mnt/nix"
-              mount -o subvol=persist,compress=zstd,noatime /dev/mapper/luks-upgrade "$mnt/persist"
-              mount /dev/disk/by-partlabel/disk-main-ESP "$mnt/boot"
+              mount -o subvol=nix,compress=zstd,noatime "/dev/mapper/$mapper" "$mnt/nix"
+              mount -o subvol=persist,compress=zstd,noatime "/dev/mapper/$mapper" "$mnt/persist"
+              mount "$esp_part" "$mnt/boot"
               nixos-install --root "$mnt" --flake "${self}#liveusb" --no-root-passwd
             '';
           };

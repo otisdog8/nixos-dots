@@ -1,0 +1,20 @@
+--- a/src/portals/Screencopy.cpp
++++ b/src/portals/Screencopy.cpp
+@@ -1278,7 +1278,16 @@
+ 
+     Debug::log(TRACE, "[pw] dequeue on {}", (void*)PSTREAM);
+ 
+-    const auto PWBUF = pw_stream_dequeue_buffer(PSTREAM->stream);
++    // PipeWire moves a busy output buffer to the back of its free queue and
++    // returns EBUSY without checking the other entries. A zero-copy consumer
++    // can hold that buffer while the remaining buffers are available.
++    pw_buffer* PWBUF = nullptr;
++    const auto attempts = std::max<size_t>(1, PSTREAM->buffers.size());
++    for (size_t i = 0; i < attempts; ++i) {
++        PWBUF = pw_stream_dequeue_buffer(PSTREAM->stream);
++        if (PWBUF || errno != EBUSY)
++            break;
++    }
+ 
+     if (!PWBUF) {
+         Debug::log(TRACE, "[pw] dequeue failed");

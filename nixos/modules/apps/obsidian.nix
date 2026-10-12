@@ -1,4 +1,4 @@
-# Obsidian note-taking application — v2 systemd-stash backend, dedicated uid.
+# Obsidian note-taking application — systemd-stash backend, dedicated uid.
 #
 # The profile (.config/obsidian) AND the vault (Documents/obsidian) both live in
 # app-obsidian-owned stash entries (below), hidden from unsandboxed jrt — a
@@ -60,18 +60,10 @@
         }
       ];
 
-      customOptions = config: {
-        vaultPath = lib.mkOption {
-          type = lib.types.str;
-          default = "Documents/obsidian";
-          description = "Path to Obsidian vault directory (host-visible bind).";
-        };
-      };
-
       # Dedicated uid: profile AND vault are owned by app-obsidian, so a
       # compromised (non-root) jrt can't reach them (directly or via
-      # /proc/<pid>/root). The vault is a stash entry above, no longer a shared
-      # bind, so no extraBinds/ACLs are needed.
+      # /proc/<pid>/root). The vault is a stash entry above, so no extraBinds/ACLs
+      # are needed.
       customConfig =
         { config, lib, ... }:
         {
