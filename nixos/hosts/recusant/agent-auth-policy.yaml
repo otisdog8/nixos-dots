@@ -67,6 +67,9 @@ platforms:
     # grant there is policy self-escalation; the glob covers forks anywhere.
     repo_denylist:
       - "*/nixos-dots"
+      # The wiki (`wiki:` below) is written through the broker only: a token
+      # for its repo would write past the per-project rule.
+      - "uorux/agent-wiki"
     # Hard ceiling — requests above this are denied before any policy rule runs.
     # Must be a subset of what the GitHub App itself was granted (keep this list
     # and the App's permissions in sync; keys are the API permission names).
@@ -284,6 +287,16 @@ desktop:
   enabled: true
   # By what the broker has on record for the agent, not by its name.
   agents: [{placement: sandbox}, {runtime: hermes}]
+# The agents' shared wiki: what they know about the homelab, in one place
+# they all read (the wiki_* tools, no grant) and each writes its part of.
+# Markdown in this repo, which only the broker touches, as its GitHub App;
+# each write is a commit authored as the agent. An agent writes under
+# projects/<its project>/ and nowhere else; the homelab project (Hermes, the
+# homelab folder's agents) keeps the shared pages. Edit it by hand on GitHub
+# like any repo. A page is what some agent wrote, not something checked.
+wiki:
+  repo: uorux/agent-wiki
+  editors: [{project: homelab}]
 # The projects agents work on, by the `project` each agent has on record
 # (`agent-auth admin agents`; set with `agent-set --project`). A rule below
 # says "its own" with {agent.project} (the project's name: also its namespace
