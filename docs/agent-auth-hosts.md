@@ -1,7 +1,9 @@
 # agent-auth on a host: commands (hostd) and the agent VM (sandboxd)
 
 How to bring a host under agent-auth, written for the k3s nodes (arquitens,
-carrack, munificent) and valid for any host in this flake. Design:
+carrack, munificent) and valid for any host in this flake. The nodes get
+hostd only (commands as jrt and as root, root shells) and no agent VM:
+sections 1 to 5. Section 6 is for the hosts that have the VM. Design:
 agent-auth's `docs/sandbox-design.md`. Modules here:
 `nixos/modules/system/agent-auth-daemons.nix` (both daemons),
 `nixos/modules/system/agent-vm.nix` (the VM).
@@ -16,23 +18,25 @@ What exists after it:
   project, under **sandboxd** in the guest. Its orchestrator is the agent
   `orchestrator-<host>-sandbox`.
 
-State as of 2026-10-11: excelsior and recusant are paired and run commands;
-excelsior's VM runs agents. The k3s nodes' config already has hostd
-(unprivileged, connecting only) with no tier; whether they are paired is in
-`agent-auth admin daemons`. galaxy has the VM and both tiers in its config
-and has not been rebuilt with them. Not confirmed on hardware anywhere:
-recusant's VM, a VM on a k3s node, galaxy's GPU in its VM, the
-`nixos-dots-*` templates as hostd runs them.
+State as of 2026-10-12: excelsior and recusant are paired and run commands;
+excelsior's VM runs agents. The k3s nodes' config has both tiers and root
+shells and has not been rebuilt with them (before that they ran hostd
+unprivileged, connecting only); the broker lists none of them as a host, so
+expect to pair each. galaxy has the VM and both tiers in its config and has
+not been rebuilt with them. Not confirmed on hardware anywhere: recusant's
+VM, a VM on a k3s node, galaxy's GPU in its VM.
 
 ## What it means on a k3s node
 
 - Root on a node is the cluster: the kubelet's credentials, and etcd on the
   servers. A root command there is a larger grant than any Kubernetes role
   the broker hands out. Root stays a human's decision per command (the broker
-  forces it, and the host accepts no machine approval), and root shells are
-  off unless `root.shells` is set. Leave them off on the nodes until one is
-  needed.
-- The VM's RAM is the host's: `memory` MiB plus 512, committed as the guest
+  forces it, and the host accepts no machine approval). Root shells are on
+  for the nodes (`root.shells`): each is opened by a human with that node's
+  own root TOTP code, lasts two hours at most, and shows every command on
+  Discord before it runs. While one is open, the agent holding it is root on
+  the node.
+- No agent VM on the nodes. Were one wanted later: the VM's RAM is the host's: `memory` MiB plus 512, committed as the guest
   touches it, and the kubelet doesn't know about it. Size it so that
   `VM + kubelet's allocatable` fits, or lower the node's allocatable by the
   same amount (k3s `--kubelet-arg=system-reserved=memory=…`). Disk: a sparse
@@ -53,10 +57,11 @@ In `nixos/hosts/<host>/default.nix`:
 modules.agentAuth.hostCommands = {
   user.enable = true;   # commands as jrt
   root.enable = true;   # commands as root: always approved by a human
-  # user.shells = true; root.shells = true;   # only where wanted
+  root.shells = true;   # root shells, each opened with a TOTP code
+  # user.shells = true;
 };
 
-# Only for the VM:
+# Only for a host that gets the VM (not the nodes):
 modules.agentVm = {
   enable = true;
   memory = 8192;   # MiB; the default is 16384
@@ -64,7 +69,8 @@ modules.agentVm = {
 };
 ```
 
-All three nodes evaluate with exactly this (no failed assertion). The rest
+The three nodes have the first block already. They evaluate with it, and
+with the VM's block too (no failed assertion). The rest
 comes from the modules: hostd as root with the VM's unit to freeze, the
 broker's pinned key, sandboxd and the claude/codex packages in the guest,
 `/var/lib/agent-auth-hostd` persisted, vsock loaded, user namespaces left on
