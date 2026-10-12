@@ -266,7 +266,7 @@ platforms:
       pod-exec: "exec into running pods (get/list pods + create pods/exec)"
       secret-reader: "read secrets in the namespace (get/list)"
       flux-reconciler: "ask Flux to reconcile: get/list/watch + patch on GitRepositories, Kustomizations and HelmReleases (the reconcile annotation) — in place of edit in flux-system"
-      crd-reader: "read-only on the custom resources view leaves out: CNPG clusters and backups, Velero backups, schedules and locations, Traefik routes and middlewares, ToolHive MCP servers — in place of pod-exec or edit just to look"
+      crd-reader: "read-only on the custom resources view leaves out: CNPG clusters and backups, Velero backups, schedules and locations (not download requests), Traefik routes and middlewares, ToolHive MCP servers — in place of pod-exec or edit just to look. Their specs are what the homelab repo holds"
     # Always human-reviewed, even if the commented auto-approve rules below
     # are ever adopted — none of these ever ride an auto-approval or LLM
     # verdict.
