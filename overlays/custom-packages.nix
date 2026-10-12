@@ -110,4 +110,10 @@ final: prev: {
   # leaf data so cross-pinning is safe. Drop once the fix reaches nixos-unstable.
   cantarell-fonts =
     inputs.nixpkgs-unstable.legacyPackages.${final.stdenv.hostPlatform.system}.cantarell-fonts;
+
+  # vector 0.59.0 (the k3s nodes' netconsole collector) isn't in the binary
+  # cache at the nixos-unstable pin, and compiling it on a node takes over an
+  # hour and most of its memory. The nixpkgs-unstable branch has the same
+  # version cached; take it from there. Drop once nixos-unstable's is cached.
+  vector = inputs.nixpkgs-unstable.legacyPackages.${final.stdenv.hostPlatform.system}.vector;
 }
