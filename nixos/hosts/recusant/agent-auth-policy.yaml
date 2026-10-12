@@ -297,6 +297,21 @@ desktop:
 wiki:
   repo: uorux/agent-wiki
   editors: [{project: homelab}]
+# The admin panel: https://agent-auth.recusant.rooty.dev/ui (tailnet only;
+# under the broker's other names /ui is a 404). Agents and their fields,
+# projects, hosts and pairing codes, saved rules, recent requests. Signed
+# into at Authelia: the broker checks the ID token itself and membership of
+# `admin_group`, so that LLDAP group is as good as the admin token for what
+# the panel can do (it cannot decide requests, arm hosts or lift a
+# lockdown). The group is deliberately not under platforms.homelab: no
+# agent can be granted it. Authelia's side is the `agent-auth-admin` client
+# in the homelab repo (apps/infra/authelia).
+ui:
+  enabled: true
+  base_url: https://agent-auth.recusant.rooty.dev
+  issuer: https://auth.rooty.dev
+  client_id: agent-auth-admin
+  admin_group: agent-auth-admins
 # The projects agents work on, by the `project` each agent has on record
 # (`agent-auth admin agents`; set with `agent-set --project`). A rule below
 # says "its own" with {agent.project} (the project's name: also its namespace
