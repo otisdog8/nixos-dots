@@ -327,6 +327,15 @@ rules:
     action: approve
     constraints: {max_duration: 8h}
     reason: the agent's own project's repo
+  # Where agents propose changes to this configuration: branches and pull
+  # requests in the fork, for any agent. nixos-dots itself stays unbrokered
+  # (repo_denylist); what reaches it from here is what Jacob merges. A rule
+  # can't yet tell read from write, so this approves every non-sensitive
+  # permission on the fork, not only contents and pull_requests.
+  - match: {platform: github, capability: repo, resource: uorux/nixos-docs-agent-fork}
+    action: approve
+    constraints: {max_duration: 8h}
+    reason: proposing a change to nixos-dots in the agents' fork
   # Hermes on the gitops repo for a project agent that asked it to deploy
   # (branches and PRs; merging stays Jacob's).
   - match:
@@ -384,25 +393,8 @@ rules:
   - match: {platform: kubernetes, capability: job-runner, resource: "{agent.project}"}
     action: llm
     constraints: {max_duration: 2h}
-  # Hermes changing workloads in any namespace, on its own or for a project
-  # agent: reviewed, since a patch can change images and a job is code.
-  - match: {agent: {runtime: hermes}, platform: kubernetes, capability: workload-manager}
-    action: llm
-    constraints: {max_duration: 2h}
-  - match:
-      agent: {runtime: hermes}
-      platform: kubernetes
-      capability: workload-manager
-      delegator: {runtime: [claude, codex]}
-    action: llm
-    constraints: {max_duration: 2h}
-  - match:
-      agent: {runtime: hermes}
-      platform: kubernetes
-      capability: job-runner
-      delegator: {runtime: [claude, codex]}
-    action: llm
-    constraints: {max_duration: 2h}
+  # Hermes changing anything, in any namespace: no rule, so a human's call
+  # (or a saved rule of yours for that role and namespace).
 
   # ── Homelab services (LLDAP groups) ───────────────────────────────────────
   # The agents' own infrastructure: web search and the shared browser.
