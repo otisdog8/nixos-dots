@@ -413,20 +413,12 @@ rules:
     constraints: {max_duration: 4h}
   # Hermes operating the cluster, by what it has asked for most (its grants
   # from July to October 2026), each in the namespaces named and no other:
-  # Flux reconciles after a merge, metrics queries, the backup verification
-  # jobs, restarts of the apps on NFS. A job or a patched workload can read
+  # metrics queries, the backup verification jobs, restarts of the apps on
+  # NFS. Not flux-reconciler: its patch isn't limited to the reconcile
+  # annotation, so it can point Flux at another source, and Flux applies
+  # what it finds as cluster-admin. It is narrower than edit, and still a
+  # human's call. A job or a patched workload can read
   # what its namespace holds, which is why these are a list and not a glob.
-  - match: {agent: {runtime: hermes}, platform: kubernetes, capability: flux-reconciler, resource: flux-system}
-    action: approve
-    constraints: {max_duration: 2h}
-  - match:
-      agent: {runtime: hermes}
-      platform: kubernetes
-      capability: flux-reconciler
-      resource: flux-system
-      delegator: {runtime: [claude, codex]}
-    action: approve
-    constraints: {max_duration: 2h}
   - match: {agent: {runtime: hermes}, platform: kubernetes, capability: port-forwarder, resource: monitoring}
     action: approve
     constraints: {max_duration: 2h}
