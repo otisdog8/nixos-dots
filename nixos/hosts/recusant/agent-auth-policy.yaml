@@ -233,6 +233,11 @@ platforms:
       - job-runner # create/delete batch jobs (arbitrary code in namespace)
       - pod-exec # pods/exec — sensitive
       - secret-reader # get/list secrets — sensitive
+      # The next two are defined in the homelab repo's
+      # apps/infra/agent-auth/rbac.yaml; until that is merged and applied a
+      # grant of either fails when it is set up.
+      - flux-reconciler # get + patch Flux sources and kustomizations
+      - crd-reader # read the custom resources `view` leaves out
     # Cluster-wide grants: an agent requests namespace "*" and the broker binds
     # the role via a ClusterRoleBinding across every namespace. Only `view`
     # (read-only) is opted in — a cluster-wide `edit` ≈ cluster-admin. Every
@@ -260,6 +265,8 @@ platforms:
       job-runner: "create/watch/delete batch Jobs and read their pod logs — runs arbitrary code in the namespace"
       pod-exec: "exec into running pods (get/list pods + create pods/exec)"
       secret-reader: "read secrets in the namespace (get/list)"
+      flux-reconciler: "ask Flux to reconcile: get/list/watch + patch on GitRepositories, Kustomizations and HelmReleases (the reconcile annotation) — in place of edit in flux-system"
+      crd-reader: "read-only on the custom resources view leaves out: CNPG clusters and backups, Velero backups, schedules and locations, Traefik routes and middlewares, ToolHive MCP servers — in place of pod-exec or edit just to look"
     # Always human-reviewed, even if the commented auto-approve rules below
     # are ever adopted — none of these ever ride an auto-approval or LLM
     # verdict.
@@ -393,8 +400,59 @@ rules:
   - match: {platform: kubernetes, capability: job-runner, resource: "{agent.project}"}
     action: llm
     constraints: {max_duration: 2h}
-  # Hermes changing anything, in any namespace: no rule, so a human's call
-  # (or a saved rule of yours for that role and namespace).
+  # The custom resources `view` can't read, for the homelab project: read-only.
+  - match: {agent: {project: homelab}, platform: kubernetes, capability: crd-reader}
+    action: approve
+    constraints: {max_duration: 8h}
+  - match:
+      agent: {runtime: hermes}
+      platform: kubernetes
+      capability: crd-reader
+      delegator: {runtime: [claude, codex]}
+    action: approve
+    constraints: {max_duration: 4h}
+  # Hermes operating the cluster, by what it has asked for most (its grants
+  # from July to October 2026), each in the namespaces named and no other:
+  # Flux reconciles after a merge, metrics queries, the backup verification
+  # jobs, restarts of the apps on NFS. A job or a patched workload can read
+  # what its namespace holds, which is why these are a list and not a glob.
+  - match: {agent: {runtime: hermes}, platform: kubernetes, capability: flux-reconciler, resource: flux-system}
+    action: approve
+    constraints: {max_duration: 2h}
+  - match:
+      agent: {runtime: hermes}
+      platform: kubernetes
+      capability: flux-reconciler
+      resource: flux-system
+      delegator: {runtime: [claude, codex]}
+    action: approve
+    constraints: {max_duration: 2h}
+  - match: {agent: {runtime: hermes}, platform: kubernetes, capability: port-forwarder, resource: monitoring}
+    action: approve
+    constraints: {max_duration: 2h}
+  - match:
+      agent: {runtime: hermes}
+      platform: kubernetes
+      capability: port-forwarder
+      resource: monitoring
+      delegator: {runtime: [claude, codex]}
+    action: approve
+    constraints: {max_duration: 2h}
+  - match: {agent: {runtime: hermes}, platform: kubernetes, capability: job-runner, resource: backup-verify}
+    action: approve
+    constraints: {max_duration: 2h}
+  - match: {agent: {runtime: hermes}, platform: kubernetes, capability: workload-manager, resource: media}
+    action: approve
+    constraints: {max_duration: 2h}
+  - match: {agent: {runtime: hermes}, platform: kubernetes, capability: workload-manager, resource: immich}
+    action: approve
+    constraints: {max_duration: 2h}
+  - match: {agent: {runtime: hermes}, platform: kubernetes, capability: workload-manager, resource: paperless}
+    action: approve
+    constraints: {max_duration: 2h}
+  # Anything else Hermes changes, and pod-exec, secret-reader and edit
+  # everywhere: no rule, so a human's call (or a saved rule of yours for that
+  # role and namespace).
 
   # ── Homelab services (LLDAP groups) ───────────────────────────────────────
   # The agents' own infrastructure: web search and the shared browser.
