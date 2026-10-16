@@ -65,11 +65,23 @@
     sopsFile = ./secrets/agent-auth-k8s-token;
     restartUnits = [ "agent-auth.service" ];
   };
+  # Policy kept out of this repo, merged over agent-auth-policy.yaml at
+  # start (agent-auth README "Restricted zones"). Encrypted whole (binary:
+  # sops leaves YAML keys in the clear). Edit from a recipient host:
+  #   sops --input-type binary --output-type binary \
+  #     nixos/hosts/recusant/secrets/agent-auth-policy-private
+  # If it doesn't parse, the broker doesn't start.
+  sops.secrets."agent-auth/policy-private" = {
+    format = "binary";
+    sopsFile = ./secrets/agent-auth-policy-private;
+    restartUnits = [ "agent-auth.service" ];
+  };
 
   # ── The broker ─────────────────────────────────────────────────────────────
   services.agent-auth = {
     enable = true;
     policyFile = ./agent-auth-policy.yaml; # → nix store, immutable
+    policyOverlays = [ config.sops.secrets."agent-auth/policy-private".path ];
     environmentFiles = [ config.sops.secrets."agent-auth/env".path ];
     # File secrets via systemd LoadCredential; referenced below at
     # /run/credentials/agent-auth.service/<name>.

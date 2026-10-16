@@ -26,6 +26,22 @@ platforms:
       playwright:
         url: https://mcp-playwright.rooty.dev/mcp
         description: "A browser: Playwright on the shared Steel instance"
+  # Model calls through the LiteLLM gateway (agent-auth README "Model
+  # gateway"; the cluster side is homelab PR #323, apps/infra/litellm). A
+  # grant is a LiteLLM key of the agent's own, so the gateway counts spend
+  # per agent. Inert until LITELLM_MASTER_KEY is in the broker's sops env:
+  # set it only once the gateway runs. Until then the VMs use their own
+  # logins, as they do whenever a key is not to be had.
+  # by_runtime keeps the Claude subscription to Claude Code: only claude
+  # agents' keys reach the Claude models (the gateway's pre-call hook checks
+  # the same from its side). OpenAI's (the ChatGPT subscription, whose terms
+  # are looser) are for every agent ("*": any runtime not named).
+  models:
+    name: litellm
+    url: https://litellm.k8s.rooty.dev
+    by_runtime:
+      claude: ["claude-*", "gpt-*"]
+      "*": ["gpt-*"]
   # Commands on hosts (each host's hostd; modules/system/agent-auth-daemons.nix).
   # A host runs only what its own config admits; nothing here loosens that.
   hostexec:
@@ -312,6 +328,12 @@ ui:
   issuer: https://auth.rooty.dev
   client_id: agent-auth-admin
   admin_group: agent-auth-admins
+# A line on Discord for every request approved without you (the policy
+# file's rules, the LLM reviewer), like the one a saved rule's decisions
+# get. Model keys are left out: each VM agent gets one a day.
+notify:
+  auto_approvals: true
+  skip_platforms: [models]
 # The projects agents work on, by the `project` each agent has on record
 # (`agent-auth admin agents`; set with `agent-set --project`). A rule below
 # says "its own" with {agent.project} (the project's name: also its namespace
@@ -542,6 +564,13 @@ rules:
   - match: {platform: mcp, capability: use, resource: playwright}
     action: approve
     constraints: {max_duration: 4h}
+
+  # ── Model gateway ─────────────────────────────────────────────────────────
+  # A key for the gateway (what it may call is platforms.models.by_runtime).
+  # Spend shows in the panel's Model usage.
+  - match: {platform: models, capability: use}
+    action: approve
+    constraints: {max_duration: 24h}
 
   # ── Commands on hosts ─────────────────────────────────────────────────────
   # No rule: each one is yours to approve. Root commands and shells would be
