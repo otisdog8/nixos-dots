@@ -328,6 +328,14 @@ ui:
   issuer: https://auth.rooty.dev
   client_id: agent-auth-admin
   admin_group: agent-auth-admins
+# Web UIs (claude.ai, ChatGPT) as MCP clients: add a custom connector with
+# https://agent-auth.rooty.dev/mcp and sign in (agent-auth README "Web UIs").
+# Signing in is the panel's: Authelia, group agent-auth-admins; Authelia's
+# agent-auth-admin client must also list .../oauth/callback. Each connector
+# is an agent of its own (web-<name>); everything it asks for comes to you.
+remote_mcp:
+  enabled: true
+  base_url: https://agent-auth.rooty.dev
 # A line on Discord for every request approved without you (the policy
 # file's rules, the LLM reviewer), like the one a saved rule's decisions
 # get. Model keys are left out: each VM agent gets one a day.
