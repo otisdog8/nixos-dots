@@ -83,7 +83,26 @@ members before starting the next machine.
    ```
 
    An array, not a word-split string: jrt's shell is zsh, which doesn't
-   split an unquoted `$var`.
+   split an unquoted `$var`. `findmnt /mnt/node` before the copy must show
+   `vg-node[/persist]`: unmounted, the copy lands on the machine's root and
+   the reboot wipes it.
+
+   Then give the VM's top directories the machine's modes and owners.
+   Impermanence gives `/etc`'s parent in the guest the mode of
+   `/persist/etc`, and one made `0700` (by the copy, or by the guest's first
+   boot) leaves `/etc` root-only: dbus, resolved and NetworkManager fail,
+   and the VM never gets a lease:
+
+   ```
+   cd /mnt/node
+   for d in etc etc/ssh var var/lib home home/jrt root; do
+     if [ -d "$d" ] && [ -d "/persist/$d" ]; then
+       sudo chmod --reference="/persist/$d" "$d"; sudo chown --reference="/persist/$d" "$d"
+     fi
+   done
+   ```
+
+   `/persist/baremetal` gets the same fix before a rollback copies it back.
 
    `var/lib/nixos` (uid and gid allocations) is copied, not moved: both
    machines keep the same uids. The machine boots without the moved files and

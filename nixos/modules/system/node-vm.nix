@@ -36,6 +36,7 @@
 {
   config,
   lib,
+  options,
   pkgs,
   ...
 }:
@@ -406,5 +407,13 @@ in
       nix.gc.automatic = lib.mkForce false;
       nix.optimise.automatic = lib.mkForce false;
     })
+
+    # Home Manager's activation needs a nix with a store database (nix-build's
+    # sanity check, its generation's GC root): not on a read-only store.
+    # Nobody works as a user on a node; their ssh login gets the system's
+    # shell. (Where the option exists: the smoke guest has no Home Manager.)
+    (lib.optionalAttrs (options ? home-manager) (
+      lib.mkIf guestCfg.enable { home-manager.users = lib.mkForce { }; }
+    ))
   ];
 }
