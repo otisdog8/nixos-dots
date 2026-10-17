@@ -110,6 +110,13 @@
     };
   };
 
+  # Before this machine becomes arquitens-hv (docs/node-vms.md): a throwaway
+  # VM through the node VMs' own unit, started by hand, to prove the path.
+  modules.system.nodeVmSmoke = {
+    enable = true;
+    parentInterface = "enp4s0f4u1";
+  };
+
   # Netconsole collector + sender come from the k3s module. This host is the
   # fleet's default collector target (10.0.0.10), so its own kernel log must go
   # elsewhere — carrack.

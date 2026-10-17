@@ -43,6 +43,7 @@ let
   core = import ../../../lib/vm/core { inherit lib pkgs; };
   cfg = config.modules.system.nodeVms;
   guestCfg = config.modules.system.nodeVmGuest;
+  smokeCfg = config.modules.system.nodeVmSmoke;
 
   rt = name: "/run/node-vm/${name}";
   tap = name: "nv-${name}";
@@ -233,7 +234,76 @@ in
     enable = lib.mkEnableOption "running as a node VM (modules.system.nodeVms)";
   };
 
+  # A throwaway VM through the very same unit, to prove the path on a machine
+  # before anything depends on it: macvtap fd, the VMM's sandbox, the shared
+  # store, direct boot, a DHCP lease. No disks; it reports in its console and
+  # powers off: `sudo systemctl start node-vm-smoke; node-vm log smoke`, and
+  # look for NODE-VM-SMOKE.
+  options.modules.system.nodeVmSmoke = {
+    enable = lib.mkEnableOption "the node VM smoke test (node-vm-smoke, started by hand)";
+    parentInterface = lib.mkOption {
+      type = lib.types.str;
+      description = "The machine's LAN NIC.";
+    };
+  };
+
   config = lib.mkMerge [
+    (lib.mkIf smokeCfg.enable {
+      modules.system.nodeVms.smoke = {
+        guest = import "${pkgs.path}/nixos/lib/eval-config.nix" {
+          system = null;
+          modules = [
+            ./node-vm.nix
+            {
+              nixpkgs.pkgs = pkgs;
+              modules.system.nodeVmGuest.enable = true;
+              networking.hostName = "node-vm-smoke";
+              fileSystems."/" = {
+                device = "none";
+                fsType = "tmpfs";
+                options = [ "mode=0755" ];
+              };
+              networking.useDHCP = true;
+              systemd.services.node-vm-smoke = {
+                wantedBy = [ "multi-user.target" ];
+                wants = [ "network-online.target" ];
+                after = [ "network-online.target" ];
+                path = [
+                  pkgs.iproute2
+                  pkgs.iputils
+                  pkgs.gawk
+                  pkgs.systemd
+                ];
+                serviceConfig = {
+                  Type = "oneshot";
+                  StandardOutput = "journal+console";
+                };
+                script = ''
+                  ip -br addr
+                  test -e ${pkgs.hello}/bin/hello && echo "store: shared"
+                  gw=$(ip -4 route show default | awk '{print $3; exit}')
+                  if [ -n "$gw" ] && ping -c 3 -W 2 "$gw"; then
+                    echo "NODE-VM-SMOKE: OK (lease, gateway $gw reachable)"
+                  else
+                    echo "NODE-VM-SMOKE: FAIL (no lease, or the gateway doesn't answer)"
+                  fi
+                  systemctl poweroff
+                '';
+              };
+              system.stateVersion = "24.05";
+            }
+          ];
+        };
+        autostart = false;
+        memoryMiB = 1024;
+        vcpus = 1;
+        mac = "02:00:00:00:5a:01";
+        inherit (smokeCfg) parentInterface;
+        disks = [ ];
+        stopTimeout = 30;
+      };
+    })
+
     (lib.mkIf (cfg != { }) {
       assertions = lib.mapAttrsToList (name: _: {
         assertion = builtins.stringLength (tap name) <= 15;
