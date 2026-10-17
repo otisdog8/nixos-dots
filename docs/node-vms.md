@@ -71,14 +71,19 @@ members before starting the next machine.
    sudo systemctl stop k3s
    sudo mount -o subvol=persist /dev/vg/node /mnt/node
    cd /persist
-   id="etc/ssh/ssh_host_ed25519_key etc/ssh/ssh_host_ed25519_key.pub
+   id=(etc/ssh/ssh_host_ed25519_key etc/ssh/ssh_host_ed25519_key.pub
        etc/ssh/ssh_host_rsa_key etc/ssh/ssh_host_rsa_key.pub etc/machine-id
-       var/lib/tailscale var/lib/agent-auth-hostd ceph-luks.key"
-   sudo cp -a --parents $id var/lib/nixos root/.ssh home/jrt/.ssh /mnt/node/
+       var/lib/tailscale var/lib/agent-auth-hostd ceph-luks.key)
+   sudo ls -ld "${id[@]}"     # all eight, or stop here
+   sudo cp -a --parents "${id[@]}" var/lib/nixos root/.ssh home/jrt/.ssh /mnt/node/
    sudo mkdir /persist/baremetal
-   sudo cp -a --parents $id /persist/baremetal/ && sudo rm -r $id
+   sudo cp -a --parents "${id[@]}" /persist/baremetal/ && sudo rm -r "${id[@]}"
    sudo umount /mnt/node
+   readlink -f /nix/var/nix/profiles/system   # must be nixos-system-arquitens-hv-...
    ```
+
+   An array, not a word-split string: jrt's shell is zsh, which doesn't
+   split an unquoted `$var`.
 
    `var/lib/nixos` (uid and gid allocations) is copied, not moved: both
    machines keep the same uids. The machine boots without the moved files and
