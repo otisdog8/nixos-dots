@@ -119,10 +119,19 @@ The bare-metal node finds `/data` and the Ceph disk as the VM left them.
 
 ## What this doesn't do yet, or hasn't shown
 
-- **Never booted.** It was written where there is no KVM. Of everything here,
-  the macvtap handed to crosvm as a tap fd, inside the VMM's private network
-  namespace, is what's least certain. If the VM has no network, its console in
-  `node-vm log node` will say so, and the rollback is the way out.
+- **Proven, and not.** The smoke VM (`node-vm-smoke`, on bare-metal arquitens
+  and on arquitens-hv) has run the whole path: the macvtap in the VM's own
+  network namespace, crosvm under its sandbox, the shared store, direct
+  boot, a DHCP lease and the gateway reachable. What it doesn't cover, and
+  the cutover is the first to show:
+  - block devices: prep's chown, the `virtio-<serial>` names, O_DIRECT;
+  - the node's own guest: the impermanence rollback in a VM, `/data` in the
+    initrd, `cryptceph` on a virtio disk, k3s and Tailscale coming back as
+    themselves;
+  - Tailscale's direct paths to peers through the macvtap (otherwise relayed,
+    and slow, which Ceph and etcd would feel).
+  If the node doesn't come up, `node-vm log node` has its console, and the
+  rollback is the way out.
 - **No interactive console.** The guest's serial is output only, into the
   journal. A guest that doesn't come up is debugged from that, or rolled back.
 - **The iGPU stays on the machine.** immich's machine-learning pod asks for an
