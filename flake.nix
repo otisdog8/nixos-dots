@@ -187,6 +187,18 @@
           hostname = "arquitens";
           stateVersion = "24.05";
         };
+        # arquitens as a hypervisor, and its k3s node as the VM it runs
+        # (docs/node-vms.md). `arquitens` above is the bare-metal node they
+        # replace, kept until the conversion is settled.
+        arquitens-hv = helper.mkNixos {
+          hostname = "arquitens-hv";
+          stateVersion = "24.05";
+        };
+        arquitens-node = helper.mkNixos {
+          hostname = "arquitens";
+          hostDir = "arquitens-node";
+          stateVersion = "24.05";
+        };
         carrack = helper.mkNixos {
           hostname = "carrack";
           stateVersion = "24.05";

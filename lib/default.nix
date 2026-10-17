@@ -16,6 +16,7 @@ let
     hostname:
     builtins.elem hostname [
       "arquitens"
+      "arquitens-hv"
       "recusant"
       "munificent"
       "carrack"
@@ -54,10 +55,14 @@ in
     };
 
   # Helper function for generating NixOS configs
+  # hostDir: the nixos/hosts/ directory, when it isn't named after the host
+  # (a cluster node's VM is hostname "arquitens" from hosts/arquitens-node,
+  # beside the bare-metal hosts/arquitens it replaces).
   mkNixos =
     {
       hostname,
       stateVersion,
+      hostDir ? hostname,
       username ? defaultUsername,
       platform ? "x86_64-linux",
     }:
@@ -72,6 +77,7 @@ in
           inputs
           outputs
           hostname
+          hostDir
           platform
           username
           stateVersion

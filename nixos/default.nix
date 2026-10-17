@@ -4,6 +4,7 @@
 {
   config,
   hostname,
+  hostDir,
   inputs,
   lib,
   modulesPath,
@@ -26,7 +27,7 @@
     inputs.nixvim.nixosModules.default
 
     # Host configuration
-    ./hosts/${hostname}
+    ./hosts/${hostDir}
 
     # System modules (unconditionally enabled)
     modules/system/impermanence.nix
@@ -47,6 +48,7 @@
     # IP only). netconsole is opt-in: k3s module + recusant/galaxy enable it.
     modules/system/node-exporter.nix
     modules/system/netconsole.nix
+    modules/system/node-vm.nix
 
     # System modules (conditionally enabled)
     modules/system/ceph-osd-disk.nix
