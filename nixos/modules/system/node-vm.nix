@@ -165,6 +165,8 @@ let
           ${g.boot.kernelPackages.kernel}/${g.system.boot.loader.kernelFile}
       '';
       stop = pkgs.writeShellScript "${unit}-stop" ''
+        # Gone already when the guest powered itself off.
+        [ -S ${rt name}/crosvm.sock ] || exit 0
         exec ${pkgs.crosvm}/bin/crosvm powerbtn ${rt name}/crosvm.sock
       '';
     in

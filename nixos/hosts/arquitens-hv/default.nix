@@ -64,6 +64,12 @@
     # netconsole.nix's hosts map (as arquitens-hv).
     system.netconsole.enable = false;
 
+    # The node VMs' unit, proven on a throwaway guest (node-vm.nix).
+    system.nodeVmSmoke = {
+      enable = true;
+      parentInterface = "enp4s0f4u1";
+    };
+
     system.nodeVms.node = {
       guest = outputs.nixosConfigurations.arquitens-node;
       # 64 GB machine: ~4 GiB for itself, room for the sensitive cluster's VM
