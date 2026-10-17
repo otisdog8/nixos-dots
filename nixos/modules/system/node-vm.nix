@@ -46,6 +46,9 @@ let
   smokeCfg = config.modules.system.nodeVmSmoke;
 
   rt = name: "/run/node-vm/${name}";
+  # Prep's: which /dev/tapN is the VM's. The VMM's own unit can't tell: in
+  # its network namespace, /sys/class/net holds only lo.
+  netDir = name: "/run/node-vm-net/${name}";
   tap = name: "nv-${name}";
   vmUser = "node-vm";
 
@@ -109,7 +112,9 @@ let
         $ip link del ${tap name} 2>/dev/null || true
         $ip link add link ${v.parentInterface} name ${tap name} address ${v.mac} type macvtap mode bridge
         $ip link set ${tap name} up
-        chown ${vmUser}: /dev/tap$(cat /sys/class/net/${tap name}/ifindex)
+        dev=/dev/tap$(cat /sys/class/net/${tap name}/ifindex)
+        chown ${vmUser}: "$dev"
+        printf '%s\n' "$dev" > ${netDir name}/tap
         for d in ${lib.escapeShellArgs devices}; do
           chown ${vmUser}: "$(${pkgs.coreutils}/bin/readlink -f "$d")"
         done
@@ -123,7 +128,7 @@ let
       params = g.boot.kernelParams ++ [ "init=${top}/init" ];
       run = pkgs.writeShellScript unit ''
         set -euo pipefail
-        exec 3<>/dev/tap$(cat /sys/class/net/${tap name}/ifindex)
+        exec 3<>"$(cat ${netDir name}/tap)"
         args=(
           run
           --name ${tap name}
@@ -166,6 +171,8 @@ let
             ExecStop = cleanup;
             # The macvtap is made in the host's network namespace.
             PrivateNetwork = false;
+            RuntimeDirectory = "node-vm-net/${name}";
+            RuntimeDirectoryMode = "0755";
             RestrictAddressFamilies = [ "AF_NETLINK" ];
           };
       };
@@ -302,6 +309,8 @@ in
         disks = [ ];
         stopTimeout = 30;
       };
+      # A test: one failure is the answer, not a reason to try again.
+      systemd.services.node-vm-smoke.serviceConfig.Restart = lib.mkForce "no";
     })
 
     (lib.mkIf (cfg != { }) {
