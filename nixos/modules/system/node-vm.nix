@@ -49,6 +49,7 @@ let
   # Prep's: which /dev/tapN is the VM's. The VMM's own unit can't tell: in
   # its network namespace, /sys/class/net holds only lo.
   netDir = name: "/run/node-vm-net/${name}";
+  ns = name: "nv-${name}";
   tap = name: "nv-${name}";
   vmUser = "node-vm";
 
@@ -103,26 +104,38 @@ let
       g = v.guest.config;
       top = g.system.build.toplevel;
       devices = map (d: d.device) v.disks;
+      # The VM's network namespace, nv-<name>: just lo and the macvtap. Made
+      # in the host's namespace on the LAN NIC, then moved there, so the VMM
+      # (which joins it, NetworkNamespacePath) can look its tap up by name, as
+      # crosvm does for the MTU, and sees no other interface, address or
+      # abstract socket of the host's. The move re-creates the tap's device
+      # node (/dev/tap<ifindex>); its ifindex, unique on the host, stays.
+      #
       # The devices and the tap are root's; prep gives exactly these to the
-      # VMM's uid, at every start (udev resets them on change events, which
-      # don't touch an fd crosvm already holds).
+      # VMM's uid, at every start (udev resets the disks on change events,
+      # which don't touch an fd crosvm already holds).
       prep = pkgs.writeShellScript "${unit}-prep" ''
         set -euo pipefail
         ip=${pkgs.iproute2}/bin/ip
+        $ip netns del ${ns name} 2>/dev/null || true
         $ip link del ${tap name} 2>/dev/null || true
+        $ip netns add ${ns name}
         $ip link add link ${v.parentInterface} name ${tap name} address ${v.mac} type macvtap mode bridge
-        $ip link set ${tap name} up
-        dev=/dev/tap$(cat /sys/class/net/${tap name}/ifindex)
+        $ip link set ${tap name} netns ${ns name}
+        $ip -n ${ns name} link set ${tap name} up
+        idx=$($ip -n ${ns name} -o link show ${tap name} | cut -d: -f1)
+        dev=/dev/tap$idx
+        for _ in $(seq 1 50); do [ -c "$dev" ] && break; sleep 0.1; done
         chown ${vmUser}: "$dev"
         printf '%s\n' "$dev" > ${netDir name}/tap
-        # Made 0600 (rootStep's umask): the VMM's uid reads it.
         chown ${vmUser}: ${netDir name}/tap
         for d in ${lib.escapeShellArgs devices}; do
           chown ${vmUser}: "$(${pkgs.coreutils}/bin/readlink -f "$d")"
         done
       '';
       cleanup = pkgs.writeShellScript "${unit}-cleanup" ''
-        ${pkgs.iproute2}/bin/ip link del ${tap name} 2>/dev/null || true
+        ${pkgs.iproute2}/bin/ip -n ${ns name} link del ${tap name} 2>/dev/null || true
+        ${pkgs.iproute2}/bin/ip netns del ${ns name} 2>/dev/null || true
         for d in ${lib.escapeShellArgs devices}; do
           chown root:disk "$(${pkgs.coreutils}/bin/readlink -f "$d")" 2>/dev/null || true
         done
@@ -161,22 +174,33 @@ let
         bindsTo = [ "${unit}.service" ];
         restartIfChanged = false;
         stopIfChanged = false;
-        serviceConfig =
-          core.hardening.rootStep [
+        # Not core.hardening.rootStep: `ip netns add` bind-mounts the
+        # namespace at /run/netns, which must land in the host's mount
+        # namespace for the VMM's unit to join it, so no option here may give
+        # this unit a mount namespace of its own (ProtectSystem, PrivateTmp,
+        # ProtectHome, ...). Bounded by its capabilities instead.
+        serviceConfig = {
+          Type = "oneshot";
+          RemainAfterExit = true;
+          ExecStart = prep;
+          ExecStop = cleanup;
+          RuntimeDirectory = "node-vm-net/${name}";
+          RuntimeDirectoryMode = "0755";
+          CapabilityBoundingSet = [
             "CAP_NET_ADMIN"
+            "CAP_SYS_ADMIN"
             "CAP_CHOWN"
-          ]
-          // {
-            Type = "oneshot";
-            RemainAfterExit = true;
-            ExecStart = prep;
-            ExecStop = cleanup;
-            # The macvtap is made in the host's network namespace.
-            PrivateNetwork = false;
-            RuntimeDirectory = "node-vm-net/${name}";
-            RuntimeDirectoryMode = "0755";
-            RestrictAddressFamilies = [ "AF_NETLINK" ];
-          };
+          ];
+          NoNewPrivileges = true;
+          RestrictAddressFamilies = [
+            "AF_NETLINK"
+            "AF_UNIX"
+          ];
+          SystemCallArchitectures = "native";
+          LockPersonality = true;
+          RestrictRealtime = true;
+          UMask = "0077";
+        };
       };
 
       ${unit} = {
@@ -214,7 +238,19 @@ let
           MemoryMax = "${toString (v.memoryMiB + 512)}M";
         }
         // core.hardening.vmm
-        // core.hostView { inherit (config) fileSystems; };
+        // core.hostView { inherit (config) fileSystems; }
+        // {
+          # The VM's own namespace (prep), in place of a private one: the same
+          # nothing of the host's, plus its tap, which crosvm looks up by name
+          # with an AF_INET socket's ioctl (IPAddressDeny still stops any IP
+          # traffic of the VMM's own).
+          PrivateNetwork = false;
+          NetworkNamespacePath = "/run/netns/${ns name}";
+          RestrictAddressFamilies = core.hardening.vmm.RestrictAddressFamilies ++ [
+            "AF_INET"
+            "AF_INET6"
+          ];
+        };
       };
     };
 
