@@ -115,6 +115,8 @@ let
         dev=/dev/tap$(cat /sys/class/net/${tap name}/ifindex)
         chown ${vmUser}: "$dev"
         printf '%s\n' "$dev" > ${netDir name}/tap
+        # Made 0600 (rootStep's umask): the VMM's uid reads it.
+        chown ${vmUser}: ${netDir name}/tap
         for d in ${lib.escapeShellArgs devices}; do
           chown ${vmUser}: "$(${pkgs.coreutils}/bin/readlink -f "$d")"
         done
