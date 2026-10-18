@@ -23,6 +23,11 @@ let
   # InhibitDelayMaxSec, so that's raised to match below. GracefulNodeShutdown is
   # beta/default-on since k8s 1.21, so no featureGates entry is needed.
   gracePeriod = 60; # ceiling per shutdown; kubelet proceeds early once pods drain
+
+  # In-cluster addresses svc:k8s forwards to: the API's kubernetes Service
+  # (every API server behind it) and Traefik's (homelab pins it there).
+  apiClusterIp = "10.43.0.1";
+  traefikClusterIp = "10.43.243.178";
   kubeletConfig = pkgs.writeText "k3s-kubelet-config.yaml" ''
     apiVersion: kubelet.config.k8s.io/v1beta1
     kind: KubeletConfiguration
@@ -71,6 +76,17 @@ in
       '';
     };
 
+    tailscaleServices = lib.mkOption {
+      type = lib.types.bool;
+      default = true;
+      description = ''
+        Host the cluster's Tailscale Service, svc:k8s, on this server: the
+        API and Traefik at one tailnet address whichever node is up. Needs
+        this node to be a tagged device, and the Service defined and
+        auto-approved for its tag in the tailnet policy.
+      '';
+    };
+
     cephLoopback = lib.mkOption {
       type = lib.types.bool;
       default = true;
@@ -83,6 +99,7 @@ in
   };
 
   config = lib.mkIf cfg.enable {
+
     # Keep cluster nodes on the explicitly selected kernel series instead of
     # following the fleet-wide linuxPackages_latest default.
     boot.kernelPackages = lib.mkOverride 90 pkgs.linuxPackages_7_2;
@@ -149,6 +166,8 @@ in
         "--tls-san=100.103.225.29" # carrack
         "--tls-san=100.126.30.73" # arquitens
         "--tls-san=100.65.16.13" # munificent
+        # svc:k8s's API name (*.k8s.rooty.dev is its tailnet address).
+        "--tls-san=api.k8s.rooty.dev"
         # Fast failover: shorten how long a dead node stays Ready before its pods
         # are evicted. node-monitor-grace-period (~20s detection) must accompany
         # the low status-update-frequency — the frequency alone doesn't move
@@ -176,6 +195,25 @@ in
         "--kubelet-arg config=${kubeletConfig}"
       ]
       ++ cfg.extraFlags;
+    };
+
+    # svc:k8s, the tailnet's way in whichever node is up: one Tailscale
+    # Service, one tailnet address, which *.k8s.rooty.dev resolves to.
+    # Plain tcp forwarding, so TLS is end to end (k3s's and Traefik's own
+    # certificates, never one Tailscale terminates). Tailscale fails over
+    # only when a host goes offline, not when what's behind it fails, so
+    # both ports forward to in-cluster Services that every node serves
+    # (through Cilium's socket LB), not to this node's own processes:
+    #  - 6443: the API's kubernetes Service, every API server behind it.
+    #    Clients use api.k8s.rooty.dev, a SAN below.
+    #  - 443, 80: Traefik's Service. It outlives ServiceLB.
+    services.tailscale.serve = lib.mkIf cfg.tailscaleServices {
+      enable = true;
+      services.k8s.endpoints = {
+        "tcp:6443" = "tcp://${apiClusterIp}:443";
+        "tcp:443" = "tcp://${traefikClusterIp}:443";
+        "tcp:80" = "tcp://${traefikClusterIp}:80";
+      };
     };
 
     boot.kernelModules = [
