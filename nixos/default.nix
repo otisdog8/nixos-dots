@@ -121,8 +121,10 @@
             ports = [ 443 ];
           }
         ]
-        # The k3s nodes (arquitens, carrack, munificent): the API server and
-        # the ingress, nothing else.
+        # The k3s cluster: the API server and the ingress, nothing else.
+        # svc:k8s first (the Tailscale Service every server hosts, so it
+        # holds whichever node is up; *.k8s.rooty.dev), then each node's
+        # own address.
         ++
           map
             (addr: {
@@ -134,9 +136,10 @@
               ];
             })
             [
-              "100.126.30.73"
-              "100.103.225.29"
-              "100.65.16.13"
+              "100.67.22.237" # svc:k8s
+              "100.126.30.73" # arquitens
+              "100.103.225.29" # carrack
+              "100.65.16.13" # munificent
             ];
       };
     };

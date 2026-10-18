@@ -379,10 +379,12 @@ in
   # The dashboard verifies OIDC logins server-side (discovery, JWKS, token
   # exchange) against https://auth.rooty.dev — which Cloudflare fronts, and
   # Cloudflare 403s PyJWT's Python-urllib user agent. Pin the name to the
-  # k8s ingress on arquitens so those fetches ride the tailnet instead:
-  # same hostname (issuer/iss validation unchanged), valid LE cert
-  # (*.rooty.dev SAN), no Cloudflare in the path. Verified 2026-07-08:
-  # python TLS handshake + jwks.json 200 via this route. If the ingress
-  # ever moves off arquitens, update this IP.
-  networking.hosts."100.126.30.73" = [ "auth.rooty.dev" ];
+  # k8s ingress so those fetches ride the tailnet instead: same hostname
+  # (issuer/iss validation unchanged), valid LE cert (*.rooty.dev SAN), no
+  # Cloudflare in the path. Verified 2026-07-08: python TLS handshake +
+  # jwks.json 200 via this route. The address is svc:k8s's, the Tailscale
+  # Service every k3s server hosts (modules/system/k3s), so it holds
+  # whichever node is up; it was arquitens's own until 2026-10-18. The
+  # broker's admin-panel sign-in on this host uses it too.
+  networking.hosts."100.67.22.237" = [ "auth.rooty.dev" ];
 }
