@@ -49,7 +49,7 @@ leaves no node with a GPU: see immich below.
 1. Push the commits, and build `.#<node>-hv` (it builds the guest too).
    Check the machine is what `hosts/<node>-hv` assumes: `nproc` at least 16
    (the VM takes 14), `free -g` about 62 total, `ip -br link` shows the
-   dongle as `enp4s0f4u1`, and `sudo vgs vg` has 48G free. `sudo lvs vg`
+   dongle as `enp4s0f4u1`, and `sudo vgs vg` has at least 48G free (for `node` and `node-swap`), and `sudo lvs vg` lists `data`, which the VM gets. `sudo lvs vg`
    may still list the interim `ceph` LV; nothing uses it, and it can stay.
    From a converted node, `tailscale ping <node>` should say `via
    10.0.0.x:41641`: a direct path through the macvtap, not DERP.
