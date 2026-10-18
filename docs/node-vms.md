@@ -21,7 +21,7 @@ into the VM. The machine starts over as `<machine>-hv`.
 | store | its own | the machine's, read-only over virtio-fs |
 | disks | NVMe: ESP, LUKS → vg: `pool`, `swap` | `vg/node` (32G btrfs: root, persist, large, cache, dots), `vg/node-swap`, `vg/data`, the SATA SSD |
 | LAN | dongle with a new MAC (`02:` in place of `00:`), new lease | macvtap with the dongle's MAC, so the node's address |
-| memory | ~4 GiB | 46 GiB (room for the sensitive VM: ~8 GiB) |
+| memory | ~4 GiB | 46 GiB, and up to ~2 GiB of crosvm's own (room for the sensitive VM: ~8 GiB) |
 
 | node | machine | LAN | Tailscale | converted |
 |---|---|---|---|---|

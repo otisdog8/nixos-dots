@@ -151,6 +151,7 @@ let
           --mem size=${toString v.memoryMiB}
           --cpus num-cores=${toString v.vcpus}
           --no-usb
+          --hugepages
           --serial type=stdout,hardware=serial,console=true
           -s ${rt name}/crosvm.sock
           --shared-dir "${core.storeShare}"
@@ -237,7 +238,15 @@ let
             "char-macvtap rw"
           ]
           ++ map (d: "${d} rw") devices;
-          MemoryMax = "${toString (v.memoryMiB + 512)}M";
+          # The guest's memory is shmem charged here, and once its page cache
+          # has touched all of it (a day on arquitens), it is all resident and
+          # none reclaimable (no swap). Above it: crosvm's own, mostly page
+          # tables, which every sandboxed device process keeps for the guest
+          # memory it touches, ~memoryMiB/512 each at 4K pages. A flat 512M
+          # was short of that (530M at the OOM, 2026-10-18); huge pages
+          # (--hugepages) make it small, but fall back to 4K when memory is
+          # fragmented, so the margin assumes they did.
+          MemoryMax = "${toString (v.memoryMiB + 512 + v.memoryMiB / 32)}M";
         }
         // core.hardening.vmm
         // core.hostView { inherit (config) fileSystems; }
@@ -360,6 +369,12 @@ in
       }) cfg;
 
       boot.kernelModules = [ "macvtap" ];
+
+      # Huge pages for guest memory (crosvm --hugepages), which is a memfd:
+      # shmem, whose THP is off by default. advise: only where asked.
+      systemd.tmpfiles.rules = [
+        "w /sys/kernel/mm/transparent_hugepage/shmem_enabled - - - - advise"
+      ];
 
       users.users.${vmUser} = {
         isSystemUser = true;
