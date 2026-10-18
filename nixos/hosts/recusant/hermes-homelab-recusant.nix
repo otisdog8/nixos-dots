@@ -23,7 +23,7 @@
 #      appear there too.
 #   2. agent-auth identity (broker runs on this host — see agent-auth.nix):
 #        agent-auth admin agent-create hermes-homelab-recusant \
-#          --lldap-username svc-hermes-homelab-recusant --description "Hermes homelab ops"
+#          --lldap-username hermes-homelab-recusant --description "Hermes homelab ops"
 #      → copy the aa_... key ONCE into AGENT_AUTH_API_KEY below.
 #   3. GitHub: mint a fine-grained PAT for the agent's machine account,
 #      repo = nixos-dots only, permissions = contents:read + pull_requests:write.

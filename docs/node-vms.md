@@ -53,6 +53,11 @@ leaves no node with a GPU: see immich below.
    may still list the interim `ceph` LV; nothing uses it, and it can stay.
    From a converted node, `tailscale ping <node>` should say `via
    10.0.0.x:41641`: a direct path through the macvtap, not DERP.
+   Cilium must not depend on this node's API server alone: `kubectl -n
+   kube-system get ds/cilium deploy/cilium-operator -o yaml | grep -A1
+   KUBERNETES_SERVICE_HOST`. If that's this node's address, every node
+   loses its service routing (DNS, Postgres, LLDAP) while it's down, as
+   when the arquitens VM went down on 2026-10-17.
 2. On the machine, make the VM's two new volumes:
 
    ```
@@ -136,6 +141,12 @@ leaves no node with a GPU: see immich below.
    - `ceph -s` shows the OSD up; then `ceph osd unset noout` and
      `kubectl uncordon <node>`;
    - on the machine, `node-vm log node` is the guest's console;
+   - on the machine, the guest's memory is in huge pages:
+     `grep -E 'ShmemHugePages|ShmemPmdMapped' /proc/meminfo` shows tens of
+     GiB, not 0. Without them crosvm's page tables outgrow the unit's
+     memory limit, and the OOM killer takes the VM;
+   - in the node, `ls -l ~/.zshrc` is a link into the store, and
+     `stat -c %U ~/.config` says jrt (Home Manager's files, linked at boot);
    - delete `/persist/tailscale-hv.authkey`.
 9. Reserve the machine's new DHCP lease. Add `<node>-hv` to
    `netconsole.nix`'s hosts map and turn netconsole on in
