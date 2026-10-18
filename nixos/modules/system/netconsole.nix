@@ -64,6 +64,24 @@ let
       ip = "10.0.0.12";
       mac = "00:24:27:88:a9:cd"; # USB dongle, enp4s0f4u1
     };
+    # The hypervisors (docs/node-vms.md): the dongle again, on the locally
+    # administered MAC its link rule sets. udev gives no enx altname for a
+    # MAC that isn't the NIC's own, so the device is the name that rule keeps.
+    arquitens-hv = {
+      ip = "10.0.0.4";
+      mac = "02:24:27:88:a9:c4";
+      device = "enp4s0f4u1";
+    };
+    carrack-hv = {
+      ip = "10.0.0.5";
+      mac = "02:24:27:88:a9:bc";
+      device = "enp4s0f4u1";
+    };
+    munificent-hv = {
+      ip = "10.0.0.6";
+      mac = "02:24:27:88:a9:cd";
+      device = "enp4s0f4u1";
+    };
   };
   altname = mac: "enx" + lib.replaceStrings [ ":" ] [ "" ] mac;
   self = hosts.${config.networking.hostName} or null;
@@ -83,14 +101,14 @@ in
     localIp = lib.mkOption {
       type = lib.types.nullOr lib.types.str;
       default = self.ip or null;
-      defaultText = lib.literalExpression ''hosts.''${hostname}.ip'';
+      defaultText = lib.literalExpression "hosts.\${hostname}.ip";
       description = "This host's LAN IP, stamped as the netconsole source address.";
     };
 
     device = lib.mkOption {
       type = lib.types.nullOr lib.types.str;
-      default = if self != null then altname self.mac else null;
-      defaultText = lib.literalExpression ''"enx<mac>" from hosts.''${hostname}.mac'';
+      default = if self != null then self.device or (altname self.mac) else null;
+      defaultText = lib.literalExpression ''hosts.''${hostname}.device, else "enx<mac>" from its mac'';
       description = ''
         Egress NIC for netconsole datagrams (the wired LAN interface), as its
         MAC-based udev altname by default.

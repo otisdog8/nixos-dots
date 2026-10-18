@@ -60,9 +60,9 @@
       expectedPcr15 = "b353292a4797f1c859ea4bf77b0e327b0eb5045e9e6804d1fc1fc2fff39ef3a8";
     };
 
-    # Off until this machine's new LAN address is reserved and in
-    # netconsole.nix's hosts map (as carrack-hv).
-    system.netconsole.enable = false;
+    # To the default collector, arquitens's node: another machine's VM
+    # (this one can't reach its own over the LAN, node-vm.nix).
+    system.netconsole.enable = true;
 
     # The node VMs' unit, proven on a throwaway guest (node-vm.nix).
     system.nodeVmSmoke = {

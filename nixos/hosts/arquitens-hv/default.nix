@@ -60,9 +60,13 @@
       expectedPcr15 = "ea66c8b7ae01bb530fb964abebd4ec43441229e3beeb1941f5a7a157743ddc19";
     };
 
-    # Off until this machine's new LAN address is reserved and in
-    # netconsole.nix's hosts map (as arquitens-hv).
-    system.netconsole.enable = false;
+    # To carrack's node: never to this machine's own node VM, which it
+    # can't reach over the LAN (macvtap doesn't hairpin, node-vm.nix).
+    system.netconsole = {
+      enable = true;
+      collectorIp = "10.0.0.11"; # carrack
+      collectorMac = "00:24:27:88:a9:bc";
+    };
 
     # The node VMs' unit, proven on a throwaway guest (node-vm.nix).
     system.nodeVmSmoke = {

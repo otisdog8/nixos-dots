@@ -23,11 +23,11 @@ into the VM. The machine starts over as `<machine>-hv`.
 | LAN | dongle with a new MAC (`02:` in place of `00:`), new lease | macvtap with the dongle's MAC, so the node's address |
 | memory | ~4 GiB | 46 GiB, and up to ~2 GiB of crosvm's own (room for the sensitive VM: ~8 GiB) |
 
-| node | machine | LAN | Tailscale | converted |
-|---|---|---|---|---|
-| arquitens | arquitens-hv | 10.0.0.10, dongle 00:24:27:88:a9:c4 | 100.126.30.73 | 2026-10-17 |
-| carrack | carrack-hv | 10.0.0.11, dongle 00:24:27:88:a9:bc | 100.103.225.29 | |
-| munificent | munificent-hv | 10.0.0.12, dongle 00:24:27:88:a9:cd | 100.65.16.13 | |
+| node | node's LAN (the dongle's MAC) | Tailscale | machine | machine's LAN | converted |
+|---|---|---|---|---|---|
+| arquitens | 10.0.0.10, 00:24:27:88:a9:c4 | 100.126.30.73 | arquitens-hv | 10.0.0.4, 02:24:27:88:a9:c4 | 2026-10-17 |
+| carrack | 10.0.0.11, 00:24:27:88:a9:bc | 100.103.225.29 | carrack-hv | 10.0.0.5, 02:24:27:88:a9:bc | 2026-10-18 |
+| munificent | 10.0.0.12, 00:24:27:88:a9:cd | 100.65.16.13 | munificent-hv | 10.0.0.6, 02:24:27:88:a9:cd | |
 
 Deploying a node from now on means rebuilding `<node>-hv`, which builds the
 guest. Then run `sudo node-vm restart node` on the machine, which reboots
@@ -148,9 +148,10 @@ leaves no node with a GPU: see immich below.
    - in the node, `ls -l ~/.zshrc` is a link into the store, and
      `stat -c %U ~/.config` says jrt (Home Manager's files, linked at boot);
    - delete `/persist/tailscale-hv.authkey`.
-9. Reserve the machine's new DHCP lease. Add `<node>-hv` to
-   `netconsole.nix`'s hosts map and turn netconsole on in
-   `hosts/<node>-hv`.
+9. Reserve the machine's DHCP lease (the table above: its `02:` MAC).
+   Its netconsole is already on, in `netconsole.nix`'s hosts map, and goes
+   to another machine's node: a machine can't reach its own VM over the
+   LAN.
 
 ### Rollback (any time before cleanup)
 
