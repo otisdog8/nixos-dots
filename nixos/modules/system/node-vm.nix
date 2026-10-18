@@ -38,6 +38,7 @@
   lib,
   options,
   pkgs,
+  utils,
   ...
 }:
 let
@@ -53,6 +54,28 @@ let
   ns = name: "nv-${name}";
   tap = name: "nv-${name}";
   vmUser = "node-vm";
+
+  # One user's Home Manager files, as tmpfiles rules: the directories they
+  # sit in, the user's own, then a link per file into the generation.
+  hmLinks =
+    user: hm:
+    let
+      home = hm.home.homeDirectory;
+      owner = "${user} ${config.users.users.${user}.group}";
+      targets = map (f: lib.removePrefix "./" f.target) (
+        lib.filter (f: f.enable) (lib.attrValues hm.home.file)
+      );
+      parents =
+        t:
+        let
+          d = dirOf t;
+        in
+        if d == "." then [ ] else parents d ++ [ d ];
+      # ~/.ssh is 0700, impermanence.nix's rule.
+      dirs = lib.subtractLists [ ".ssh" ] (lib.unique (lib.concatMap parents targets));
+    in
+    map (d: "d ${home}/${d} 0755 ${owner} -") dirs
+    ++ map (t: "L+ ${home}/${t} - - - - ${hm.home-files}/${t}") targets;
 
   disk = lib.types.submodule {
     options = {
@@ -422,12 +445,21 @@ in
       nix.optimise.automatic = lib.mkForce false;
     })
 
-    # Home Manager's activation needs a nix with a store database (nix-build's
-    # sanity check, its generation's GC root): not on a read-only store.
-    # Nobody works as a user on a node; their ssh login gets the system's
-    # shell. (Where the option exists: the smoke guest has no Home Manager.)
+    # Home Manager's activation needs nix (nix-build's sanity check, its
+    # generation's GC root), and a guest has none. The guest links the
+    # generation's files instead, with tmpfiles at boot: home is on the
+    # rolled-back root, and a guest update is a reboot, so each boot is a
+    # fresh activation. No activation scripts run (the ssh config's copy, any
+    # onChange): ~/.ssh/config stays a link into the read-only store. The
+    # packages come anyway (useUserPackages). (Where the option exists: the
+    # smoke guest has no Home Manager.)
     (lib.optionalAttrs (options ? home-manager) (
-      lib.mkIf guestCfg.enable { home-manager.users = lib.mkForce { }; }
+      lib.mkIf guestCfg.enable {
+        systemd.services = lib.mapAttrs' (
+          user: _: lib.nameValuePair "home-manager-${utils.escapeSystemdPath user}" { enable = false; }
+        ) config.home-manager.users;
+        systemd.tmpfiles.rules = lib.concatLists (lib.mapAttrsToList hmLinks config.home-manager.users);
+      }
     ))
   ];
 }
