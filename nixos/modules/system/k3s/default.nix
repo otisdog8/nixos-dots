@@ -24,9 +24,10 @@ let
   # beta/default-on since k8s 1.21, so no featureGates entry is needed.
   gracePeriod = 60; # ceiling per shutdown; kubelet proceeds early once pods drain
 
-  # In-cluster addresses svc:k8s forwards to: the API's kubernetes Service
-  # (every API server behind it) and Traefik's (homelab pins it there).
-  apiClusterIp = "10.43.0.1";
+  # Where svc:k8s forwards: this server's API, at its --bind-address (the
+  # API listens nowhere else), and Traefik's Service (homelab pins it).
+  bindFlag = lib.findFirst (lib.hasPrefix "--bind-address=") null cfg.extraFlags;
+  apiAddress = lib.removePrefix "--bind-address=" bindFlag;
   traefikClusterIp = "10.43.243.178";
   kubeletConfig = pkgs.writeText "k3s-kubelet-config.yaml" ''
     apiVersion: kubelet.config.k8s.io/v1beta1
@@ -99,6 +100,12 @@ in
   };
 
   config = lib.mkIf cfg.enable {
+    assertions = [
+      {
+        assertion = !cfg.tailscaleServices || bindFlag != null;
+        message = "modules.system.k3s.tailscaleServices: svc:k8s forwards 6443 to the API's --bind-address, and extraFlags sets none.";
+      }
+    ];
 
     # Keep cluster nodes on the explicitly selected kernel series instead of
     # following the fleet-wide linuxPackages_latest default.
@@ -200,27 +207,35 @@ in
     # svc:k8s, the tailnet's way in whichever node is up: one Tailscale
     # Service, one tailnet address, which *.k8s.rooty.dev resolves to.
     # Plain tcp forwarding, so TLS is end to end (k3s's and Traefik's own
-    # certificates, never one Tailscale terminates). Tailscale fails over
-    # only when a host goes offline, not when what's behind it fails, so
-    # both ports forward to in-cluster Services that every node serves
-    # (through Cilium's socket LB), not to this node's own processes:
-    #  - 6443: the API's kubernetes Service, every API server behind it.
-    #    Clients use api.k8s.rooty.dev, a SAN below.
+    # certificates, never one Tailscale terminates).
+    #  - 6443: this server's own API. Not the kubernetes Service: tailscaled
+    #    marks its own connections to skip Tailscale's routes, so it can't
+    #    reach another server's tailnet address, and two of three tries
+    #    failed (2026-10-18). Clients use api.k8s.rooty.dev, a SAN below.
     #  - 443, 80: Traefik's Service. It outlives ServiceLB.
+    # Tailscale fails over only when a host goes offline, not when what's
+    # behind it fails, so the node stops taking new connections while its
+    # k3s is down (tailscale-serve is bound to k3s, below).
     services.tailscale.serve = lib.mkIf cfg.tailscaleServices {
       enable = true;
       services.k8s.endpoints = {
-        "tcp:6443" = "tcp://${apiClusterIp}:443";
+        "tcp:6443" = "tcp://${apiAddress}:6443";
         "tcp:443" = "tcp://${traefikClusterIp}:443";
         "tcp:80" = "tcp://${traefikClusterIp}:80";
       };
     };
     # The serve config only applies once tailscaled is logged in; at boot
     # it's often not yet ("unexpected state: NoState", 2026-10-18), and the
-    # unit ran once. Wait for Running, and retry past a slow login.
+    # unit ran once. Wait for Running, and retry past a slow login. Bound to
+    # k3s: started with it, and drained (no new connections; open ones
+    # finish) when it stops, so Tailscale sends clients to another host.
     systemd.services.tailscale-serve = lib.mkIf cfg.tailscaleServices {
+      bindsTo = [ "k3s.service" ];
+      after = [ "k3s.service" ];
+      wantedBy = [ "k3s.service" ];
       unitConfig.StartLimitIntervalSec = 0;
       serviceConfig = {
+        ExecStop = "${lib.getExe config.services.tailscale.package} serve drain svc:k8s";
         ExecStartPre = pkgs.writeShellScript "tailscale-serve-wait" ''
           for _ in $(seq 60); do
             ${lib.getExe config.services.tailscale.package} status --json 2>/dev/null \
