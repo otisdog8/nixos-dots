@@ -215,6 +215,25 @@ in
         "tcp:80" = "tcp://${traefikClusterIp}:80";
       };
     };
+    # The serve config only applies once tailscaled is logged in; at boot
+    # it's often not yet ("unexpected state: NoState", 2026-10-18), and the
+    # unit ran once. Wait for Running, and retry past a slow login.
+    systemd.services.tailscale-serve = lib.mkIf cfg.tailscaleServices {
+      unitConfig.StartLimitIntervalSec = 0;
+      serviceConfig = {
+        ExecStartPre = pkgs.writeShellScript "tailscale-serve-wait" ''
+          for _ in $(seq 60); do
+            ${lib.getExe config.services.tailscale.package} status --json 2>/dev/null \
+              | ${lib.getExe pkgs.jq} -e '.BackendState == "Running"' >/dev/null && exit 0
+            sleep 2
+          done
+          echo "tailscaled not Running after 120s" >&2
+          exit 1
+        '';
+        Restart = "on-failure";
+        RestartSec = 15;
+      };
+    };
 
     boot.kernelModules = [
       "rbd"
