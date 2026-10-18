@@ -151,7 +151,6 @@ let
           --mem size=${toString v.memoryMiB}
           --cpus num-cores=${toString v.vcpus}
           --no-usb
-          --balloon-page-reporting
           --serial type=stdout,hardware=serial,console=true
           -s ${rt name}/crosvm.sock
           --shared-dir "${core.storeShare}"

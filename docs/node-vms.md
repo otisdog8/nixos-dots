@@ -15,29 +15,45 @@ What made the machine *that node* (ssh host keys, Tailscale state, machine-id,
 hostd's pairing, the Ceph LUKS key, the LAN MAC and so its DHCP lease) moves
 into the VM. The machine starts over as `<machine>-hv`.
 
-| | machine (`hosts/arquitens-hv`) | node VM (`hosts/arquitens-node`, hostname `arquitens`) |
+| | machine (`hosts/<node>-hv`) | node VM (`hosts/<node>-node`, hostname `<node>`) |
 |---|---|---|
 | boots | Secure Boot, TPM-unlocked LUKS, as before | directly: kernel, initrd, `init=` from the machine's store |
 | store | its own | the machine's, read-only over virtio-fs |
 | disks | NVMe: ESP, LUKS → vg: `pool`, `swap` | `vg/node` (32G btrfs: root, persist, large, cache, dots), `vg/node-swap`, `vg/data`, the SATA SSD |
-| LAN | dongle with a new MAC (02:24:27:88:a9:c4), new lease | macvtap with the dongle's MAC: 10.0.0.10 |
+| LAN | dongle with a new MAC (`02:` in place of `00:`), new lease | macvtap with the dongle's MAC, so the node's address |
 | memory | ~4 GiB | 46 GiB (room for the sensitive VM: ~8 GiB) |
 
-Deploying the node from now on means rebuilding `arquitens-hv`, which builds
-the guest. Then run `sudo node-vm restart node` on the machine, which reboots
+| node | machine | LAN | Tailscale | converted |
+|---|---|---|---|---|
+| arquitens | arquitens-hv | 10.0.0.10, dongle 00:24:27:88:a9:c4 | 100.126.30.73 | 2026-10-17 |
+| carrack | carrack-hv | 10.0.0.11, dongle 00:24:27:88:a9:bc | 100.103.225.29 | |
+| munificent | munificent-hv | 10.0.0.12, dongle 00:24:27:88:a9:cd | 100.65.16.13 | |
+
+Deploying a node from now on means rebuilding `<node>-hv`, which builds the
+guest. Then run `sudo node-vm restart node` on the machine, which reboots
 the node. A rebuild alone never restarts it.
 
-## Converting arquitens
+## Converting a machine
+
+Below, `<node>` is the node's name (carrack, say) and the machine becomes
+`<node>-hv`. In a shell, `n=carrack` once, then `$n` wherever `<node>` is.
 
 **Do one machine per sitting.** While a machine is converting, etcd runs on
 two members and Ceph on two OSDs. A second failure in that window stops
 writes. Have fresh backups, and wait for `HEALTH_OK` and three healthy etcd
-members before starting the next machine.
+members before starting the next machine. Converting the last of the three
+leaves no node with a GPU: see immich below.
 
 ### Before (nothing stops)
 
-1. Push the commits, and build `.#arquitens-hv` (it builds the guest too).
-2. On arquitens, make the VM's two new volumes:
+1. Push the commits, and build `.#<node>-hv` (it builds the guest too).
+   Check the machine is what `hosts/<node>-hv` assumes: `nproc` at least 16
+   (the VM takes 14), `free -g` about 62 total, `ip -br link` shows the
+   dongle as `enp4s0f4u1`, and `sudo vgs vg` has 48G free. `sudo lvs vg`
+   may still list the interim `ceph` LV; nothing uses it, and it can stay.
+   From a converted node, `tailscale ping <node>` should say `via
+   10.0.0.x:41641`: a direct path through the macvtap, not DERP.
+2. On the machine, make the VM's two new volumes:
 
    ```
    sudo lvcreate -L 32G -n node vg
@@ -59,9 +75,9 @@ members before starting the next machine.
 
 ### Cutover (the node is down ~10 minutes)
 
-4. `kubectl drain arquitens --ignore-daemonsets --delete-emptydir-data`, and
+4. `kubectl drain <node> --ignore-daemonsets --delete-emptydir-data`, and
    `ceph osd set noout` (in the Rook toolbox).
-5. Make `arquitens-hv` the **next boot**, not the running system: deploy it
+5. Make `<node>-hv` the **next boot**, not the running system: deploy it
    with `boot`, not `switch`. A switch would take k3s and `/data` away under
    the running node.
 6. Stop the node, copy its identity into the VM's `/persist`, and set the
@@ -69,17 +85,17 @@ members before starting the next machine.
 
    ```
    sudo systemctl stop k3s
-   sudo mount -o subvol=persist /dev/vg/node /mnt/node
+   sudo mkdir -p /mnt/node && sudo mount -o subvol=persist /dev/vg/node /mnt/node
    cd /persist
    id=(etc/ssh/ssh_host_ed25519_key etc/ssh/ssh_host_ed25519_key.pub
        etc/ssh/ssh_host_rsa_key etc/ssh/ssh_host_rsa_key.pub etc/machine-id
        var/lib/tailscale var/lib/agent-auth-hostd ceph-luks.key)
    sudo ls -ld "${id[@]}"     # all eight, or stop here
+   findmnt /mnt/node          # vg-node[/persist], or stop here
    sudo cp -a --parents "${id[@]}" var/lib/nixos root/.ssh home/jrt/.ssh /mnt/node/
    sudo mkdir /persist/baremetal
    sudo cp -a --parents "${id[@]}" /persist/baremetal/ && sudo rm -r "${id[@]}"
-   sudo umount /mnt/node
-   readlink -f /nix/var/nix/profiles/system   # must be nixos-system-arquitens-hv-...
+   readlink -f /nix/var/nix/profiles/system   # must be nixos-system-<node>-hv-...
    ```
 
    An array, not a word-split string: jrt's shell is zsh, which doesn't
@@ -100,6 +116,8 @@ members before starting the next machine.
        sudo chmod --reference="/persist/$d" "$d"; sudo chown --reference="/persist/$d" "$d"
      fi
    done
+   sudo ls -ld etc var home root /persist/{etc,var,home,root}   # the same, pairwise
+   cd / && sudo umount /mnt/node
    ```
 
    `/persist/baremetal` gets the same fix before a rollback copies it back.
@@ -108,19 +126,20 @@ members before starting the next machine.
    machines keep the same uids. The machine boots without the moved files and
    makes itself new ones: ssh host keys, machine-id and a Tailscale login,
    from the key in step 3.
-7. `sudo reboot`. The machine comes up as arquitens-hv: LUKS through the TPM,
+7. `sudo reboot`. The machine comes up as `<node>-hv`: LUKS through the TPM,
    the dongle on its new MAC, Tailscale through the auth key, then
-   `node-vm-node`. The VM boots as arquitens on 100.126.30.73, k3s rejoins as
-   the same etcd member, `cryptceph` opens, and Rook's OSD comes back.
+   `node-vm-node`. The VM boots as `<node>` on its Tailscale address, k3s
+   rejoins as the same etcd member, `cryptceph` opens, and Rook's OSD comes
+   back.
 8. Check:
-   - `kubectl get node arquitens` is Ready, and etcd has three healthy members;
+   - `kubectl get node <node>` is Ready, and etcd has three healthy members;
    - `ceph -s` shows the OSD up; then `ceph osd unset noout` and
-     `kubectl uncordon arquitens`;
+     `kubectl uncordon <node>`;
    - on the machine, `node-vm log node` is the guest's console;
    - delete `/persist/tailscale-hv.authkey`.
-9. Reserve the machine's new DHCP lease. Add `arquitens-hv` to
+9. Reserve the machine's new DHCP lease. Add `<node>-hv` to
    `netconsole.nix`'s hosts map and turn netconsole on in
-   `hosts/arquitens-hv`.
+   `hosts/<node>-hv`.
 
 ### Rollback (any time before cleanup)
 
@@ -138,29 +157,26 @@ The bare-metal node finds `/data` and the Ceph disk as the VM left them.
 ### Cleanup (after a few quiet days)
 
 - Delete `/persist/baremetal`.
-- Make `hosts/arquitens` the guest: move `hosts/arquitens-node` there, and drop
+- Make `hosts/<node>` the guest: move `hosts/<node>-node` there, and drop
   `hostDir` and the bare-metal output from `flake.nix`.
 
 ## What this doesn't do yet, or hasn't shown
 
-- **Proven, and not.** The smoke VM (`node-vm-smoke`, on bare-metal arquitens
-  and on arquitens-hv) has run the whole path: the macvtap in the VM's own
-  network namespace, crosvm under its sandbox, the shared store, direct
-  boot, a DHCP lease and the gateway reachable. What it doesn't cover, and
-  the cutover is the first to show:
-  - block devices: prep's chown, the `virtio-<serial>` names, O_DIRECT;
-  - the node's own guest: the impermanence rollback in a VM, `/data` in the
-    initrd, `cryptceph` on a virtio disk, k3s and Tailscale coming back as
-    themselves;
-  - Tailscale's direct paths to peers through the macvtap (otherwise relayed,
-    and slow, which Ceph and etcd would feel).
-  If the node doesn't come up, `node-vm log node` has its console, and the
-  rollback is the way out.
+- **Proven, and not.** arquitens has run as a VM since 2026-10-17: the
+  disks, the impermanence rollback, `/data` in the initrd, `cryptceph` on a
+  virtio disk, and k3s and Tailscale back as themselves. Its cutover is where
+  the mount check and the mode fix in step 6 came from. carrack and
+  munificent are copies of its config (`hosts/<node>-hv` and `-node` diff
+  against arquitens's in their addresses, MACs, disks and PCR 15 only, and
+  in the nodes' `serverAddr` and netconsole target). What one cutover can't
+  show is the three as VMs together. If a node doesn't come up,
+  `node-vm log node` has its console, and the rollback is the way out.
 - **No interactive console.** The guest's serial is output only, into the
   journal. A guest that doesn't come up is debugged from that, or rolled back.
-- **The iGPU stays on the machine.** immich's machine-learning pod asks for an
-  AMD GPU; once the last machine converts, no node has one. Move it to CPU
-  (homelab) before then.
+- **The iGPU stays on the machine.** immich's machine-learning pods ask for
+  an AMD GPU each (three replicas, one per node). Each conversion leaves one
+  Pending, and after the last none runs. Move them to CPU (homelab) before
+  then.
 - **The store is shared whole.** The guest reads the machine's entire store,
   read-only. A store holds no secrets by design. But once the sensitive VM
   shares it, each guest can read the other's system configuration, though not

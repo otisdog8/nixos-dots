@@ -183,6 +183,16 @@
           hostname = "munificent";
           stateVersion = "24.05";
         };
+        # munificent as a hypervisor and its node VM, as arquitens-hv/-node.
+        munificent-hv = helper.mkNixos {
+          hostname = "munificent-hv";
+          stateVersion = "24.05";
+        };
+        munificent-node = helper.mkNixos {
+          hostname = "munificent";
+          hostDir = "munificent-node";
+          stateVersion = "24.05";
+        };
         arquitens = helper.mkNixos {
           hostname = "arquitens";
           stateVersion = "24.05";
@@ -201,6 +211,16 @@
         };
         carrack = helper.mkNixos {
           hostname = "carrack";
+          stateVersion = "24.05";
+        };
+        # carrack as a hypervisor and its node VM, as arquitens-hv/-node.
+        carrack-hv = helper.mkNixos {
+          hostname = "carrack-hv";
+          stateVersion = "24.05";
+        };
+        carrack-node = helper.mkNixos {
+          hostname = "carrack";
+          hostDir = "carrack-node";
           stateVersion = "24.05";
         };
         galaxy = helper.mkNixos {

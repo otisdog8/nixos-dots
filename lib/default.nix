@@ -19,7 +19,9 @@ let
       "arquitens-hv"
       "recusant"
       "munificent"
+      "munificent-hv"
       "carrack"
+      "carrack-hv"
     ];
   defaultUsername = "jrt";
 in
