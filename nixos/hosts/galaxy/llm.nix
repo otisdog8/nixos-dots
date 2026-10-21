@@ -207,6 +207,10 @@ in
   # ── llama-swap: one OpenAI-compatible endpoint, models loaded on demand ────
   services.llama-swap = {
     enable = true;
+    # The module's build-time `llama-swap -validate` (2026-10) resolves
+    # ${env.*} too, and LLAMA_SWAP_API_KEY exists only in the service's
+    # environment (sops, below), so it can't pass at build time.
+    validateConfigFile = false;
     # listenAddress default "localhost", port 8080.
     settings = {
       # Big models take a while to mmap+upload to VRAM on first request.
