@@ -36,6 +36,13 @@ let
       });
     })).overrideAttrs
       (old: {
+        # bin/Hyprland is the target of programs.hyprland's cap_sys_nice
+        # wrapper, which nixpkgs now requires to be an ELF (a script under
+        # a capability takes its environment from the caller): the binary
+        # wrapper, as nixpkgs' own hyprland has.
+        nativeBuildInputs = map (
+          p: if (p.name or "") == "make-shell-wrapper-hook" then pkgs.makeBinaryWrapper else p
+        ) old.nativeBuildInputs;
         postPatch = (old.postPatch or "") + ''
           substituteInPlace CMakeLists.txt \
             --replace-fail "find_package(glaze 7...<8 QUIET)" "find_package(glaze QUIET)"
