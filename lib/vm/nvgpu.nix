@@ -154,6 +154,12 @@ in
       pname = "virtio-gpu-nv";
       version = "${version}-${kernel.version}";
       src = "${src}/driver";
+      # Linux 7.3 dropped task_euid(); task_cred_xxx, which it wrapped, is
+      # in 7.2 and 7.3 alike. Until the fork carries the same change.
+      postPatch = ''
+        substituteInPlace nvgpu_main.c \
+          --replace-fail 'task_euid(t)' 'task_cred_xxx(t, euid)'
+      '';
       nativeBuildInputs = kernel.moduleBuildDependencies;
       makeFlags = kernelPackages.kernelModuleMakeFlags ++ [
         "-C"
@@ -163,11 +169,13 @@ in
         "NVGPU_RUST=0"
       ];
       buildFlags = [ "modules" ];
-      installPhase = ''
-        runHook preInstall
-        install -Dm444 virtio_gpu_nv.ko \
-          $out/lib/modules/${kernel.modDirVersion}/extra/virtio_gpu_nv.ko
-        runHook postInstall
-      '';
+      # modules_install, not a copy: it runs the kernel's signing rule, which
+      # nixpkgs points at kmodigest, and that writes the virtio_gpu_nv.ko.cer
+      # the module tree folds into the kernel's modules.cer.
+      installFlags = [
+        "INSTALL_MOD_PATH=${placeholder "out"}"
+        "INSTALL_MOD_DIR=extra"
+      ];
+      installTargets = [ "modules_install" ];
     };
 }
