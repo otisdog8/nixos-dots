@@ -111,6 +111,16 @@ in
     # following the fleet-wide linuxPackages_latest default.
     boot.kernelPackages = lib.mkOverride 90 pkgs.linuxPackages_7_2;
 
+    # Cilium's VXLAN between nodes rides tailscale0, so every cross-node pod
+    # packet waits in the tun's ring until tailscaled reads it. The ring is
+    # txqueuelen long (500 by default, and tailscaled leaves it so); a full
+    # one drops (tx_dropped), and bursts of tens of thousands a minute cost
+    # DNS lookups and LDAP binds (2026-10-19). Writing it resizes the live
+    # ring, so this applies whenever tailscaled makes the device.
+    services.udev.extraRules = ''
+      ACTION=="add", SUBSYSTEM=="net", KERNEL=="tailscale0", ATTR{tx_queue_len}="10000"
+    '';
+
     # tailscale0 is trusted globally in networking.nix, so these allow-lists
     # are only needed if a host ever drops trustedInterfaces. Keep them
     # declared as documentation + a safety net.
