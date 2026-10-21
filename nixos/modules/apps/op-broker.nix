@@ -695,6 +695,30 @@ in
       # group) before the guest broker's start script gets to create it.
       # Inert in the other VMs (one guest system for all).
       modules.sandbox.vm.guestModules = lib.mkIf (desktop && opInVm) [
+        (
+          { config, pkgs, ... }:
+          let
+            storeSources = lib.filter (lib.hasPrefix builtins.storeDir) (
+              lib.mapAttrsToList (_: w: w.source) config.security.wrappers
+            );
+          in
+          {
+            # nixpkgs' wrapper check (2026-10) reads the first bytes of every
+            # wrapper's source, store path or not, and op's exists only once
+            # guestBrokerStart has copied it. The same check, of the sources
+            # in the store: each exists and is an ELF.
+            system.checks = lib.mkForce [
+              (pkgs.runCommandLocal "ensure-wrapper-integrity" { } ''
+                for path in ${lib.escapeShellArgs storeSources}; do
+                  [ -e "$path" ] || { echo "The path $path does not exist!"; exit 1; }
+                  read -r -n 4 magic < "$path"
+                  [[ "$magic" = $'\x7fELF' ]] || { echo "$path is not an ELF!"; exit 1; }
+                done
+                mkdir $out
+              '')
+            ];
+          }
+        )
         {
           users.groups.onepassword-cli.gid = config.ids.gids.onepassword-cli;
           # The CLI as 1Password's own install has it (and NixOS's
