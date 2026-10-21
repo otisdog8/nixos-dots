@@ -63,9 +63,26 @@
           # already in systemPackages, so package = null).
           programs.obs-studio = {
             enable = true;
-            enableVirtualCamera = true;
             package = null;
           };
+          # enableVirtualCamera's four settings, with v4l2loopback's output
+          # cut back to the module: since kernel.dev ships System.map,
+          # modules_install runs depmod into it, and its modules.* collide
+          # with the kernel's in the module tree (nixpkgs#576406).
+          boot = {
+            kernelModules = [ "v4l2loopback" ];
+            extraModulePackages = [
+              (config.boot.kernelPackages.v4l2loopback.overrideAttrs (old: {
+                postInstall = (old.postInstall or "") + ''
+                  rm -f $out/lib/modules/*/modules.*
+                '';
+              }))
+            ];
+            extraModprobeConfig = ''
+              options v4l2loopback devices=1 video_nr=1 card_label="OBS Cam" exclusive_caps=1
+            '';
+          };
+          security.polkit.enable = true;
 
           modules.apps.obs-studio.sandbox.dedicatedUser = true;
           users.users."app-obs-studio".extraGroups = [
