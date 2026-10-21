@@ -41,6 +41,7 @@
     inputs.disko.nixosModules.disko
     inputs.sops-nix.nixosModules.sops
     ./disks.nix
+    ./nfs.nix
     ./garage.nix
     ./attic.nix
     ./minecraft.nix
@@ -155,19 +156,6 @@
     # and paste the new sha256 here, then rebuild.
     expectedPcr15 = "922711f9130d4337d945560c9e8b764a1faf3563ca27f1dcb9637b3fc2ed5dea";
   };
-
-  # NFS server for k8s storage. Export and firewall both pin to the tailnet
-  # (the global trustedInterfaces = [ "tailscale0" ] makes 2049 belt-and-
-  # suspenders, but keep it declared for clarity).
-  services.nfs.server.enable = true;
-  # Scope to Tailscale's CGNAT range (100.64.0.0/10), not 100.0.0.0/8 — /8 also
-  # covers public 100.0.0.0–100.63.255.255, so a spoofed/off-tailnet source in that
-  # band would match. Tighten further to exact node IPs if the k8s node set is
-  # stable. Export is a dedicated dir (/export/k8s), never a system path.
-  services.nfs.server.exports = ''
-    /export/k8s  100.64.0.0/10(rw,nohide,insecure,no_subtree_check,all_squash)
-  '';
-  networking.firewall.allowedTCPPorts = [ 2049 ];
 
   # Ship kernel logs to the netconsole collector (arquitens) — this box hosts
   # enough state (garage, media, minecraft, agents) that its panics are worth
