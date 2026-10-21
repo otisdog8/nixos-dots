@@ -79,6 +79,21 @@ in
         # jq is needed inside the initrd to parse `systemd-analyze pcrs`.
         storePaths = [ "${pkgs.jq}/bin/jq" ];
 
+        # Since systemd 262, systemd-cryptsetup measures the volume key by
+        # asking systemd-pcrextend over its varlink socket, and goes on
+        # without the measurement if that fails. NixOS ships the socket in
+        # the initrd but nothing starts it, so PCR 15 stayed unextended and
+        # check-pcr15 failed every boot. Listen before any volume unlocks.
+        sockets.systemd-pcrextend = {
+          wantedBy = [ "cryptsetup-pre.target" ];
+          before = [ "cryptsetup-pre.target" ];
+        };
+        services."systemd-cryptsetup@" = {
+          overrideStrategy = "asDropin";
+          wants = [ "systemd-pcrextend.socket" ];
+          after = [ "systemd-pcrextend.socket" ];
+        };
+
         services.check-pcr15 = lib.mkIf (cfg.expectedPcr15 != null) {
           description = "Verify TPM PCR 15 matches expected post-unlock value";
           wantedBy = [ "initrd.target" ];
