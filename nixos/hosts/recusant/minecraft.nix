@@ -491,7 +491,7 @@ let
   # Prometheus. Player/TPS metrics are a separate follow-up (per-loader
   # mods/plugins) — see minecraft-observability.md.
   jmxAgent = pkgs.fetchurl {
-    url = "https://github.com/prometheus/jmx_exporter/releases/download/v1.6.0/jmx_prometheus_javaagent-1.6.0.jar";
+    url = "https://github.com/prometheus/jmx_exporter/releases/download/1.6.0/jmx_prometheus_javaagent-1.6.0.jar";
     hash = "sha256-qVmD/ZboZdK835EcxQDnyCgIwnq5/SJr+WcytsPYxG4=";
   };
   jmxConfig = pkgs.writeText "jmx-exporter.yaml" ''
