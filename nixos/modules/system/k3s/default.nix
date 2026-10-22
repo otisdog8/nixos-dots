@@ -344,6 +344,11 @@ in
       ++ lib.optional cfg.liveMigration "/var/lib/lcm";
     };
 
-    services.lcm.enable = cfg.liveMigration;
+    services.lcm = {
+      enable = cfg.liveMigration;
+      # Ship lcm-agent/lcm-runc logs to the same VictoriaLogs NodePort the netconsole collector
+      # (on every cluster node) uses; query `unit:lcm-agent host:<node>`.
+      logShipping.victoriaLogsUrl = lib.mkDefault config.modules.system.netconsole.collector.victoriaLogsUrl;
+    };
   };
 }
