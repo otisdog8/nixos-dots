@@ -49,6 +49,7 @@
       enable = true;
       serverAddr = "https://100.103.225.29:6443"; # carrack
       persistDir = "/data";
+      liveMigration = true;
       cephLoopback = false;
       extraFlags = [
         "--bind-address=100.126.30.73"

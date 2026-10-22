@@ -1,6 +1,7 @@
 # K3s Kubernetes cluster configuration
 {
   config,
+  inputs,
   lib,
   pkgs,
   ...
@@ -46,6 +47,8 @@ in
   imports = [
     ./nfs.nix
     ./rollout.nix
+    # Live container migration (CRIU): inert unless liveMigration is set.
+    inputs.lcm.nixosModules.default
     ./secrets.nix
   ];
 
@@ -89,6 +92,18 @@ in
         API and Traefik at one tailnet address whichever node is up. Needs
         this node to be a tagged device, and the Service defined and
         auto-approved for its tag in the tailnet policy.
+      '';
+    };
+
+    liveMigration = lib.mkOption {
+      type = lib.types.bool;
+      default = false;
+      description = ''
+        Let this node send and receive live migrations of running pods (uorux/live-container-migration):
+        CRIU 4.3 on k3s's PATH, the `lcm` containerd runtime handler (pods opt in with
+        runtimeClassName: lcm), and lcm-agent on port 7790. The agents' shared token is derived
+        from the k3s server token. Enabling it restarts k3s once (containerd reads its runtime
+        drop-ins at start); running pods are unaffected.
       '';
     };
 
@@ -341,7 +356,17 @@ in
         "/var/lib/rancher"
         "/var/lib/rook"
         "/etc/rancher"
-      ];
+      ]
+      # Fences (pods that must never restart here) and restore tombstones must survive reboots;
+      # the image staging under it is tmpfs regardless.
+      ++ lib.optional cfg.liveMigration "/var/lib/lcm";
+    };
+
+    services.lcm = {
+      enable = cfg.liveMigration;
+      # Ship lcm-agent/lcm-runc logs to the same VictoriaLogs NodePort the netconsole collector
+      # (on every cluster node) uses; query `unit:lcm-agent host:<node>`.
+      logShipping.victoriaLogsUrl = lib.mkDefault config.modules.system.netconsole.collector.victoriaLogsUrl;
     };
   };
 }
