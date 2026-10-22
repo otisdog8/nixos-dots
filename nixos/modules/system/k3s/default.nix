@@ -364,8 +364,10 @@ in
 
     services.lcm = {
       enable = cfg.liveMigration;
-      # Ship lcm-agent/lcm-runc logs to the same VictoriaLogs NodePort the netconsole collector
-      # (on every cluster node) uses; query `unit:lcm-agent host:<node>`.
+      # Ship lcm-agent/lcm-runc logs to the same VictoriaLogs endpoint (its ClusterIP) the
+      # netconsole collector on every cluster node uses; query `unit:lcm-agent host:<node>`.
+      # The agent port (7790) needs no firewall entry: peers use the tailnet IPs (tailscale0 is
+      # trusted) and pods come in on lxc+ (trusted too); the LAN can't reach it.
       logShipping.victoriaLogsUrl = lib.mkDefault config.modules.system.netconsole.collector.victoriaLogsUrl;
     };
   };
