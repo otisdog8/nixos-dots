@@ -79,7 +79,13 @@
       # 64 GB machine: ~4 GiB for itself, room for the sensitive cluster's VM
       # later (docs/node-vms.md).
       memoryMiB = 46 * 1024;
-      vcpus = 14;
+      # 12 of the machine's 16 threads: the rest is for the host and
+      # crosvm's device processes (the VM's disk and network). At 14, a
+      # restart storm (all three nodes at once, Ceph recovering, ~400 pods
+      # starting) soft-locked every vCPU of arquitens for 20-30 s (2026-10-21
+      # 22:42 PDT). Pods request ~29 CPUs across the cluster, so 10 (room for
+      # the sensitive cluster's VM) needs those requests trimmed first.
+      vcpus = 12;
       # The USB dongle's own MAC: the node keeps 10.0.0.10 and netconsole's
       # "arquitens" entry (whose device is the MAC's enx altname).
       mac = "00:24:27:88:a9:c4";
