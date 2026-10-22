@@ -44,6 +44,7 @@ let
 in
 {
   imports = [
+    ./nfs.nix
     ./rollout.nix
     ./secrets.nix
   ];

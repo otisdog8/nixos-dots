@@ -132,11 +132,6 @@ in
     "/cache".neededForBoot = true;
     "/dots".neededForBoot = true;
     "/data".neededForBoot = true;
-
-    "/mnt/net-k8s" = {
-      device = "recusant:/export/k8s";
-      fsType = "nfs";
-    };
   };
 
   boot.initrd.supportedFilesystems = [ "xfs" ];

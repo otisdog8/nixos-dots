@@ -45,11 +45,6 @@ in
       options = [ "noatime" ];
       neededForBoot = true;
     };
-
-    "/mnt/net-k8s" = {
-      device = "recusant:/export/k8s";
-      fsType = "nfs";
-    };
   };
 
   swapDevices = [

@@ -178,12 +178,6 @@ in
     # initrd. LVM is already activated early for the btrfs pool LV; this just
     # adds the XFS mount (module pulled in via supportedFilesystems below).
     "/data".neededForBoot = true;
-
-    # Preserved from the old layout — not disko-managed.
-    "/mnt/net-k8s" = {
-      device = "recusant:/export/k8s";
-      fsType = "nfs";
-    };
   };
 
   # XFS /data is neededForBoot, so initrd must be able to mount it.
