@@ -25,10 +25,12 @@ let
   gracePeriod = 60; # ceiling per shutdown; kubelet proceeds early once pods drain
 
   # Where svc:k8s forwards: this server's API, at its --bind-address (the
-  # API listens nowhere else), and Traefik's Service (homelab pins it).
+  # API listens nowhere else), and Traefik's and LLDAP's Services (homelab
+  # pins both).
   bindFlag = lib.findFirst (lib.hasPrefix "--bind-address=") null cfg.extraFlags;
   apiAddress = lib.removePrefix "--bind-address=" bindFlag;
   traefikClusterIp = "10.43.243.178";
+  lldapClusterIp = "10.43.6.245";
   kubeletConfig = pkgs.writeText "k3s-kubelet-config.yaml" ''
     apiVersion: kubelet.config.k8s.io/v1beta1
     kind: KubeletConfiguration
@@ -177,6 +179,11 @@ in
       extraFlags = [
         "--flannel-backend=none"
         "--disable-network-policy"
+        # No ServiceLB (klipper): Cilium's LB IPAM and L2 announcements give
+        # Traefik its LAN address (homelab: apps/infra/cilium-lb), and the
+        # tailnet reaches it through svc:k8s below. Off, nothing listens on
+        # the nodes' own 80/443 any more. Every server needs it.
+        "--disable=servicelb"
         # SANs for the API server serving cert: all three server node IPs, so a
         # kubeconfig/join can validate against any of them. k3s auto-adds each
         # server's own node-ip too, but list them explicitly to keep this honest.
@@ -223,6 +230,10 @@ in
     #    reach another server's tailnet address, and two of three tries
     #    failed (2026-10-18). Clients use api.k8s.rooty.dev, a SAN below.
     #  - 443, 80: Traefik's Service. It outlives ServiceLB.
+    #  - 6360: LLDAP's LDAPS, as ldap.k8s.rooty.dev (its cert has
+    #    *.k8s.rooty.dev). For recusant's Jellyfin; the tailnet policy
+    #    grants this port to recusant alone. Plain LDAP (3890) isn't
+    #    forwarded.
     # Tailscale fails over only when a host goes offline, not when what's
     # behind it fails, so the node stops taking new connections while its
     # k3s is down (tailscale-serve is bound to k3s, below).
@@ -232,6 +243,7 @@ in
         "tcp:6443" = "tcp://${apiAddress}:6443";
         "tcp:443" = "tcp://${traefikClusterIp}:443";
         "tcp:80" = "tcp://${traefikClusterIp}:80";
+        "tcp:6360" = "tcp://${lldapClusterIp}:6360";
       };
     };
     # The serve config only applies once tailscaled is logged in; at boot
