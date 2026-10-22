@@ -966,6 +966,26 @@
         "type": "github"
       }
     },
+    "lcm": {
+      "inputs": {
+        "nixpkgs": [
+          "nixpkgs"
+        ]
+      },
+      "locked": {
+        "lastModified": 1792640673,
+        "narHash": "sha256-2iDh98uWblaApvsLEdjvC9y//XAyr+83EErFoPYzMUE=",
+        "owner": "uorux",
+        "repo": "live-container-migration",
+        "rev": "9e1a1a9d141590caba3edd27ee8dd92a61b8e878",
+        "type": "github"
+      },
+      "original": {
+        "owner": "uorux",
+        "repo": "live-container-migration",
+        "type": "github"
+      }
+    },
     "litellm": {
       "flake": false,
       "locked": {
@@ -1513,6 +1533,7 @@
         "hyprsplit": "hyprsplit",
         "impermanence": "impermanence",
         "lanzaboote": "lanzaboote",
+        "lcm": "lcm",
         "nix-minecraft": "nix-minecraft",
         "nix-warez": "nix-warez",
         "nixos-hardware": "nixos-hardware",

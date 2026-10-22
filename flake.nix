@@ -50,6 +50,11 @@
       url = "github:Mic92/sops-nix";
       inputs.nixpkgs.follows = "nixpkgs";
     };
+    # Live migration of running pods between the k3s nodes (modules/system/k3s liveMigration).
+    lcm = {
+      url = "github:uorux/live-container-migration";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
     # agent-auth: credential broker for AI agents; runs on recusant as a native
     # NixOS service (nixos/hosts/recusant/agent-auth.nix).
     agent-auth = {
