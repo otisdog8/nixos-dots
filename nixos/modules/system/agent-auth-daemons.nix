@@ -157,7 +157,7 @@ in
         description = "Commands as ${username}.";
       };
       shells = lib.mkEnableOption ''
-        time-boxed shells as ${username} (an hour at most): each opened with
+        time-boxed shells as ${username} (a day at most): each opened with
         a TOTP code, every command shown on Discord before it runs
       '';
     };
@@ -177,7 +177,7 @@ in
         rule or the LLM), and armed here for at most an hour
       '';
       shells = lib.mkEnableOption ''
-        time-boxed root shells (two hours at most), opened with a root TOTP
+        time-boxed root shells (a day at most), opened with a root TOTP
         code, every command shown on Discord before it runs. Root on this
         host for as long as one is open
       '';
@@ -250,9 +250,12 @@ in
         # modules.agentAuth.hostCommands; no autoCommands anywhere.
         tiers.user.enable = lib.mkDefault commands.user.enable;
         tiers.user.shell.enable = lib.mkDefault (commands.user.enable && commands.user.shells);
+        # A day on both tiers: the approval still takes a TOTP code, and the
+        # operator can end a shell from Discord at any time.
+        tiers.user.shell.maxDuration = lib.mkDefault "24h";
         tiers.root.enable = lib.mkDefault commands.root.enable;
         tiers.root.shell.enable = lib.mkDefault (commands.root.enable && commands.root.shells);
-        tiers.root.shell.maxDuration = lib.mkDefault "2h";
+        tiers.root.shell.maxDuration = lib.mkDefault "24h";
         templates = {
           nixos-dots-push = {
             tier = "user";
