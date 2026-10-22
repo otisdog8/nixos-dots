@@ -141,12 +141,13 @@ in
 
       victoriaLogsUrl = lib.mkOption {
         type = lib.types.str;
-        default = "http://${if self != null then self.ip else "127.0.0.1"}:30428";
-        defaultText = lib.literalExpression ''"http://''${own-lan-ip}:30428"'';
+        default = "http://10.43.169.2:9428";
         description = ''
           Base URL of the VictoriaLogs ingest endpoint. Default is the
-          cluster's NodePort service on this node's own LAN IP (NodePorts are
-          served on node addresses; loopback is not guaranteed under cilium).
+          logs/victoria-logs-nodeport Service's ClusterIP (homelab pins it),
+          which the collectors, all k3s nodes, reach from the host through
+          Cilium's socket load balancing. Not a NodePort: that answered the
+          whole query API, unauthenticated, on every node address.
         '';
       };
 
