@@ -14,6 +14,7 @@
 #   too, unannounced. Roll its node with --reboot after a hypervisor kernel
 #   change instead (the VM restarts with the machine's next boot).
 #
+# Each host builds its own system (--build-host); this one only evaluates.
 # Hosts are reached over ssh by name (ROLLOUT_SSH_SUFFIX is appended, e.g.
 # ".tail-net.ts.net"); sudo asks for the password on each.
 { pkgs, self }:
@@ -59,7 +60,13 @@ pkgs.writeShellApplication {
       if [ "$h" = "$(hostname)" ]; then
         sudo nixos-rebuild switch --flake "$flake#$h"
       else
-        nixos-rebuild switch --flake "$flake#$h" --target-host "$h$suffix" --sudo --ask-sudo-password
+        # Built there: the hosts trust no key but the public caches and no user
+        # but root, so they'd refuse paths built here ("lacks a signature by a
+        # trusted key"). Only the derivations go over, which, being
+        # content-addressed, any user may add; evaluation (and so the
+        # git-crypt secrets) stays here.
+        nixos-rebuild switch --flake "$flake#$h" --target-host "$h$suffix" --build-host "$h$suffix" \
+          --sudo --ask-sudo-password
       fi
     }
 
@@ -86,7 +93,8 @@ pkgs.writeShellApplication {
 
     node() {
       local n=$1 sys
-      sys=$(nix build --no-link --print-out-paths "$flake#nixosConfigurations.$n-node.config.system.build.toplevel")
+      # Its path only: the machine built it with its own system (deploy).
+      sys=$(nix eval --raw "$flake#nixosConfigurations.$n-node.config.system.build.toplevel.outPath")
       log "$n: rolling onto $sys''${mode:+ ($mode)}"
       local before rc=0
       before=$(remote "$n" cat /persist/node-rollout/last 2>/dev/null || true)
