@@ -44,6 +44,7 @@ let
 in
 {
   imports = [
+    ./rollout.nix
     ./secrets.nix
   ];
 

@@ -30,8 +30,15 @@ into the VM. The machine starts over as `<machine>-hv`.
 | munificent | 10.0.0.12, 00:24:27:88:a9:cd | 100.65.16.13 | munificent-hv | 10.0.0.6, 02:24:27:88:a9:cd | |
 
 Deploying a node from now on means rebuilding `<node>-hv`, which builds the
-guest. Then run `sudo node-vm restart node` on the machine, which reboots
-the node. A rebuild alone never restarts it.
+guest and pins it. A rebuild alone never restarts it. Then the node rolls
+itself onto that system: `sudo node-rollout <system>` on the node
+(modules/system/k3s/rollout.nix) switches live when the kernel is the same,
+and otherwise drains, sets noout and reboots itself into the machine's pin,
+one node at a time. `--reboot` forces the drained reboot; `--bounce` reboots
+without draining or health checks. From any checkout, `nix run .#rollout --
+nodes` does all of it: the three machines, then each node in turn
+(pkgs/rollout). `sudo node-vm restart node` on the machine is the hard way:
+no drain, no lock.
 
 ## Converting a machine
 

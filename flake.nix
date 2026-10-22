@@ -345,6 +345,8 @@
         {
           mint-usb = mkApp mint-usb;
           upgrade-usb = mkApp upgrade-usb;
+          # Rebuild hosts and roll the k3s nodes one at a time (pkgs/rollout).
+          rollout = mkApp (import ./pkgs/rollout { inherit pkgs self; });
         };
 
       devShells.x86_64-linux.default =
