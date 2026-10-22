@@ -91,7 +91,9 @@ pkgs.writeShellApplication {
       local before rc=0
       before=$(remote "$n" cat /persist/node-rollout/last 2>/dev/null || true)
       # 255: ssh lost the node, as when it reboots itself.
-      remote "$n" -t sudo node-rollout ''${mode:+"$mode"} "$sys" || rc=$?
+      # The target system's own node-rollout: the first rollout has none on
+      # PATH yet, and the tool always matches what it installs.
+      remote "$n" -t sudo "$sys/sw/bin/node-rollout" ''${mode:+"$mode"} "$sys" || rc=$?
       [ "$rc" = 0 ] || [ "$rc" = 255 ] || die "$n: node-rollout failed ($rc)"
       # A reboot finishes at boot (node-rollout-finish); wait for that.
       if [ "$rc" = 255 ] || [ -n "$mode" ] || remote "$n" test -e /persist/node-rollout/pending 2>/dev/null; then
