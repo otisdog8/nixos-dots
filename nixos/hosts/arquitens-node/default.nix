@@ -90,5 +90,4 @@
     collectorMac = "00:24:27:88:a9:bc";
   };
 
-  networking.firewall.enable = lib.mkForce false;
 }

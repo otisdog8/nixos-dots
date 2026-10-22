@@ -125,10 +125,25 @@ in
       ACTION=="add", SUBSYSTEM=="net", KERNEL=="tailscale0", ATTR{tx_queue_len}="10000"
     '';
 
-    # tailscale0 is trusted globally in networking.nix, so these allow-lists
-    # are only needed if a host ever drops trustedInterfaces. Keep them
-    # declared as documentation + a safety net.
+    # The node's firewall: the tailnet and Cilium's own interfaces are
+    # trusted; the LAN NIC gets only what LAN hosts use. Traffic for the
+    # LAN address (10.0.0.200) and NodePorts never reaches it: Cilium's BPF
+    # on the NIC handles those first. What the LAN still reaches here: SSH,
+    # Tailscale's direct-path UDP and netconsole senders' UDP 6666 (each
+    # module opens its own), ICMP.
     networking.firewall = {
+      enable = true;
+      trustedInterfaces = [
+        "tailscale0" # networking.nix's, repeated: this list is what matters here
+        "cilium_host" # the host's side of the pod network
+        "cilium_net"
+        "cilium_vxlan" # pod traffic from the other nodes
+        "lxc+" # this node's pods (kubelet probes' replies, pods to the host)
+      ];
+    };
+    # Cluster ports, on the tailnet only (trusted already: documentation and
+    # a safety net). Global allowedTCPPorts would open them on the LAN too.
+    networking.firewall.interfaces.tailscale0 = {
       allowedTCPPorts = [
         4240 # cluster health checks (cilium-health)
         4244 # Hubble server
@@ -154,7 +169,8 @@ in
       ];
 
       allowedUDPPorts = [
-        51871 # WireGuard encryption tunnel endpoint
+        8472 # Cilium VXLAN between the nodes
+        51871 # Cilium WireGuard (if encryption is ever turned on)
       ];
     };
 

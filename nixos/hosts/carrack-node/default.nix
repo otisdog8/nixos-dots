@@ -86,5 +86,4 @@
   # (enx00242788a9bc) is this VM's as it was the machine's. It sends to
   # the default collector, arquitens (the node VM, at the same address).
 
-  networking.firewall.enable = lib.mkForce false;
 }
