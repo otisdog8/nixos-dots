@@ -140,6 +140,39 @@ in
       ACTION=="add", SUBSYSTEM=="net", KERNEL=="tailscale0", ATTR{tx_queue_len}="10000"
     '';
 
+    # Cilium carries the sending pod's security identity in the top 16 bits
+    # of the packet mark, and the mark survives into the VXLAN packet's route
+    # lookup. Tailscale's rules (5210-5250) send any mark with 0x08 in bits
+    # 16-23 (its own "bypass" bit, 0x80000/0xff0000) to the main table, which
+    # routes a peer's tailnet IP out the LAN, where it is lost. So every pod
+    # whose identity's low byte is 0x08 (1 in 256) lost all cross-node
+    # traffic: cnpg/postgres-2 (identity 9992 = 0x2708, mark 0x27080400) on
+    # 2026-10-22. These rules give such packets table 52 first, like every
+    # other pod's. Cilium's mark nibbles (bits 8-11) that carry an identity:
+    # 0x4 overlay, 0xa/0xb proxy, 0xf identity. Tailscale's own packets have
+    # that nibble clear, so they still bypass.
+    systemd.services.cilium-tailscale-mark-rules = {
+      description = "Route Cilium identity-marked packets via Tailscale's table";
+      wantedBy = [ "multi-user.target" ];
+      before = [ "k3s.service" ];
+      path = [ pkgs.iproute2 ];
+      serviceConfig = {
+        Type = "oneshot";
+        RemainAfterExit = true;
+      };
+      script = ''
+        for m in 0x80400 0x80a00 0x80b00 0x80f00; do
+          ip rule del priority 5200 fwmark "$m/0xff0f00" lookup 52 2>/dev/null || true
+          ip rule add priority 5200 fwmark "$m/0xff0f00" lookup 52
+        done
+      '';
+      preStop = ''
+        for m in 0x80400 0x80a00 0x80b00 0x80f00; do
+          ip rule del priority 5200 fwmark "$m/0xff0f00" lookup 52 2>/dev/null || true
+        done
+      '';
+    };
+
     # The node's firewall: the tailnet and Cilium's own interfaces are
     # trusted; the LAN NIC gets only what LAN hosts use. Traffic for the
     # LAN address (10.0.0.200) and NodePorts never reaches it: Cilium's BPF
