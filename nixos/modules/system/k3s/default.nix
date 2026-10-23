@@ -402,6 +402,18 @@ in
       # The agent port (7790) needs no firewall entry: peers use the tailnet IPs (tailscale0 is
       # trusted) and pods come in on lxc+ (trusted too); the LAN can't reach it.
       logShipping.victoriaLogsUrl = lib.mkDefault config.modules.system.netconsole.collector.victoriaLogsUrl;
+      # LivePods (lcm.rooty.dev/v1alpha1): the controller, leader-elected across the nodes, keeps
+      # exactly one pod per LivePod (recreated after a node failure, managed by GitOps) and sleeps
+      # and wakes on-demand ones. It does nothing until the CRD exists (homelab).
+      livePods.enable = true;
+      # The gateways' wake token is derived from the k3s token like the agent token
+      # (/run/lcm/wake-token); the leading controller keeps it in these Secrets, created once
+      # their namespace exists, for in-cluster gateways to mount.
+      livePods.wakeTokenSecrets = [
+        "lcm-test/lcm-wake"
+        "minecraft/lcm-wake"
+        "minecraft-gw/lcm-wake"
+      ];
     };
   };
 }
