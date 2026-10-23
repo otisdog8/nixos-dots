@@ -22,14 +22,22 @@
 #   guest's packets don't reach a host kernel driver of their own). The guest
 #   is a LAN host of its own (its MAC, its DHCP lease); the machine can't
 #   reach it over the LAN (macvtap doesn't hairpin to its parent), and
-#   doesn't need to.
+#   doesn't need to. crosvm moves each packet with a syscall of its own, so
+#   small ones (WireGuard's, ~1.3 KB: the node's whole tailnet) are what it
+#   can't keep up with: the macvtap's queue (`tapQueueLength`) has to ride
+#   out its stalls, and the guest gets mergeable RX buffers (`mrg-rxbuf`),
+#   256 packets' room in its ring instead of ~13 64K buffers.
 # - Console: the guest's ttyS0 goes to this unit's journal
 #   (`journalctl -u node-vm-<name>`); it is output only.
 # - Updates: a rebuild of the machine never restarts a guest (that would be a
 #   node reboot); `sudo node-vm restart <name>` boots the new one.
 # - Stop: crosvm's power button, the guest's own orderly shutdown (kubelet's
 #   graceful node shutdown takes up to 60s, k3s module), then TimeoutStopSec.
-#   A guest that powers off stays off; a reboot or a crash restarts the unit.
+#   A guest that powers off stays off; a reboot or a crash restarts the unit:
+#   crosvm's --extended-status tells them apart (0 a power-off; 32 a reset,
+#   which a guest's reboot, panic=-1 or watchdog is; 33/34/36 a crash).
+#   Without it crosvm exits 0 for a reset too, and a node that rebooted
+#   stayed off (carrack, 2026-10-22: softdog reset it, 11 hours down).
 #
 # modules.system.nodeVmGuest (the guest): mounts the machine's store, and
 # boots with no bootloader.
@@ -112,6 +120,17 @@ let
         type = lib.types.str;
         description = "The machine's LAN NIC the macvtap sits on.";
       };
+      tapQueueLength = lib.mkOption {
+        type = lib.types.ints.positive;
+        default = 4096;
+        description = ''
+          Packets the macvtap holds for crosvm to read (its txqueuelen; the
+          kernel's default is 500). At 500 carrack's dropped 2% of what it
+          received, mostly Tailscale's small packets, when crosvm fell behind;
+          at 4096, 60 of ~800k, and Tailscale into it went from ~65 to
+          ~85 MB/s (2026-10-23).
+        '';
+      };
       disks = lib.mkOption { type = lib.types.listOf disk; };
       stopTimeout = lib.mkOption {
         type = lib.types.ints.positive;
@@ -144,7 +163,8 @@ let
         $ip netns del ${ns name} 2>/dev/null || true
         $ip link del ${tap name} 2>/dev/null || true
         $ip netns add ${ns name}
-        $ip link add link ${v.parentInterface} name ${tap name} address ${v.mac} type macvtap mode bridge
+        $ip link add link ${v.parentInterface} name ${tap name} address ${v.mac} \
+          txqueuelen ${toString v.tapQueueLength} type macvtap mode bridge
         $ip link set ${tap name} netns ${ns name}
         $ip -n ${ns name} link set ${tap name} up
         idx=$($ip -n ${ns name} -o link show ${tap name} | cut -d: -f1)
@@ -181,10 +201,10 @@ let
           ${lib.concatMapStringsSep "\n      " (
             d: ''--block "path=${d.device},id=${d.serial},o_direct=true"''
           ) v.disks}
-          --net tap-fd=3,mac=${v.mac}
+          --net tap-fd=3,mac=${v.mac},mrg-rxbuf=true
         )
         for p in ${lib.escapeShellArgs params}; do args+=(-p "$p"); done
-        exec ${pkgs.crosvm}/bin/crosvm "''${args[@]}" \
+        exec ${pkgs.crosvm}/bin/crosvm --extended-status "''${args[@]}" \
           --initrd ${g.system.build.initialRamdisk}/${g.system.boot.loader.initrdFile} \
           ${g.boot.kernelPackages.kernel}/${g.system.boot.loader.kernelFile}
       '';
@@ -246,7 +266,10 @@ let
           ExecStop = "-${stop}";
           TimeoutStopSec = v.stopTimeout;
           KillMode = "mixed";
+          # Any exit but a power-off's 0 (--extended-status, above), except
+          # crosvm's own "invalid argument", which a retry won't fix.
           Restart = "on-failure";
+          RestartPreventExitStatus = 35;
           RestartSec = 10;
 
           User = vmUser;
