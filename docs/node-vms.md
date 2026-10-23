@@ -201,3 +201,23 @@ The bare-metal node finds `/data` and the Ceph disk as the VM left them.
   shares it, each guest can read the other's system configuration, though not
   its secrets.
 - **A guest update is a node reboot.** No in-place switch yet.
+- **The network moves in the host kernel (vhost-net).** crosvm's own
+  virtio-net (userspace, one queue) moves a packet per syscall. TCP between
+  nodes on the LAN rides 64K offloaded frames, 170-195 MB/s; WireGuard's
+  ~1.3 KB packets can't, so the tailnet (the nodes' InternalIPs: Cilium's
+  tunnel, Ceph, everything between nodes) ran 45-75 MB/s with the macvtap
+  dropping 2% of what it received. Its queue at 4096 (`tapQueueLength`) took
+  that to ~85 MB/s (2026-10-23). vhost-net (`vhostNet`, on) and mergeable
+  RX buffers (`mrg-rxbuf`) are the rest, at the VM's next start. vhost-net's
+  price is isolation: the guest's virtqueues are read by the host kernel's
+  vhost driver instead of a jailed, unprivileged crosvm process, so a guest
+  kernel exploit has more of the host to aim at. `vhostNet = false` takes
+  that back, at the throughput. Multiqueue (`vq-pairs`) wouldn't help the
+  tailnet: one WireGuard flow hashes to one queue (and crosvm offers no
+  multiqueue with vhost-net).
+- **A reboot in the guest needs `--extended-status`.** Without it crosvm
+  exits 0 for a guest's reset as for a power-off, and the unit, `Restart =
+  on-failure`, stayed down: carrack's softdog reset it on 2026-10-22 and it
+  was off for 11 hours; `node-rollout`'s reboots go the same way.
+  The VMM runs with it now: a reset (32) or crash restarts the unit, a
+  power-off (0) doesn't.
