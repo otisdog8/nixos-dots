@@ -94,49 +94,179 @@ let
     pkgs.openssh
     pkgs.coreutils
   ];
-  # As the user: the checkout's branch to GitHub. No force, no refspec (the
-  # pattern admits neither a leading "+" or "-" nor a ":").
-  dotsPush = pkgs.writeShellScriptBin "nixos-dots-push" ''
+  gitCrypt = "${pkgs.git-crypt}/bin/git-crypt";
+  # The checkout is writable by the user and by what runs as the user, the
+  # agents' sandboxes included, .git/ and all: its git config, hooks and
+  # attributes are a command for whoever runs git there next (core.fsmonitor,
+  # a filter or a hook, core.sshCommand, a remote's URL, a commondir file
+  # pointing at another config). So the templates' git doesn't run there
+  # (but for two ref commands, `real` below): it runs on this empty,
+  # read-only git dir (no config, no hooks, no refs), with the checkout's
+  # object store under it (GIT_OBJECT_DIRECTORY): objects are data, named by
+  # their hashes. What git does need to know comes from the settings below,
+  # in the store.
+  scratchGitDir = pkgs.runCommand "nixos-dots-gitdir" { } ''
+    mkdir -p $out/refs
+    echo 'ref: refs/heads/none' >$out/HEAD
+  '';
+  gitConfig = pkgs.writeText "nixos-dots-gitconfig" (
+    lib.generators.toGitINI {
+      core = {
+        hooksPath = "/dev/null";
+        fsmonitor = false;
+        attributesFile = "/dev/null";
+        excludesFile = "/dev/null";
+        autocrlf = false;
+        sshCommand = "${pkgs.openssh}/bin/ssh";
+      };
+      transfer.fsckObjects = true;
+      gc.auto = 0;
+      maintenance.auto = false;
+      advice.detachedHead = false;
+      init.defaultBranch = "none";
+    }
+  );
+  # Nothing from the system's or the user's git config either, nor from an
+  # environment hostd might pass on; no replace refs, no lazy fetches (a
+  # promisor remote is config too), no protocol but https and ssh.
+  gitEnv = ''
+    unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY \
+      GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_COMMON_DIR GIT_NAMESPACE GIT_CONFIG \
+      GIT_CONFIG_PARAMETERS GIT_CONFIG_COUNT GIT_CONFIG_SYSTEM GIT_ATTR_SOURCE \
+      GIT_REPLACE_REF_BASE
+    export GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=${gitConfig} GIT_ATTR_NOSYSTEM=1 \
+      GIT_NO_REPLACE_OBJECTS=1 GIT_NO_LAZY_FETCH=1 GIT_ALLOW_PROTOCOL=https:ssh \
+      GIT_TERMINAL_PROMPT=0 GIT_PAGER=cat
+  '';
+  # As the user, the start of each script that reads the checkout: `g` is git
+  # on the scratch git dir and the checkout's objects. `real` is git on the
+  # checkout's own git dir, for its refs alone (rev-parse, update-ref): its
+  # config is read there, so hooks and fsmonitor are switched off on the
+  # command line, which wins over it; nothing else in those two commands runs
+  # a configured command. A git dir that borrows another's (a commondir file,
+  # as in a linked worktree) is refused.
+  dotsGit = name: ''
     set -euo pipefail
     export PATH=${deployPath}:$PATH
-    exec git -C ${lib.escapeShellArg checkout} push origin "refs/heads/$1"
+    ${gitEnv}
+    d=${lib.escapeShellArg checkout}
+    if [ ! -d "$d/.git" ] || [ -e "$d/.git/commondir" ]; then
+      echo "${name}: $d/.git is not a repository's own git dir; nothing done" >&2
+      exit 1
+    fi
+    g() { GIT_DIR=${scratchGitDir} GIT_OBJECT_DIRECTORY="$d/.git/objects" git "$@"; }
+    real() { GIT_DIR="$d/.git" git -c core.hooksPath=/dev/null -c core.fsmonitor=false "$@"; }
+  '';
+  # As the user: the checkout's branch to GitHub, by SSH to pushRemote (not
+  # the checkout's "origin", which is its config). No force, no refspec (the
+  # pattern admits neither a leading "+" or "-" nor a ":").
+  dotsPush = pkgs.writeShellScriptBin "nixos-dots-push" ''
+    ${dotsGit "nixos-dots-push"}
+    if ! at="$(real rev-parse --verify -q "refs/heads/$1^{commit}")"; then
+      echo "nixos-dots-push: the checkout has no branch $1; nothing pushed" >&2
+      exit 1
+    fi
+    g push --no-verify ${lib.escapeShellArg commands.pushRemote} "''${at}:refs/heads/$1"
   '';
   # As the user: the checkout fast-forwarded to exactly that commit of the
   # branch, fetched over https (the repo is public; a headless host has no
-  # SSH key for GitHub).
+  # SSH key for GitHub). What `git merge --ff-only` does, in its steps: the
+  # objects fetched into the checkout's store, its index and work tree moved
+  # from HEAD's tree to the new one (read-tree refuses to overwrite local
+  # changes, as merge does), then HEAD's branch moved. git-crypt's filter is
+  # set here, with the checkout's key; no other filter is defined.
   dotsPull = pkgs.writeShellScriptBin "nixos-dots-pull" ''
-    set -euo pipefail
-    export PATH=${deployPath}:$PATH
-    cd ${lib.escapeShellArg checkout}
-    git fetch ${lib.escapeShellArg commands.remote} "refs/heads/$1"
-    got="$(git rev-parse FETCH_HEAD)"
+    ${dotsGit "nixos-dots-pull"}
+    remote=${lib.escapeShellArg commands.remote}
+    w() {
+      GIT_INDEX_FILE="$d/.git/index" GIT_WORK_TREE="$d" g \
+        -c ${lib.escapeShellArg "filter.git-crypt.smudge=${gitCrypt} smudge --key-file=${lib.escapeShellArg "${checkout}/.git/git-crypt/keys/default"}"} \
+        -c ${lib.escapeShellArg "filter.git-crypt.clean=${gitCrypt} clean --key-file=${lib.escapeShellArg "${checkout}/.git/git-crypt/keys/default"}"} \
+        -c filter.git-crypt.required=true "$@"
+    }
+    old="$(real rev-parse --verify HEAD)"
+    # ls-remote matches a pattern's tail: only the exact ref counts.
+    got=
+    refs="$(g ls-remote "$remote" "refs/heads/$1")"
+    while read -r sha ref; do
+      if [ "$ref" = "refs/heads/$1" ]; then got="$sha"; fi
+    done <<<"$refs"
     if [ "$got" != "$2" ]; then
-      echo "nixos-dots-pull: $1 is at $got, not $2; nothing changed" >&2
+      echo "nixos-dots-pull: $1 is at ''${got:-nothing}, not $2; nothing changed" >&2
       exit 1
     fi
-    git merge --ff-only FETCH_HEAD
-    git log --oneline -1
+    # No FETCH_HEAD (the git dir is read-only): the commit itself is fetched,
+    # with HEAD offered as what the checkout already has.
+    g fetch -q --no-tags --no-write-fetch-head --no-auto-maintenance \
+      --negotiation-tip="$old" "$remote" "$2"
+    if [ "$old" != "$2" ]; then
+      if ! g merge-base --is-ancestor "$old" "$2"; then
+        echo "nixos-dots-pull: $2 is not a fast-forward of the checkout's $old; nothing changed" >&2
+        exit 1
+      fi
+      w update-index -q --refresh >/dev/null || :
+      w read-tree -m -u "$old" "$2"
+      real update-ref -m "nixos-dots-pull: fast-forward to $2" HEAD "$2" "$old"
+    fi
+    g log --oneline -1 "$2"
   '';
-  # As root: this host rebuilt from the checkout, only at that commit with
-  # nothing uncommitted in tracked files. The checkout is the user's, so git
-  # is told it is safe and nix gets SUDO_UID, as under sudo; the GitHub copy
-  # can't be built (its secrets.nix is git-crypt's ciphertext).
+  # As the user, for nixos-dots-rebuild (root): the commit and its history as
+  # a pack on stdout, or the checkout's git-crypt key. Read as the user, so
+  # that root opens nothing in the checkout.
+  dotsExport = pkgs.writeShellScript "nixos-dots-export" ''
+    ${dotsGit "nixos-dots-rebuild"}
+    case "$1" in
+      pack) printf '%s\n' "$2" | g pack-objects --revs --stdout ;;
+      key) exec cat -- "$d/.git/git-crypt/keys/default" ;;
+      *) exit 2 ;;
+    esac
+  '';
+  userGroup = config.users.users.${username}.group;
+  # As root: this host rebuilt at exactly that commit, never from the
+  # checkout's work tree. Root reads nothing the checkout's writers control
+  # but two streams from the user's side (setpriv, no privileges): a pack and
+  # the git-crypt key. The pack goes into a fresh root-owned repository in a
+  # 0700 directory, through index-pack: it hashes every object (the names in
+  # that repository are the hashes of what was received) and --strict checks
+  # each one, so the commit found there under the approved id is the commit,
+  # its tree that commit's, whatever sent them. That commit is checked out
+  # next to it, git-crypt's files decrypted with the key (a wrong key makes
+  # git-crypt fail, never yields other content), and built as a path: flake.
+  # The GitHub copy can't be built (its secrets.nix is git-crypt's
+  # ciphertext).
   dotsRebuild = pkgs.writeShellScriptBin "nixos-dots-rebuild" ''
     set -euo pipefail
     export PATH=${deployPath}:$PATH
-    d=${lib.escapeShellArg checkout}
-    g() { git -c safe.directory="$d" -C "$d" "$@"; }
-    at="$(g rev-parse HEAD)"
-    if [ "$at" != "$1" ]; then
-      echo "nixos-dots-rebuild: the checkout is at $at, not $1; nothing built" >&2
+    if ! [[ $1 =~ ^[0-9a-f]{40}$ ]]; then
+      echo "nixos-dots-rebuild: $1 is not a commit id; nothing built" >&2
       exit 1
     fi
-    if [ -n "$(g status --porcelain --untracked-files=no)" ]; then
-      echo "nixos-dots-rebuild: the checkout has uncommitted changes; nothing built" >&2
-      g status --short --untracked-files=no >&2
-      exit 1
-    fi
-    SUDO_UID="$(stat -c %u "$d")" exec nixos-rebuild switch --flake "$d#${hostName}"
+    cd /
+    umask 077
+    w="$(mktemp -d)"
+    trap 'rm -rf -- "$w"' EXIT
+    asUser() {
+      ${pkgs.util-linux}/bin/setpriv --reuid=${username} --regid=${userGroup} --clear-groups \
+        --inh-caps=-all --no-new-privs --reset-env -- ${dotsExport} "$@"
+    }
+    (
+      ${gitEnv}
+      git init -q --bare --template= "$w/git"
+      git config --file "$w/git/config" core.bare false
+      git config --file "$w/git/config" filter.git-crypt.smudge "${gitCrypt} smudge --key-file=$w/git/git-crypt-key"
+      git config --file "$w/git/config" filter.git-crypt.clean "${gitCrypt} clean --key-file=$w/git/git-crypt-key"
+      git config --file "$w/git/config" filter.git-crypt.required true
+      export GIT_DIR="$w/git"
+      if ! asUser pack "$1" | git index-pack --stdin --strict >/dev/null ||
+        ! git cat-file -e "$1^{commit}" 2>/dev/null; then
+        echo "nixos-dots-rebuild: $1 can't be read from the checkout; nothing built" >&2
+        exit 1
+      fi
+      asUser key >"$w/git/git-crypt-key"
+      mkdir "$w/src"
+      git --work-tree="$w/src" checkout -q --detach "$1"
+    )
+    nixos-rebuild switch --flake "path:$w/src#${hostName}"
   '';
 in
 {
@@ -170,6 +300,11 @@ in
       type = lib.types.str;
       default = "https://github.com/otisdog8/nixos-dots.git";
       description = "Where nixos-dots-pull fetches from (https: no key needed).";
+    };
+    pushRemote = lib.mkOption {
+      type = lib.types.str;
+      default = "git@github.com:otisdog8/nixos-dots.git";
+      description = "Where nixos-dots-push pushes to, with the user's SSH key. Set here, not read from the checkout's .git/config: a sandbox can write that.";
     };
     root = {
       enable = lib.mkEnableOption ''
