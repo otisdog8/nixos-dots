@@ -404,6 +404,26 @@ in
       };
     };
 
+    # k3s binds its API and supervisor to the tailnet address (--bind-address),
+    # which isn't on tailscale0 until tailscaled has logged in. Started before
+    # that, k3s exits ("bind: cannot assign requested address"), restarts every
+    # few seconds, and systemd's start limit (5 in 10 s) then stops it for good:
+    # the node stays NotReady until someone restarts k3s (carrack after a
+    # reboot, 2026-10-24). Wait for the address, and never stop retrying.
+    systemd.services.k3s = lib.mkIf (bindFlag != null) {
+      unitConfig.StartLimitIntervalSec = 0;
+      serviceConfig.ExecStartPre = [
+        (pkgs.writeShellScript "k3s-wait-bind-address" ''
+          for _ in $(seq 300); do
+            ${pkgs.iproute2}/bin/ip -o addr show | ${pkgs.gnugrep}/bin/grep -qF " ${apiAddress}/" && exit 0
+            sleep 1
+          done
+          echo "${apiAddress} is on no interface after 300 s" >&2
+          exit 1
+        '')
+      ];
+    };
+
     boot.kernelModules = [
       "rbd"
       "nbd"
