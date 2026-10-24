@@ -23,31 +23,42 @@
       # them. The VM's vsock relay cannot carry fds, and guest PIDs cannot be
       # used by host GameMode. Disable the optional integration in our shared
       # package (both VM and container variants).
-      package = pkgs.prismlauncher.override {
-        gamemodeSupport = false;
-        # MangoHud on the launcher's PATH, so an instance's wrapper command can
-        # be `mangohud` (frame-time overlay and logs) in the container and the
-        # VM. Its launcher is a `#!/bin/sh` script, and the container has no
-        # /bin/sh: the copy here names the store's shell.
-        additionalPrograms = [
-          (pkgs.runCommand "mangohud-${pkgs.mangohud.version}-launcher" { } ''
-            mkdir -p $out/bin
-            substitute ${pkgs.mangohud}/bin/mangohud $out/bin/mangohud \
-              --replace-fail '#!/bin/sh' '#!${pkgs.runtimeShell}'
-            chmod +x $out/bin/mangohud
-          '')
-        ];
-        # In nixpkgs for Prism 11.1 this flag only changes the wrapper's library
-        # path. The unwrapped application still probes GameMode unconditionally
-        # on Linux, so explicitly suppress that probe and capability as well.
-        prismlauncher-unwrapped = pkgs.prismlauncher-unwrapped.overrideAttrs (old: {
-          postPatch = (old.postPatch or "") + ''
-            substituteInPlace launcher/Application.cpp --replace-fail \
-              'if (gamemode_query_status() >= 0)' \
-              'if (false) // GameMode is unavailable in this sandbox package.'
-          '';
-        });
-      };
+      #
+      # NVIDIA's threaded optimizations (on by default for Minecraft) off,
+      # unless an instance sets the variable itself: the GL thread hands every
+      # frame's work to a driver thread and spins until it is done. In the VM,
+      # where that thread's driver calls cross to the host, Better MC without
+      # shaders went from ~485 to ~760 fps without it; the container (~1150) and
+      # shader-bound frames (~142 fps either way) are unaffected.
+      package =
+        (pkgs.prismlauncher.override {
+          gamemodeSupport = false;
+          # MangoHud on the launcher's PATH, so an instance's wrapper command can
+          # be `mangohud` (frame-time overlay and logs) in the container and the
+          # VM. Its launcher is a `#!/bin/sh` script, and the container has no
+          # /bin/sh: the copy here names the store's shell.
+          additionalPrograms = [
+            (pkgs.runCommand "mangohud-${pkgs.mangohud.version}-launcher" { } ''
+              mkdir -p $out/bin
+              substitute ${pkgs.mangohud}/bin/mangohud $out/bin/mangohud \
+                --replace-fail '#!/bin/sh' '#!${pkgs.runtimeShell}'
+              chmod +x $out/bin/mangohud
+            '')
+          ];
+          # In nixpkgs for Prism 11.1 this flag only changes the wrapper's library
+          # path. The unwrapped application still probes GameMode unconditionally
+          # on Linux, so explicitly suppress that probe and capability as well.
+          prismlauncher-unwrapped = pkgs.prismlauncher-unwrapped.overrideAttrs (old: {
+            postPatch = (old.postPatch or "") + ''
+              substituteInPlace launcher/Application.cpp --replace-fail \
+                'if (gamemode_query_status() >= 0)' \
+                'if (false) // GameMode is unavailable in this sandbox package.'
+            '';
+          });
+        }).overrideAttrs
+          (old: {
+            qtWrapperArgs = old.qtWrapperArgs ++ [ "--set-default __GL_THREADED_OPTIMIZATIONS 0" ];
+          });
       packageName = "prismlauncher";
 
       # No nesting here — clean tiers: config backed up, game installs large (not
