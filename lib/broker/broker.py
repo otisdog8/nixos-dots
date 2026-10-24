@@ -189,6 +189,7 @@ class Broker:
         self.sandboxes = config["sandboxes"]
         self.pkcheck = config.get("pkcheck")
         self.approved = {}  # (sandbox, key) -> expiry
+        self.denied = {}  # (sandbox, deny-all key) -> expiry
         self.lock = threading.Lock()
         self.auth_busy = set()  # sandboxes with an authentication on screen
         self.auth_fails = {}  # sandbox -> (failures in a row, paused until)
@@ -233,18 +234,32 @@ class Broker:
             exp = self.approved.get((sandbox, key))
             return bool(exp and exp > time.time())
 
-    def decide(self, sandbox, op, key, summary, detail, as_="user", argv=None, allow_session=True, conn=None):
+    def denied_before(self, sandbox, deny_all):
+        if deny_all is None:
+            return False
+        with self.lock:
+            exp = self.denied.get((sandbox, deny_all[1]))
+            return bool(exp and exp > time.time())
+
+    def decide(
+        self, sandbox, op, key, summary, detail, as_="user", argv=None, allow_session=True, conn=None, deny_all=None
+    ):
         """Whether to grant a request: by rule, by an earlier answer for the
         session, or by asking the user. `summary` and `detail` are the dialog's
         text: anything the sandbox sent in them must already be shown through
         untrusted()/block() (scrub() here only escapes what slipped through).
         With `conn`, a request whose sandbox hung up while it waited for its
-        turn is dropped instead of asked."""
+        turn is dropped instead of asked. With `deny_all`, (label, key), the
+        dialog has a button (label) that denies this request and, for the
+        session, every later one passing the same `deny_all` (refused without
+        asking, ahead of any earlier "allow for the session")."""
         action = self.rule_for(sandbox, op, as_, argv or [])
         if action == "deny":
             return False, "denied by rule"
         if action == "allow":
             return True, "allowed by rule"
+        if self.denied_before(sandbox, deny_all):
+            return False, "denied earlier this session"
         if self.approved_before(sandbox, key):
             return True, "allowed earlier this session"
         with self.lock:
@@ -256,19 +271,23 @@ class Broker:
         try:
             with turn:
                 # The answer to a request ahead in line may cover this one.
+                if self.denied_before(sandbox, deny_all):
+                    return False, "denied earlier this session"
                 if self.approved_before(sandbox, key):
                     return True, "allowed earlier this session"
                 if conn is not None and peer_gone(conn):
                     return False, "the sandbox withdrew the request"
-                return self.ask(sandbox, key, summary, detail, allow_session)
+                return self.ask(sandbox, key, summary, detail, allow_session, deny_all=deny_all)
         finally:
             with self.lock:
                 self.waiting[sandbox] -= 1
 
-    def ask(self, sandbox, key, summary, detail, allow_session):
+    def ask(self, sandbox, key, summary, detail, allow_session, deny_all=None):
         args = [self.prompt, "--timeout", "90"]
         if not allow_session:
             args.append("--no-session")
+        if deny_all is not None:
+            args += ["--deny-all", deny_all[0]]
         args += ["--", self.sandboxes[sandbox]["label"], scrub(summary), scrub(detail)]
         try:
             r = subprocess.run(args, stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=120)
@@ -282,6 +301,10 @@ class Broker:
             return True, "allowed for the session"
         if answer in ("once", "session"):
             return True, "allowed once"
+        if answer == "deny-all" and deny_all is not None:
+            with self.lock:
+                self.denied[(sandbox, deny_all[1])] = time.time() + SESSION_TTL
+            return False, "denied by the user, with the rest for the session"
         return False, "denied by the user"
 
     @staticmethod
@@ -789,6 +812,11 @@ PA_STREAM_KIND = {
     PA_RECORD_STREAM_KILLED: "source-output",
 }
 PA_MAX_PENDING_RECORDS = 4  # record streams of one connection awaiting a decision
+# The "deny all" of the dialogs for recording what other apps play (a monitor,
+# Broker.decide): an app enumerating sources (a game's voice chat, say) asks
+# once each otherwise. Microphones and the devices an app names keep asking one
+# by one, to be granted on their own.
+PA_DENY_OUTPUTS = ("Deny recording outputs for this session", ("microphone", "outputs"))
 
 
 def pa_routes(props):
@@ -1193,6 +1221,7 @@ class PulseFilter:
                     # A source by index (or a stream) can't be told apart from
                     # a later one with the same number.
                     allow_session=named,
+                    deny_all=PA_DENY_OUTPUTS if kind == "monitor" else None,
                 )
             log(f"{self.sandbox}: audio: record {kind} {escape(source or '(default source)')[:300]}: {why}")
             if ok:

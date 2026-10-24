@@ -200,6 +200,67 @@ class ExecSession(unittest.TestCase):
             self.assertEqual(len(dialogs(log)), 2)
 
 
+class DenyAll(unittest.TestCase):
+    """A dialog's "deny all" button: refuses the rest of its kind for the
+    session without asking, ahead of an earlier "allow for the session", and
+    leaves other kinds asking."""
+
+    DENY_ALL = ("Deny the rest", ("k", "rest"))
+
+    def test_deny_all(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            b, log = make_broker(tmp, prompt_answer="deny-all")
+            b.approved[("sb", ("k", 2))] = time.time() + 100
+            ok, why = b.decide("sb", "microphone", ("k", 1), "s", "d", deny_all=self.DENY_ALL)
+            self.assertFalse(ok)
+            (args,) = dialogs(log)
+            self.assertEqual(args[args.index("--deny-all") + 1], "Deny the rest")
+            for key in (("k", 1), ("k", 2), ("k", 3)):
+                self.assertEqual(
+                    b.decide("sb", "microphone", key, "s", "d", deny_all=self.DENY_ALL),
+                    (False, "denied earlier this session"),
+                )
+            self.assertEqual(len(dialogs(log)), 1)
+            # Another sandbox, and a request without the button, still ask.
+            b.sandboxes["other"] = {"label": "b"}
+            b.decide("other", "microphone", ("k", 1), "s", "d", deny_all=self.DENY_ALL)
+            b.decide("sb", "microphone", ("mic",), "s", "d")
+            self.assertEqual(len(dialogs(log)), 3)
+            self.assertNotIn("--deny-all", dialogs(log)[2])
+
+    def test_plain_deny_remembers_nothing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            b, log = make_broker(tmp)
+            for _ in range(2):
+                b.decide("sb", "microphone", ("k", 1), "s", "d", deny_all=self.DENY_ALL)
+            self.assertEqual(len(dialogs(log)), 2)
+
+    def test_deny_all_covers_queued(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            b, _ = make_broker(tmp)
+        asked = []
+
+        def ask(sandbox, key, summary, detail, allow_session, deny_all=None):
+            asked.append(key)
+            time.sleep(0.2)
+            b.denied[(sandbox, deny_all[1])] = time.time() + 100
+            return False, "denied by the user, with the rest for the session"
+
+        b.ask = ask
+        out = []
+
+        def go(n):
+            out.append(b.decide("sb", "microphone", ("k", n), "s", "d", deny_all=self.DENY_ALL))
+
+        ts = [threading.Thread(target=go, args=(n,)) for n in range(3)]
+        for t in ts:
+            t.start()
+        for t in ts:
+            t.join(5)
+        self.assertEqual(len(asked), 1)
+        self.assertEqual(sorted(why for _, why in out).count("denied earlier this session"), 2)
+
+
 class Queue(unittest.TestCase):
     def test_one_dialog_per_sandbox(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -209,7 +270,7 @@ class Queue(unittest.TestCase):
         lock = threading.Lock()
         release = threading.Event()
 
-        def ask(sandbox, key, summary, detail, allow_session):
+        def ask(sandbox, key, summary, detail, allow_session, deny_all=None):
             with lock:
                 on_screen[sandbox] += 1
                 most[sandbox] = max(most[sandbox], on_screen[sandbox])
@@ -244,7 +305,7 @@ class Queue(unittest.TestCase):
             b, _ = make_broker(tmp)
         asked = []
 
-        def ask(sandbox, key, summary, detail, allow_session):
+        def ask(sandbox, key, summary, detail, allow_session, deny_all=None):
             asked.append(key)
             time.sleep(0.2)
             b.approved[(sandbox, key)] = time.time() + 100
@@ -362,13 +423,15 @@ class FilterTest(unittest.TestCase):
         self.listener.listen(1)
         self.client, theirs = socket.socketpair()
         self.answers = []
+        self.deny_alls = []
         self.gate = None  # an Event decide waits for, if set
 
         class FakeBroker:
             sandboxes = {"sb": {"audio": "microphone", "label": "sb"}}
 
-            def decide(fb, sandbox, op, key, summary, detail, allow_session=True, **kw):
+            def decide(fb, sandbox, op, key, summary, detail, allow_session=True, deny_all=None, **kw):
                 self.answers.append((key, summary, allow_session))
+                self.deny_alls.append(deny_all)
                 if self.gate:
                     self.gate.wait(5)
                 return True, "allowed once"
@@ -443,10 +506,21 @@ class FilterTest(unittest.TestCase):
         self.assertEqual(key[:2], ("microphone", "monitor"))
         self.assertEqual(summary, "record the sound other apps play")
         self.assertFalse(allow_session)
+        self.assertEqual(self.deny_alls, [broker.PA_DENY_OUTPUTS])
         # The approved stream is the client's own afterwards.
         self.server.sendall(pkt(L(broker.PA_REPLY) + L(11) + L(0) + L(70)))
         read_pkt(self.client)
         self.assertIsNotNone(self.command(98, 12, L(70) + b"v" + bytes([1]) + struct.pack("!I", 0)))
+
+    def test_deny_outputs_only_on_monitors(self):
+        """Only a dialog for what other apps play offers "deny recording
+        outputs": a device the app names (a microphone, often) asks alone."""
+        self.client.sendall(pkt(record_payload(35, name="alsa_input.usb-mic", tag=2)))
+        read_pkt(self.server)
+        self.client.sendall(pkt(record_payload(35, name="alsa_output.hdmi.monitor", tag=3)))
+        read_pkt(self.server)
+        self.assertEqual([k[1] for k, _, _ in self.answers], ["device", "monitor"])
+        self.assertEqual(self.deny_alls, [None, broker.PA_DENY_OUTPUTS])
 
     def test_client_proplist_routes(self):
         self.assertIsNotNone(self.command(broker.PA_SET_CLIENT_NAME, 1, P({"target.object": "x"})))
@@ -466,6 +540,7 @@ class FilterTest(unittest.TestCase):
                 break
             time.sleep(0.01)
         self.assertEqual(self.answers[0][1], "use your microphone")
+        self.assertEqual(self.deny_alls, [None])
         self.assertIsNone(self.command(broker.PA_UPDATE_CLIENT_PROPLIST, 3, L(1) + P({"target.object": "x"})))
         self.assertIsNone(self.command(broker.PA_SET_CLIENT_NAME, 4, P({"node.target": "55"})))
         self.gate.set()
