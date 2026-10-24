@@ -81,7 +81,14 @@ in
     # with default 0755 perms. Force it to 0700 from early boot — before the
     # home-manager fixSshConfigPermissions hook also fixes it — so the private
     # key never sits in a group/world-listable directory.
-    systemd.tmpfiles.rules = [ "d /home/jrt/.ssh 0700 jrt users - -" ];
+    # Persisted DynamicUser state directories (/var/lib/private/<name>):
+    # systemd refuses them unless /var/lib/private is 0700, and impermanence
+    # creates it 0755 as the parent of the bind mounts, here and on /persist.
+    systemd.tmpfiles.rules = [
+      "d /home/jrt/.ssh 0700 jrt users - -"
+      "d /var/lib/private 0700 root root -"
+      "d /persist/var/lib/private 0700 root root -"
+    ];
 
     environment.persistence = {
       "/persist" = {

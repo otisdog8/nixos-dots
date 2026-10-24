@@ -15,12 +15,14 @@
 #    path; homelab apps/infra/logs). The gateways' Vector posts there too,
 #    with the same stream fields, so one query covers hosts and gateways.
 #
-# Vector's journald source reads only the current boot (current_boot_only,
-# its default), from its checkpoint in /var/lib/vector, or with none (the
-# first start, and after each reboot on the impermanent hosts, where
-# /var/lib/vector isn't persisted) from the boot's first line: early boot is
-# included and older boots aren't backfilled. Lines still unsent at a reboot
-# stay only in the host's journal.
+# Vector's state (/var/lib/vector, under DynamicUser /var/lib/private/vector)
+# is persisted wherever Vector runs: its journal checkpoint, so a reboot
+# resumes where it stopped instead of skipping the old boot's tail, and its
+# disk buffers, so lines spooled while the endpoint was away survive a reboot
+# (on the k3s nodes that includes the netconsole collector's crash bursts).
+# The journald source resumes from the checkpoint across boots; with none
+# (the first start) it begins at "now" rather than backfilling the host's
+# whole persisted journal.
 {
   config,
   lib,
@@ -59,47 +61,60 @@ in
     };
   };
 
-  config = lib.mkIf cfg.enable {
-    services.vector = {
-      enable = true;
-      journaldAccess = true;
-      settings = {
-        sources.journal = {
-          type = "journald";
-          # Vector's own errors (an unreachable endpoint, say) would otherwise
-          # come back through this source and feed themselves.
-          exclude_units = [ "vector.service" ];
-        };
+  config = lib.mkMerge [
+    (lib.mkIf config.services.vector.enable {
+      environment.persistence."/persist".directories = [
+        {
+          directory = "/var/lib/private/vector";
+          mode = "0700";
+        }
+      ];
+    })
 
-        transforms.journal_priority = {
-          type = "filter";
-          inputs = [ "journal" ];
-          condition = "(to_int(.PRIORITY) ?? 6) <= ${toString cfg.maxPriority}";
-        };
+    (lib.mkIf cfg.enable {
+      services.vector = {
+        enable = true;
+        journaldAccess = true;
+        settings = {
+          sources.journal = {
+            type = "journald";
+            current_boot_only = false;
+            since_now = true;
+            # Vector's own errors (an unreachable endpoint, say) would otherwise
+            # come back through this source and feed themselves.
+            exclude_units = [ "vector.service" ];
+          };
 
-        sinks.victorialogs_journal = {
-          type = "http";
-          inputs = [ "journal_priority" ];
-          uri = "${cfg.url}/insert/jsonline?_stream_fields=host,_SYSTEMD_UNIT&_msg_field=message&_time_field=timestamp";
-          encoding.codec = "json";
-          framing.method = "newline_delimited";
-          compression = "gzip";
-          # The ingest route caps a request at 16 MiB.
-          batch = {
-            max_bytes = 4194304;
-            timeout_secs = 5;
+          transforms.journal_priority = {
+            type = "filter";
+            inputs = [ "journal" ];
+            condition = "(to_int(.PRIORITY) ?? 6) <= ${toString cfg.maxPriority}";
           };
-          # Spool while VictoriaLogs or the tailnet is away instead of
-          # dropping; blocking only holds the reader back, and journald still
-          # has the lines. Vector's minimum disk buffer is 256 MiB + 32 B.
-          buffer = {
-            type = "disk";
-            max_size = 268435488;
-            when_full = "block";
+
+          sinks.victorialogs_journal = {
+            type = "http";
+            inputs = [ "journal_priority" ];
+            uri = "${cfg.url}/insert/jsonline?_stream_fields=host,_SYSTEMD_UNIT&_msg_field=message&_time_field=timestamp";
+            encoding.codec = "json";
+            framing.method = "newline_delimited";
+            compression = "gzip";
+            # The ingest route caps a request at 16 MiB.
+            batch = {
+              max_bytes = 4194304;
+              timeout_secs = 5;
+            };
+            # Spool while VictoriaLogs or the tailnet is away instead of
+            # dropping; blocking only holds the reader back, and journald still
+            # has the lines. Vector's minimum disk buffer is 256 MiB + 32 B.
+            buffer = {
+              type = "disk";
+              max_size = 268435488;
+              when_full = "block";
+            };
+            acknowledgements.enabled = true;
           };
-          acknowledgements.enabled = true;
         };
       };
-    };
-  };
+    })
+  ];
 }
