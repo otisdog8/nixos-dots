@@ -21,10 +21,11 @@
       inputs.nixpkgs.follows = "nixpkgs";
     };
     # virtio-nvgpu: GPU + Wayland display for the VM sandbox tier
-    # (lib/vm/nvgpu.nix). The fork's display-passthrough branch. Update with
+    # (lib/vm/nvgpu.nix). The fork's minecraft-perf branch (display-passthrough
+    # plus the performance work under review there). Update with
     # `nix flake update virtio-nvgpu`.
     virtio-nvgpu = {
-      url = "github:otisdog8/virtio-nvgpu/display-passthrough";
+      url = "github:otisdog8/virtio-nvgpu/minecraft-perf";
       flake = false;
     };
     # Standalone guest D-Bus transport adapter (lib/vm). Update with
