@@ -534,6 +534,8 @@ in
       nix.enable = false;
       nix.gc.automatic = lib.mkForce false;
       nix.optimise.automatic = lib.mkForce false;
+      # No firmware to update in a VM; its refresh timer only loaded modules at random.
+      services.fwupd.enable = lib.mkForce false;
     })
 
     # Home Manager's activation needs nix (nix-build's sanity check, its
