@@ -21,6 +21,13 @@
 #
 # Less confined than one sandbox per agent by design: any agent here can read
 # and change every declared project and every other agent's credentials.
+#
+# What it can't change is what the host's git runs in those folders: in every
+# read-write folder it gets (projects, the folder it started in, folders
+# granted later; container or VM), .git/config and .git/hooks are read-only
+# and .git can't be moved away (the git guard, lib/backends/nixpak-pkg.nix,
+# which lists what it doesn't cover). So inside, `git config`, `remote add`
+# and `push -u`'s upstream setup fail; commits, branches, fetch and push work.
 { config, lib, ... }:
 let
   cfg = config.modules.sandbox.agents;

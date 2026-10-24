@@ -50,6 +50,30 @@ let
       sloth.concat' (sloth.env "PWD") "/${p}"
     else
       sloth.concat' sloth.homeDir "/${p}";
+  # resolveBind's path as a shell word, for the git guard's host-side check.
+  shellBind =
+    p:
+    if bindPath.isAbsolute p then
+      lib.escapeShellArg p
+    else if bindPath.isPwdRelative p then
+      ''"$PWD"/${lib.escapeShellArg p}''
+    else
+      ''"$HOME"/${lib.escapeShellArg p}'';
+  # A git guard root (sbx.gitGuard, lib/backends/nixpak-pkg.nix): keyed as
+  # nixpak-pkg.nix keys its own, so the same root declared twice is one.
+  gitRoot =
+    src: dst:
+    let
+      key = builtins.hashString "sha256" (
+        builtins.toJSON [
+          src
+          dst
+        ]
+      );
+    in
+    {
+      ${builtins.substring 0 16 key} = { inherit src dst; };
+    };
 in
 lib.mkMerge [
   (lib.mkIf caps.network {
@@ -138,8 +162,11 @@ lib.mkMerge [
   })
 
   # $PWD rw — for CLI tools/agents working in the current project directory.
+  # Its .git stays the host's: config and hooks read-only, .git pinned (the
+  # git guard, lib/backends/nixpak-pkg.nix; what's still open is listed there).
   (lib.mkIf caps.cwd {
     bubblewrap.bind.rw = [ (sloth.env "PWD") ];
+    sbx.gitGuard = gitRoot ''"$PWD"'' (sloth.env "PWD");
   })
 
   # Read-only host git config so sandboxed tools inherit identity/signing.
@@ -151,7 +178,10 @@ lib.mkMerge [
   })
 
   # Declarative extra binds (structured alternative to raw nixpakModules).
-  { bubblewrap.bind.rw = map resolveBind caps.binds.rw; }
+  {
+    bubblewrap.bind.rw = map resolveBind caps.binds.rw;
+    sbx.gitGuard = lib.mkMerge (map (p: gitRoot (shellBind p) (resolveBind p)) caps.binds.rw);
+  }
   { bubblewrap.bind.ro = map resolveBind caps.binds.ro; }
   { bubblewrap.bind.dev = caps.binds.dev; }
 

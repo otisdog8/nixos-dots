@@ -4,7 +4,9 @@ Each k3s machine (arquitens, carrack, munificent) becomes a hypervisor,
 `<machine>-hv`, that runs its k3s node as a VM and nothing else
 (`modules/system/node-vm.nix`). Later it runs a second VM beside it, the
 sensitive cluster's node. Root in a node is then root in its VM, not on the
-machine: one cluster's node is no way into the other's. That holds only while
+machine: one cluster's node is no way into the other's (each VM's crosvm
+runs as a uid of its own, `node-vm-<name>`, that owns only that VM's control
+socket, macvtap and disks). That holds only while
 the machine stays out of reach. It has no agent-auth hostd, no k3s, no libvirt
 and no agent VM, and only jrt can ssh in.
 

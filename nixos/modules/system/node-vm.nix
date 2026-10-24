@@ -8,7 +8,9 @@
 #
 # The VMM is crosvm, as for the agent VM and the app VMs (lib/vm/core): each
 # device in its own jailed process, the VMM unprivileged in its own
-# namespaces, under the same systemd sandbox (core.hardening.vmm). No
+# namespaces, under the same systemd sandbox (core.hardening.vmm), and each
+# VM's under a uid of its own (`vmUser`), so a VMM taken over through its
+# guest has no hold on another VM's socket, tap or disks. No
 # firmware: the guest's kernel and initrd boot directly, from its system in
 # the machine's store, and the guest mounts that store read-only over
 # virtio-fs (core.storeShare). So the guest has no store, bootloader or
@@ -64,7 +66,12 @@ let
   netDir = name: "/run/node-vm-net/${name}";
   ns = name: "nv-${name}";
   tap = name: "nv-${name}";
-  vmUser = "node-vm";
+  # Each VM's VMM runs as a uid (and group) of its own: what one VM's
+  # crosvm can reach (its runtime dir and control socket, 0700; its tap
+  # node, 0600; its disks) is no other VM's. Not lib/vm/core's vmUserName
+  # (sbx-vm-<name>, the app VMs'). At most 20 characters: the name fits a
+  # macvtap's (nv-<name>, 15).
+  vmUser = name: "node-vm-${name}";
 
   # One user's Home Manager files, as tmpfiles rules: the directories they
   # sit in, the user's own, then a link per file into the generation.
@@ -183,11 +190,13 @@ let
         idx=$($ip -n ${ns name} -o link show ${tap name} | cut -d: -f1)
         dev=/dev/tap$idx
         for _ in $(seq 1 50); do [ -c "$dev" ] && break; sleep 0.1; done
-        chown ${vmUser}: "$dev"
+        # Before the chown: root (no CAP_FOWNER here) may chmod only its own.
+        chmod 0600 "$dev"
+        chown ${vmUser name}: "$dev"
         printf '%s\n' "$dev" > ${netDir name}/tap
-        chown ${vmUser}: ${netDir name}/tap
+        chown ${vmUser name}: ${netDir name}/tap
         for d in ${lib.escapeShellArgs devices}; do
-          chown ${vmUser}: "$(${pkgs.coreutils}/bin/readlink -f "$d")"
+          chown ${vmUser name}: "$(${pkgs.coreutils}/bin/readlink -f "$d")"
         done
       '';
       cleanup = pkgs.writeShellScript "${unit}-cleanup" ''
@@ -285,13 +294,17 @@ let
           RestartPreventExitStatus = 35;
           RestartSec = 10;
 
-          User = vmUser;
-          Group = vmUser;
+          User = vmUser name;
+          Group = vmUser name;
           SystemCallFilter = core.hardening.jailedSyscallFilter;
           RuntimeDirectory = "node-vm/${name}";
           RuntimeDirectoryMode = "0700";
           ReadWritePaths = [ (rt name) ];
           PrivatePIDs = true;
+          # Every macvtap node, not just this VM's: its /dev/tap<ifindex> is
+          # new at each start (prep), and DeviceAllow takes a fixed path. The
+          # node's owner and mode (prep: this VM's uid, 0600) keep the other
+          # VMs' VMMs out of it.
           DeviceAllow = [
             "/dev/kvm rw"
             "char-macvtap rw"
@@ -440,12 +453,49 @@ in
         "w /sys/kernel/mm/transparent_hugepage/shmem_enabled - - - - advise"
       ];
 
-      users.users.${vmUser} = {
-        isSystemUser = true;
-        group = vmUser;
-        description = "cluster node VMs (crosvm)";
+      users.users = lib.mapAttrs' (
+        name: _:
+        lib.nameValuePair (vmUser name) {
+          isSystemUser = true;
+          group = vmUser name;
+          description = "node VM ${name} (crosvm)";
+        }
+      ) cfg;
+      users.groups = lib.mapAttrs' (name: _: lib.nameValuePair (vmUser name) { }) cfg;
+
+      # Transitional (the switch from one shared uid, node-vm, to a uid per
+      # VM; drop once every VM has restarted under its own). A rebuild
+      # doesn't restart a running VM, so one started before it still runs as
+      # the old uid, in a runtime dir and with a control socket of that
+      # uid's, 0700, while its unit's ExecStop now runs as the new uid: the
+      # power button wouldn't reach it, and a stop (`node-vm restart`, the
+      # machine's shutdown) would be TimeoutStopSec and SIGKILL instead of
+      # the guest's own shutdown. So the new uid gets in, by ACL: through
+      # the dir, and to the socket. Done as the dir's owner, not root: what
+      # the old VMM might have put in its place is only ever its own.
+      system.activationScripts.node-vm-own-uid = {
+        deps = [ "users" ];
+        text = lib.concatMapStrings (
+          name:
+          let
+            d = rt name;
+          in
+          ''
+            if [ -d ${d} ] && [ ! -L ${d} ]; then
+              old=$(${pkgs.coreutils}/bin/stat -c %u ${d})
+              new=$(${pkgs.coreutils}/bin/id -u ${vmUser name} 2>/dev/null || echo)
+              if [ -n "$new" ] && [ "$old" != "$new" ] && [ "$old" != 0 ]; then
+                ${pkgs.util-linux}/bin/setpriv --reuid="$old" \
+                  --regid="$(${pkgs.coreutils}/bin/stat -c %g ${d})" --clear-groups --no-new-privs \
+                  ${pkgs.acl}/bin/setfacl -m u:"$new":x ${d} || true
+                ${pkgs.util-linux}/bin/setpriv --reuid="$old" \
+                  --regid="$(${pkgs.coreutils}/bin/stat -c %g ${d})" --clear-groups --no-new-privs \
+                  ${pkgs.acl}/bin/setfacl -m u:"$new":rw ${d}/crosvm.sock || true
+              fi
+            fi
+          ''
+        ) (lib.attrNames cfg);
       };
-      users.groups.${vmUser} = { };
 
       environment.systemPackages = [ cli ];
 

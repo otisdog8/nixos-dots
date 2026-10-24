@@ -184,6 +184,10 @@ let
     hl.bind("switch:on:Lid Switch", hl.dsp.exec_cmd(
       "loginctl lock-session && touch $XDG_RUNTIME_DIR/idle-suspend && test \"$(cat /sys/class/power_supply/A*/online 2>/dev/null | head -n1)\" = 0 && sleep 1 && systemctl suspend"
     ), { locked = true })
+    -- Lid open: clear the idle flag the close set. Nothing else clears it on a
+    -- password unlock (hypridle's unlock_cmd only runs on logind unlock-session),
+    -- so without this a later AC unplug suspends the laptop mid-use (laptop.nix).
+    hl.bind("switch:off:Lid Switch", hl.dsp.exec_cmd("rm -f $XDG_RUNTIME_DIR/idle-suspend"), { locked = true })
 
     -- Workspaces 1..10 (per-monitor via hyprsplit)
     for i = 1, 10 do
