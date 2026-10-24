@@ -24,7 +24,9 @@
 
     config.app = {
       name = "steam";
-      package = pkgs.steam;
+      # MangoHud in Steam's FHS env, where a game's launch options
+      # (`mangohud %command%`) and pressure-vessel find it.
+      package = pkgs.steam.override { extraPkgs = p: [ p.mangohud ]; };
       packageName = "steam";
 
       # Every storage entry is location = "home" (host-visible at ~, NOT a hidden
