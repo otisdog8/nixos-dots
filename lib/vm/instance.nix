@@ -1736,7 +1736,11 @@ let
       tmpfs =
         map (t: shareRoot "${tree}/${t}") tiers ++ lib.optional (binds != [ ]) (shareRoot "${tree}/binds");
       binds = storageBinds ++ rwBinds ++ lib.optional perCwd (bindPair "${stage}/cwd" cwdMount);
-      inherit roBinds;
+      # The meta share's files are this uid's (the prep hands them over before
+      # this unit starts, and nothing writes there after), but crosvm has no
+      # read-only share and the guest's "ro" is its own: read-only here, so the
+      # guest can't fill the host's /run through it (as the agent VM's).
+      roBinds = roBinds ++ [ (bindPair "${stage}/rt/meta" "${unitRt}/meta") ];
       # The pool check's access() goes through /proc/self/fd, not this path.
       hide = lib.optional (nvgpu && gpuCap) "-/dev/nvidia-uvm";
     };
@@ -2187,6 +2191,14 @@ let
           ExecStart = "${grantsFsScript}${instArg}";
           User = vmUser;
           Group = vmGroup;
+          # The view's own folders are on the host's /run (this uid's: the
+          # attach helper makes the grants' mount points in it as this uid,
+          # so it can't be read-only), and what the guest writes there is
+          # charged here: bounded, not swapped. A misbehaving guest costs
+          # its own grants share, not the host's /run. Granted folders' page
+          # cache is reclaimable.
+          MemoryMax = "512M";
+          MemorySwapMax = 0;
         };
     }
   );
