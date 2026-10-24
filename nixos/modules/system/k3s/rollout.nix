@@ -42,7 +42,8 @@ let
   host = config.networking.hostName;
   state = "/persist/node-rollout";
   # Ceph warnings that don't stand in the way: crash reports linger for two
-  # weeks.
+  # weeks. Beyond these, a warning known to be harmless can be muted
+  # (`ceph health mute <CHECK> <ttl>`): ceph_ok skips muted checks.
   allowedChecks = [
     "RECENT_CRASH"
     "RECENT_MGR_MODULE_CRASH"
@@ -66,7 +67,7 @@ let
     ceph_ok() {
       ceph health detail -f json 2>/dev/null \
         | jq -e --argjson allow '${builtins.toJSON allowedChecks}' \
-          '(.checks // {} | keys) - $allow | length == 0' >/dev/null
+          '[.checks // {} | to_entries[] | select(.value.muted != true) | .key] - $allow | length == 0' >/dev/null
     }
     ceph_report() { ceph health detail 2>&1 | head -20 >&2 || true; }
 
