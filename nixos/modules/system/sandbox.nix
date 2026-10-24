@@ -296,7 +296,9 @@ in
 
     # Container mode: a group's members each get its projects and shared home
     # paths as extra binds (VM mode puts them in the group's one VM instead;
-    # modules/system/sandbox-vm.nix). Not filtered by which apps are enabled:
+    # modules/system/sandbox-vm.nix). Either way a project's .git config and
+    # hooks stay read-only inside (the git guard, lib/backends/nixpak-pkg.nix;
+    # lib/vm/root.py for the VM). Not filtered by which apps are enabled:
     # reading their enable flags here would make modules.apps depend on itself.
     modules.apps = lib.mkMerge (
       lib.mapAttrsToList (

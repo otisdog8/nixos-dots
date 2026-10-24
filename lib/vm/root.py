@@ -26,7 +26,9 @@ bounding set, no network).
       as the VM's uid and group, what the VM creates lands on disk as the
       user's, and every other owner shows as nobody. A tree with a mount that
       can't be idmapped under it (FUSE, NFS) isn't shared at all: unmapped,
-      the VM would act as the user on it. Then it's moved onto a mount point
+      the VM would act as the user on it. A read-write folder of the user's
+      keeps its .git the host's (the git guard: .git pinned, its config and
+      hooks read-only), set up on the clone first. Then it's moved onto a mount point
       in a private tmpfs at the stage, in the host's mount namespace, which is
       where systemd resolves BindPaths= sources. Private, as is BASE/stage
       itself (a bind onto itself, made once), so none of it propagates into
@@ -561,6 +563,119 @@ def private_mount_root(parent_fd, name):
         os.close(fd)
 
 
+# ── The git guard ────────────────────────────────────────────────────────────
+# A folder the VM gets read-write must not let it change what the HOST's git
+# runs there later (as the container backends' git guard,
+# lib/backends/nixpak-pkg.nix, which lists what this doesn't cover): in the
+# clone, before it's set up and staged, .git is a mount of itself (the VM
+# can't rename it away and put its own in its place: EBUSY through virtio-fs
+# as anywhere) and its config, config.worktree, commondir and hooks are
+# read-only mounts of themselves; a .git FILE (a worktree's pointer) is
+# read-only. Only what exists can be covered; a missing hooks folder is made
+# (empty, as the user) so there is something to cover. Built on the detached
+# clone, so idmapping it afterwards (recursively) covers these mounts too, and
+# the lookups go through the user's own, not yet idmapped, view.
+
+GIT_READ_ONLY = ("config", "config.worktree", "commondir", "hooks")
+
+
+def git_entry(dir_fd, name, make_dir=False):
+    """O_PATH fd for `name` in `dir_fd`, never following a symlink: None if
+    it isn't there, Refused if it's a symlink. With make_dir, a missing
+    `name` is made first, an empty folder, if `dir_fd` is the caller's own."""
+    flags = os.O_PATH | os.O_NOFOLLOW | os.O_CLOEXEC
+    try:
+        fd = os.open(name, flags, dir_fd=dir_fd)
+    except FileNotFoundError:
+        if not make_dir or os.fstat(dir_fd).st_uid != os.geteuid():
+            return None
+        try:
+            os.mkdir(name, 0o755, dir_fd=dir_fd)
+        except FileExistsError:
+            pass
+        fd = os.open(name, flags, dir_fd=dir_fd)
+    if stat.S_ISLNK(os.fstat(fd).st_mode):
+        os.close(fd)
+        raise Refused(f"{name} is a symlink")
+    return fd
+
+
+def user_git_entry(user):
+    """git_entry, as the user (as_user): the clone is the user's view."""
+    creds = user_creds(user)
+
+    def lookup(dir_fd, name, make_dir=False):
+        def fn():
+            fd = git_entry(dir_fd, name, make_dir)
+            if fd is None:
+                raise FileNotFoundError(errno.ENOENT, name)
+            return fd
+
+        try:
+            return as_user(creds, fn)
+        except FileNotFoundError:
+            return None
+
+    return lookup
+
+
+def read_only_onto(fd, recursive):
+    """A read-only clone of what `fd` is, mounted onto it."""
+    sub = open_tree(fd, recursive)
+    try:
+        mount_setattr(sub, MOUNT_ATTR_RDONLY)
+        move_mount(sub, fd)
+    finally:
+        os.close(sub)
+
+
+def guard_git(tree, lookup, path):
+    """The git guard (above) on the detached `tree`, a read-write clone of
+    `path`. `lookup(dir_fd, name, make_dir)`: git_entry, as whoever may look
+    there. What it covered (relative names); a .git or entry that is a
+    symlink is left alone (logged)."""
+
+    def entry(dir_fd, name, make_dir=False):
+        try:
+            return lookup(dir_fd, name, make_dir)
+        except Refused as e:
+            if not str(e).endswith("is a symlink"):
+                raise
+            log(f"{path}: git guard: {e}; left as it is")
+            return None
+
+    g = entry(tree, ".git")
+    if g is None:
+        return []
+    try:
+        mode = os.fstat(g).st_mode
+        if stat.S_ISREG(mode):
+            read_only_onto(g, recursive=False)
+            return [".git"]
+        if not stat.S_ISDIR(mode):
+            return []
+        pin = open_tree(g, recursive=True)
+        try:
+            move_mount(pin, g)
+            done = [".git"]
+            for name in GIT_READ_ONLY:
+                fd = entry(pin, name, make_dir=name == "hooks")
+                if fd is None:
+                    continue
+                try:
+                    mode = os.fstat(fd).st_mode
+                    if stat.S_ISREG(mode) or stat.S_ISDIR(mode):
+                        read_only_onto(fd, recursive=stat.S_ISDIR(mode))
+                        done.append(f".git/{name}")
+                finally:
+                    os.close(fd)
+            return done
+        finally:
+            os.close(pin)
+    finally:
+        os.close(g)
+
+
 def mountpoint(stage_fd, name, is_dir):
     if is_dir:
         os.mkdir(name, 0o700, dir_fd=stage_fd)
@@ -701,6 +816,18 @@ def stage_into(cfg, base, key, rt, items, stash_owner, userns, vm):
             finally:
                 os.close(fd)
             try:
+                # The git guard on the user's read-write folders (the items
+                # idmapped as the user's data: not a stash, the document
+                # portal's view or the relay's sockets). One it can't set up
+                # isn't shared, as one that can't be idmapped.
+                if is_dir and not item.get("ro") and item.get("idmap") and not item.get("stash"):
+                    try:
+                        guard_git(tree, user_git_entry(user), path)
+                    except (Refused, OSError) as e:
+                        if item.get("required"):
+                            raise Refused(f"{path}: can't keep its .git read-only ({e})")
+                        log(f"not sharing {path}: can't keep its .git read-only ({e})")
+                        continue
                 attr = MOUNT_ATTR_NOSUID | MOUNT_ATTR_NODEV
                 if item.get("ro"):
                     attr |= MOUNT_ATTR_RDONLY

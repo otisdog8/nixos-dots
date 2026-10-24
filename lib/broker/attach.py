@@ -28,6 +28,8 @@ What it will do, whoever asks (the user is the only one who can):
     (of exactly this path) and the mount.
     Read-only is enforced on the mount (MOUNT_ATTR_RDONLY), but like a VM's
     read-only grant it's a guard, not a boundary: the sandbox runs as the user.
+    A read-write folder keeps its .git the host's (the git guard: .git pinned,
+    its config and hooks read-only), on the clone, before it's attached.
   - vm-path: the same, for a sandbox VM's folder grants: into the VM's grants
     virtio-fs device (`crosvm device fs`, run as the VM's own uid), whose jail
     root is the launch's empty grants view ($rtdir/grantsfs/view). The folder
@@ -635,6 +637,140 @@ def open_as_user(user, path):
     return fds[0]
 
 
+# ── The git guard ────────────────────────────────────────────────────────────
+# A folder granted read-write must not let the sandbox change what the HOST's
+# git runs there later (the container backends' git guard,
+# lib/backends/nixpak-pkg.nix, lists what it doesn't cover): on each clone,
+# before it's set up and attached, .git is a mount of itself (it can't be
+# renamed away and replaced: EBUSY) and its config, config.worktree,
+# commondir and hooks are read-only mounts of themselves; a .git FILE (a
+# worktree's pointer) is read-only. A missing hooks folder is made (empty, as
+# the user) so there is something to cover. Built on the detached clone, so a
+# VM's idmap (applied after, recursively) covers these mounts too, and looked
+# up as the user, through the user's own (not yet idmapped) view.
+
+GIT_READ_ONLY = ("config", "config.worktree", "commondir", "hooks")
+
+
+def git_entry(dir_fd, name, make_dir=False):
+    """O_PATH fd for `name` in `dir_fd`, never following a symlink: None if
+    it isn't there, Refused if it's a symlink. With make_dir, a missing
+    `name` is made first, an empty folder, if `dir_fd` is the caller's own."""
+    flags = os.O_PATH | os.O_NOFOLLOW | os.O_CLOEXEC
+    try:
+        fd = os.open(name, flags, dir_fd=dir_fd)
+    except FileNotFoundError:
+        if not make_dir or os.fstat(dir_fd).st_uid != os.geteuid():
+            return None
+        try:
+            os.mkdir(name, 0o755, dir_fd=dir_fd)
+        except FileExistsError:
+            pass
+        fd = os.open(name, flags, dir_fd=dir_fd)
+    if stat.S_ISLNK(os.fstat(fd).st_mode):
+        os.close(fd)
+        raise Refused(f"{name} is a symlink")
+    return fd
+
+
+def drop_to_user(user):
+    os.setgroups(os.getgrouplist(user["name"], user["gid"]))
+    os.setresgid(user["gid"], user["gid"], user["gid"])
+    os.setresuid(user["uid"], user["uid"], user["uid"])
+
+
+def user_git_entry(user):
+    """git_entry, done by a child with the user's credentials (as
+    open_as_user): (dir_fd, name, make_dir) → fd or None."""
+
+    def lookup(dir_fd, name, make_dir=False):
+        a, b = socket.socketpair(socket.AF_UNIX, socket.SOCK_DGRAM)
+        child = os.fork()
+        if child == 0:
+            a.close()
+            try:
+                drop_to_user(user)
+                fd = git_entry(dir_fd, name, make_dir)
+                if fd is None:
+                    b.send(b"none")
+                else:
+                    socket.send_fds(b, [b"ok"], [fd])
+                os._exit(0)
+            except BaseException as e:
+                b.send(f"err:{e}".encode()[:500])
+                os._exit(1)
+        b.close()
+        msg, fds, _flags, _addr = socket.recv_fds(a, 600, 1)
+        a.close()
+        os.waitpid(child, 0)
+        if msg == b"ok" and fds:
+            return fds[0]
+        for fd in fds:
+            os.close(fd)
+        if msg == b"none":
+            return None
+        raise Refused(msg.decode("utf-8", "replace").removeprefix("err:") or f"can't look at {name}")
+
+    return lookup
+
+
+def read_only_onto(fd, recursive):
+    """A read-only clone of what `fd` is, mounted onto it."""
+    sub = open_tree(fd, recursive)
+    try:
+        mount_setattr(sub, MOUNT_ATTR_RDONLY)
+        move_mount(sub, fd)
+    finally:
+        os.close(sub)
+
+
+def guard_git(tree, lookup, path):
+    """The git guard (above) on the detached `tree`, a read-write clone of
+    `path`. `lookup(dir_fd, name, make_dir)`: git_entry, as whoever may look
+    there. What it covered (relative names); a .git or entry that is a
+    symlink is left alone (logged)."""
+
+    def entry(dir_fd, name, make_dir=False):
+        try:
+            return lookup(dir_fd, name, make_dir)
+        except Refused as e:
+            if not str(e).endswith("is a symlink"):
+                raise
+            log(f"{path}: git guard: {e}; left as it is")
+            return None
+
+    g = entry(tree, ".git")
+    if g is None:
+        return []
+    try:
+        mode = os.fstat(g).st_mode
+        if stat.S_ISREG(mode):
+            read_only_onto(g, recursive=False)
+            return [".git"]
+        if not stat.S_ISDIR(mode):
+            return []
+        pin = open_tree(g, recursive=True)
+        try:
+            move_mount(pin, g)
+            done = [".git"]
+            for name in GIT_READ_ONLY:
+                fd = entry(pin, name, make_dir=name == "hooks")
+                if fd is None:
+                    continue
+                try:
+                    mode = os.fstat(fd).st_mode
+                    if stat.S_ISREG(mode) or stat.S_ISDIR(mode):
+                        read_only_onto(fd, recursive=stat.S_ISDIR(mode))
+                        done.append(f".git/{name}")
+                finally:
+                    os.close(fd)
+            return done
+        finally:
+            os.close(pin)
+    finally:
+        os.close(g)
+
+
 def home_path(user, path):
     path = canonical(path)
     if not path.startswith(user["home"] + "/"):
@@ -656,6 +792,8 @@ def op_path(cfg, sb, name, req):
         def clone():
             tree = open_tree(fd, recursive=True)
             try:
+                if req.get("write"):
+                    guard_git(tree, user_git_entry(user), path)
                 mount_setattr(tree, attr)
             except BaseException:
                 os.close(tree)
@@ -737,6 +875,8 @@ def op_vm_path(cfg, req):
         def clone():
             tree = open_tree(fd, recursive=True)
             try:
+                if req.get("write"):
+                    guard_git(tree, user_git_entry(user), path)
                 mount_setattr(tree, attr)
                 idmap_to(tree, user, vm_pw, path)
             except BaseException:

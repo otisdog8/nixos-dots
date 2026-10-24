@@ -2,14 +2,17 @@
 symlink-safe mount-point creation (the mounts themselves need root and a live
 sandbox). Run with TMPDIR on a tmpfs: python3 -m unittest lib/broker/tests/test_attach.py"""
 
+import errno
 import importlib.util
 import json
 import os
+import shutil
 import stat
 import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 spec = importlib.util.spec_from_file_location("attach", os.path.join(HERE, "..", "attach.py"))
@@ -300,11 +303,10 @@ class VmPath(unittest.TestCase):
             with self.assertRaises(attach.Refused):
                 attach.vm_targets(self.cfg, "blender", rtdir, 1234, wait=0)
 
-    def flow(self, fail_idmap=False, targets=1):
+    def flow(self, fail_idmap=False, targets=1, write=True, guarded=None):
         """op_vm_path with the privileged calls mocked: (attrs set, attach
-        calls). The VM's uid is the user's + 1."""
-        from unittest import mock
-
+        calls). The VM's uid is the user's + 1. `guarded`: a list the git
+        guard's calls are recorded in (otherwise it runs, on "/")."""
         attrs, attached = [], []
         vm_pw = mock.Mock(pw_uid=os.getuid() + 1, pw_gid=os.getgid() + 1)
 
@@ -329,11 +331,28 @@ class VmPath(unittest.TestCase):
             lambda cfg, vm, rtdir, owner: [os.open("/", os.O_RDONLY) for _ in range(targets)] if owner == vm_pw.pw_uid else [],
         ), mock.patch.object(
             attach, "attach", lambda pidfd, tree, rel, is_dir, owner, rdev=None: attached.append((tree, rel, owner)) or True
+        ), mock.patch.object(attach, "drop_to_user", lambda user: None), mock.patch.object(
+            attach,
+            "guard_git",
+            attach.guard_git if guarded is None else lambda tree, lookup, path: guarded.append((len(attrs), path)) or [],
         ):
             n = attach.op_vm_path(
-                self.cfg, {"op": "vm-path", "vm": "blender", "rtdir": "/run/sandbox-vm/blender/main", "path": "/home/u/x", "write": True}
+                self.cfg,
+                {"op": "vm-path", "vm": "blender", "rtdir": "/run/sandbox-vm/blender/main", "path": "/home/u/x", "write": write},
             )
         return n, attrs, attached, maps
+
+    def test_git_guard_on_writable_grants(self):
+        """Each clone of a read-write grant gets the git guard before its
+        attributes and idmap (so they cover its mounts); a read-only one
+        doesn't need it."""
+        guarded = []
+        self.flow(targets=2, guarded=guarded)
+        # The idmap check's clone, then one per target, each before its setattrs.
+        self.assertEqual(guarded, [(0, "/home/u/x"), (2, "/home/u/x"), (4, "/home/u/x")])
+        guarded.clear()
+        self.flow(write=False, guarded=guarded)
+        self.assertEqual(guarded, [])
 
     def test_idmapped_onto_the_vm(self):
         n, attrs, attached, maps = self.flow()
@@ -357,6 +376,34 @@ class VmPath(unittest.TestCase):
     def test_not_idmappable_is_refused(self):
         with self.assertRaises(attach.Refused):
             self.flow(fail_idmap=True)
+
+
+class PathGuard(unittest.TestCase):
+    """op_path: a read-write folder grant's clone gets the git guard before
+    its attributes; a read-only one doesn't."""
+
+    def run_op(self, write):
+        cfg = {"user": {"name": "u", "uid": os.getuid(), "gid": os.getgid(), "home": "/home/u"}}
+        calls = []
+
+        def attach_all(pidfds, clone, path, is_dir, owner):
+            os.close(clone())
+            return 1
+
+        with mock.patch.object(attach, "open_as_user", lambda u, p: os.open("/", os.O_PATH)), mock.patch.object(
+            attach, "open_tree", lambda fd, recursive: os.dup(fd)
+        ), mock.patch.object(attach, "mount_setattr", lambda fd, attr: calls.append(("setattr", attr))), mock.patch.object(
+            attach, "targets", lambda cfg, sb, name: [0]
+        ), mock.patch.object(attach, "attach_all", attach_all), mock.patch.object(
+            attach, "guard_git", lambda tree, lookup, path: calls.append(("guard", path)) or []
+        ):
+            attach.op_path(cfg, {"paths": True}, "app", {"op": "path", "sandbox": "app", "path": "/home/u/proj", "write": write})
+        return calls
+
+    def test_guarded_when_writable(self):
+        base = attach.MOUNT_ATTR_NOSUID | attach.MOUNT_ATTR_NODEV
+        self.assertEqual(self.run_op(True), [("guard", "/home/u/proj"), ("setattr", base)])
+        self.assertEqual(self.run_op(False), [("setattr", base | attach.MOUNT_ATTR_RDONLY)])
 
 
 class Idmap(unittest.TestCase):
@@ -609,6 +656,231 @@ class Hub(unittest.TestCase):
             self.assertEqual(hub.granted, [("/home/u/y", "ro")])
             for sock in (guest, guest2, host2):
                 sock.close()
+
+
+M = attach
+
+# ── The git guard ────────────────────────────────────────────────────────────
+
+
+def run_git(*args, cwd):
+    env = dict(os.environ, GIT_CONFIG_NOSYSTEM="1", GIT_CONFIG_GLOBAL="/dev/null", HOME=cwd)
+    subprocess.run(
+        ["git", "-c", "user.email=t@t", "-c", "user.name=t", "-c", "init.defaultBranch=main", *args],
+        cwd=cwd,
+        env=env,
+        check=True,
+        capture_output=True,
+    )
+
+
+class GitGuardCalls(unittest.TestCase):
+    """guard_git with the mounts mocked: what is mounted onto what, in which
+    order (.git pinned first, then each entry read-only inside the pin)."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.r = os.path.join(os.path.realpath(self.tmp.name), "r")
+        os.makedirs(self.r)
+        self.calls = []
+        RO = M.MOUNT_ATTR_RDONLY
+        for name, fn in (
+            ("open_tree", lambda fd, recursive: os.dup(fd)),
+            ("move_mount", lambda tree, dst: self.calls.append(("mount", self.rel(dst)))),
+            ("mount_setattr", lambda fd, attr_set=0, **k: self.calls.append(("ro" if attr_set & RO else "attr", self.rel(fd)))),
+        ):
+            pt = mock.patch.object(M, name, fn)
+            pt.start()
+            self.addCleanup(pt.stop)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def rel(self, fd):
+        return os.path.relpath(os.readlink(f"/proc/self/fd/{fd}"), self.r)
+
+    def git_dir(self, *entries):
+        os.makedirs(os.path.join(self.r, ".git", "objects"))
+        for e in entries:
+            if e.endswith("/"):
+                os.makedirs(os.path.join(self.r, ".git", e))
+            else:
+                open(os.path.join(self.r, ".git", e), "w").close()
+
+    def guard(self):
+        fd = os.open(self.r, os.O_PATH | os.O_DIRECTORY)
+        try:
+            return M.guard_git(fd, M.git_entry, self.r)
+        finally:
+            os.close(fd)
+
+    def test_not_a_repo(self):
+        self.assertEqual(self.guard(), [])
+        self.assertEqual(self.calls, [])
+
+    def test_repo(self):
+        self.git_dir("config", "hooks/")
+        self.assertEqual(self.guard(), [".git", ".git/config", ".git/hooks"])
+        self.assertEqual(
+            self.calls,
+            [("mount", ".git"), ("ro", ".git/config"), ("mount", ".git/config"), ("ro", ".git/hooks"), ("mount", ".git/hooks")],
+        )
+
+    def test_every_entry(self):
+        self.git_dir("config", "config.worktree", "commondir", "hooks/")
+        self.assertEqual(self.guard(), [".git", ".git/config", ".git/config.worktree", ".git/commondir", ".git/hooks"])
+
+    def test_missing_entries_not_made(self):
+        """Nothing is made for a missing config or commondir (a mount needs an
+        existing target, and one left on disk would break the host's git)."""
+        self.git_dir("hooks/")
+        self.assertEqual(self.guard(), [".git", ".git/hooks"])
+        self.assertEqual(sorted(os.listdir(os.path.join(self.r, ".git"))), ["hooks", "objects"])
+
+    def test_missing_hooks_made_empty(self):
+        self.git_dir("config")
+        self.assertEqual(self.guard(), [".git", ".git/config", ".git/hooks"])
+        self.assertEqual(os.listdir(os.path.join(self.r, ".git", "hooks")), [])
+
+    def test_hooks_not_made_in_someone_elses(self):
+        self.git_dir("config")
+        with mock.patch.object(M.os, "geteuid", lambda: os.getuid() + 1):
+            self.assertEqual(self.guard(), [".git", ".git/config"])
+        self.assertFalse(os.path.exists(os.path.join(self.r, ".git", "hooks")))
+
+    def test_worktree_file(self):
+        with open(os.path.join(self.r, ".git"), "w") as f:
+            f.write("gitdir: /elsewhere/.git/worktrees/r\n")
+        self.assertEqual(self.guard(), [".git"])
+        self.assertEqual(self.calls, [("ro", ".git"), ("mount", ".git")])
+
+    def test_symlinks_left_alone(self):
+        os.makedirs(os.path.join(self.r, "real"))
+        os.symlink("real", os.path.join(self.r, ".git"))
+        self.assertEqual(self.guard(), [])
+        self.assertEqual(self.calls, [])
+        os.unlink(os.path.join(self.r, ".git"))
+        self.git_dir("hooks/")
+        os.symlink("../real", os.path.join(self.r, ".git", "config"))
+        self.assertEqual(self.guard(), [".git", ".git/hooks"])
+
+    def test_lookup_errors_fail(self):
+        """Anything but "missing" or "a symlink" fails the guard (the share is
+        then refused)."""
+        self.git_dir("config", "hooks/")
+
+        def lookup(dir_fd, name, make_dir=False):
+            if name == "config":
+                raise M.Refused("[Errno 13] Permission denied")
+            return M.git_entry(dir_fd, name, make_dir)
+
+        fd = os.open(self.r, os.O_PATH | os.O_DIRECTORY)
+        try:
+            with self.assertRaises(M.Refused):
+                M.guard_git(fd, lookup, self.r)
+        finally:
+            os.close(fd)
+
+
+class GitGuardMounted(unittest.TestCase):
+    """guard_git for real, in a user and mount namespace of our own: the
+    sandbox's view of the repo can commit, but not change its config or hooks
+    or move its .git; nothing is left on disk."""
+
+    def test_in_a_namespace(self):
+        if shutil.which("git") is None:
+            self.skipTest("no git")
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        d = os.path.realpath(tmp.name)
+        repo, dst = os.path.join(d, "repo"), os.path.join(d, "dst")
+        os.makedirs(repo)
+        os.makedirs(dst)
+        run_git("init", "-q", "--template=", cwd=repo)  # no hooks folder
+        run_git("commit", "-q", "--allow-empty", "-m", "one", cwd=repo)
+        with open(os.path.join(repo, ".git", "config")) as f:
+            config = f.read()
+        r, w = os.pipe()
+        pid = os.fork()
+        if pid == 0:
+            os.close(r)
+            res = {}
+            try:
+                uid, gid = os.getuid(), os.getgid()
+                try:
+                    os.unshare(os.CLONE_NEWUSER | os.CLONE_NEWNS)
+                except OSError as e:
+                    res["skip"] = str(e)
+                    raise
+                for f, text in (("setgroups", "deny"), ("uid_map", f"0 {uid} 1"), ("gid_map", f"0 {gid} 1")):
+                    with open(f"/proc/self/{f}", "w") as fh:
+                        fh.write(text)
+                src = os.open(repo, os.O_PATH | os.O_DIRECTORY)
+                tree = M.open_tree(src, True)
+                res["done"] = M.guard_git(tree, M.git_entry, repo)
+                M.mount_setattr(tree, M.MOUNT_ATTR_NOSUID | M.MOUNT_ATTR_NODEV)
+                target = os.open(dst, os.O_PATH | os.O_DIRECTORY)
+                M.move_mount(tree, target)
+                g = os.path.join(dst, ".git")
+
+                def attempt(key, fn):
+                    try:
+                        fn()
+                        res[key] = "ok"
+                    except OSError as e:
+                        res[key] = errno.errorcode.get(e.errno, str(e.errno))
+                    except subprocess.CalledProcessError as e:
+                        res[key] = "failed: " + e.stderr.decode(errors="replace").strip()
+
+                def replace_config():
+                    with open(os.path.join(g, "config.lock"), "w") as fh:
+                        fh.write("[core]\n\tfsmonitor = evil\n")
+                    try:
+                        os.rename(os.path.join(g, "config.lock"), os.path.join(g, "config"))
+                    finally:
+                        os.unlink(os.path.join(g, "config.lock"))
+
+                attempt("append config", lambda: open(os.path.join(g, "config"), "a").write("x"))
+                attempt("replace config", replace_config)
+                attempt("new hook", lambda: open(os.path.join(g, "hooks", "pre-commit"), "w").write("x"))
+                attempt("remove hooks", lambda: os.rmdir(os.path.join(g, "hooks")))
+                attempt("move .git", lambda: os.rename(g, os.path.join(dst, ".gitx")))
+                attempt("git config", lambda: run_git("config", "core.fsmonitor", "evil", cwd=dst))
+                attempt("commit", lambda: run_git("commit", "-q", "--allow-empty", "-m", "two", cwd=dst))
+                attempt("branch", lambda: run_git("branch", "feature", cwd=dst))
+            except BaseException as e:
+                res.setdefault("error", repr(e))
+            os.write(w, json.dumps(res).encode())
+            os._exit(0)
+        os.close(w)
+        out = b""
+        while chunk := os.read(r, 65536):
+            out += chunk
+        os.close(r)
+        os.waitpid(pid, 0)
+        res = json.loads(out)
+        if "skip" in res:
+            self.skipTest(f"no unprivileged user namespaces here: {res['skip']}")
+        self.assertNotIn("error", res, res.get("error"))
+        self.assertEqual(res["done"], [".git", ".git/config", ".git/hooks"])
+        self.assertEqual(res["append config"], "EROFS")
+        self.assertEqual(res["replace config"], "EBUSY")
+        self.assertEqual(res["new hook"], "EROFS")
+        self.assertIn(res["remove hooks"], ("EBUSY", "EROFS"))
+        self.assertEqual(res["move .git"], "EBUSY")
+        self.assertTrue(res["git config"].startswith("failed"), res["git config"])
+        self.assertEqual(res["commit"], "ok")
+        self.assertEqual(res["branch"], "ok")
+        # On disk: the config as it was, the commit and branch there, the
+        # (empty) hooks folder made, nothing else left behind.
+        with open(os.path.join(repo, ".git", "config")) as f:
+            self.assertEqual(f.read(), config)
+        self.assertEqual(os.listdir(os.path.join(repo, ".git", "hooks")), [])
+        for name in ("commondir", "config.worktree", "config.lock"):
+            self.assertFalse(os.path.exists(os.path.join(repo, ".git", name)), name)
+        log = subprocess.run(["git", "-C", repo, "log", "--format=%s"], capture_output=True, text=True, check=True).stdout
+        self.assertEqual(log.split(), ["two", "one"])
+        self.assertEqual(os.listdir(dst), [])
 
 
 if __name__ == "__main__":
