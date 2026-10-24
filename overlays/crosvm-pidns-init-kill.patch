@@ -1,0 +1,23 @@
+Don't panic when crosvm's own SIGKILL to its process group doesn't reach it.
+
+cleanup() kills the process group when a jailed device process hasn't exited
+within its wait, and kill_process_group() then asserts the caller is dead.
+Run as the init of its own pid namespace (systemd PrivatePIDs=, as the sandbox
+VMs are), crosvm is immune to signals it sends itself: kill() returns, the
+unreachable!() aborts, and every such stop ends in a core dump and a failed
+unit. The rest of the group is dead by then; return, and let crosvm exit
+(which, as the namespace's init, takes anything left in it).
+
+--- a/base/src/sys/linux/mod.rs
++++ b/base/src/sys/linux/mod.rs
+@@ -388,6 +388,8 @@
+ pub fn kill_process_group() -> Result<()> {
+     // SAFETY: Safe because pid is 'self group' and return value doesn't matter.
+     unsafe { kill(0, SIGKILL) }?;
+-    // Kill succeeded, so this process never reaches here.
+-    unreachable!();
++    // Kill succeeded, so this process only gets here as the init of its pid
++    // namespace, which its own signals don't reach; the rest of the group is
++    // dead, and its exit takes the namespace.
++    Ok(())
+ }

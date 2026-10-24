@@ -20,6 +20,16 @@
   };
   custom-packages = import ./custom-packages.nix { inherit inputs; };
 
+  # crosvm as the init of its pid namespace (the sandbox VMs' PrivatePIDs=,
+  # lib/vm/instance.nix) survives its own kill of its process group; without
+  # the patch that is a panic, a core dump and a failed unit on most VM stops.
+  # virtio-nvgpu's crosvm (lib/vm/nvgpu.nix) builds on this one's patches.
+  crosvm-pidns-init = _final: prev: {
+    crosvm = prev.crosvm.overrideAttrs (old: {
+      patches = (old.patches or [ ]) ++ [ ./crosvm-pidns-init-kill.patch ];
+    });
+  };
+
   # Cross-uid D-Bus: patch xdg-dbus-proxy to drop the in-band uid from
   # "AUTH EXTERNAL <uid>", so the bus trusts the proxy's out-of-band SO_PEERCRED
   # instead. Lets the systemd-stash dedicated-uid backend run a jrt-side bridge
