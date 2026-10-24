@@ -26,9 +26,17 @@
       package = pkgs.prismlauncher.override {
         gamemodeSupport = false;
         # MangoHud on the launcher's PATH, so an instance's wrapper command can
-        # be `mangohud` (frame-time overlay and logs) in both the container,
-        # which only sees the package's closure, and the VM.
-        additionalPrograms = [ pkgs.mangohud ];
+        # be `mangohud` (frame-time overlay and logs) in the container and the
+        # VM. Its launcher is a `#!/bin/sh` script, and the container has no
+        # /bin/sh: the copy here names the store's shell.
+        additionalPrograms = [
+          (pkgs.runCommand "mangohud-${pkgs.mangohud.version}-launcher" { } ''
+            mkdir -p $out/bin
+            substitute ${pkgs.mangohud}/bin/mangohud $out/bin/mangohud \
+              --replace-fail '#!/bin/sh' '#!${pkgs.runtimeShell}'
+            chmod +x $out/bin/mangohud
+          '')
+        ];
         # In nixpkgs for Prism 11.1 this flag only changes the wrapper's library
         # path. The unwrapped application still probes GameMode unconditionally
         # on Linux, so explicitly suppress that probe and capability as well.
