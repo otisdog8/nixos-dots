@@ -64,10 +64,11 @@
       approve.user = true;
       approve.root = true;
     };
-    # Approved commands for agents here: as me (shells too) and as root.
+    # Approved commands for agents here: as me and as root, shells too.
     agentAuth.hostCommands = {
       user.shells = true;
       root.enable = true;
+      root.shells = true;
     };
 
     # Physical layout, left to right: ASUS OLED, KTC, then the two Dells
