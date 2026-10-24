@@ -402,6 +402,14 @@ in
       # The agent port (7790) needs no firewall entry: peers use the tailnet IPs (tailscale0 is
       # trusted) and pods come in on lxc+ (trusted too); the LAN can't reach it.
       logShipping.victoriaLogsUrl = lib.mkDefault config.modules.system.netconsole.collector.victoriaLogsUrl;
+      # Checkpoint images can go over the LAN instead (~270 MB/s vs ~140 over the tailnet):
+      # `lcm migrate --transfer-network 10.0.0.0/24` ships to the destination's LAN address over
+      # TLS 1.3 on 7791, both ends pinned to a key derived from the agent token. Only the nodes'
+      # own LAN addresses may connect.
+      transportTLS = {
+        enable = true;
+        allowedCIDRs = [ "10.0.0.10/32" "10.0.0.11/32" "10.0.0.12/32" ];
+      };
       # LivePods (lcm.rooty.dev/v1alpha1): the controller, leader-elected across the nodes, keeps
       # exactly one pod per LivePod (recreated after a node failure, managed by GitOps) and sleeps
       # and wakes on-demand ones. It does nothing until the CRD exists (homelab).
