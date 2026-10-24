@@ -5,7 +5,19 @@ keys:
   # from constitution without SSHing to a host that holds a recipient key.
   - &constitution_host age1850lrhfzq39frupln50mgqwxhgzlv78kzmgwxadk0wszxgxlhausq86luv
   - &excelsior_host age1a3h89x7vayasxmrvjhvqws2da6ck8jnpe8gxhjfutke9u7x83anqnls6u4
+  # k3s node VMs (ssh-to-age of /persist/etc/ssh/ssh_host_ed25519_key.pub on each guest).
+  - &arquitens_node age1y4ffuhz7gzlf7jeyr9jx0wdn9vsfj7aepzwz034x8lqtuyvnxu8s2xut82
+  - &carrack_node age1a9es4xeqx7jmlkelwemngg5l0y7lpsvjpdklc4zfl5gqcfyzkd9qrh3cr7
+  - &munificent_node age19f6cnz38nv5prpezwp9yp32w0tcwylnpex8pgzxk640jgc6gjezs6ueaxf
 creation_rules:
+  # k3s cluster token, decrypted on every k3s server node (modules/system/k3s/token-sops.nix).
+  - path_regex: .*system/k3s/k3s-token\.yaml
+    age:
+      - *arquitens_node
+      - *carrack_node
+      - *munificent_node
+      - *galaxy_host
+      - *constitution_host
   # Constitution: borg backup passphrase (borgbase).
   - path_regex: .*constitution\.yaml
     age:

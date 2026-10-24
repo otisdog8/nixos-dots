@@ -35,6 +35,7 @@
 
     ../../modules/desktop/full
     ../../modules/system/k3s
+    ../../modules/system/k3s/token-sops.nix
   ];
 
   modules = {
