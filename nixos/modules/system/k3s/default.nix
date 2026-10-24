@@ -235,6 +235,21 @@ in
 
     environment.systemPackages = with pkgs; [
       k3s
+      # Node debugging: the guests have no nix to fetch tools ad hoc, and the
+      # store is the hypervisor's (read-only virtiofs), so these cost no guest
+      # disk. Network (WireGuard/tunnel and NIC offload tests, conntrack),
+      # CPU/steal/IO (mpstat, iostat, pidstat, sar), storage (fio on CephFS),
+      # and process tracing (strace, lsof, perf, bpftrace).
+      wireguard-tools
+      ethtool
+      conntrack-tools
+      socat
+      sysstat
+      fio
+      strace
+      lsof
+      config.boot.kernelPackages.perf
+      bpftrace
     ];
 
     services.k3s = {
