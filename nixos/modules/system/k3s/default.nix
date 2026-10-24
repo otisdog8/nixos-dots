@@ -408,7 +408,13 @@ in
       "rbd"
       "nbd"
       "ceph"
-    ];
+    ]
+    # Same /proc on every node from boot, for CRIU restores. runc masks /proc/scsi in each
+    # container only if it exists, which is once scsi_mod has loaded (fwupd, udisks, smartd or a
+    # disk can pull it in at any time after boot). A container started where it existed can't be
+    # restored where it doesn't: CRIU can't create the mountpoint inside procfs (lcm
+    # docs/ceph-lan.md, the carrack restore failure of 2026-10-24).
+    ++ lib.optional cfg.liveMigration "scsi_mod";
 
     # The Micron 5300 write-cache udev rule moved to system/ceph-osd-disk.nix
     # (the module that owns those drives' whole stack).
