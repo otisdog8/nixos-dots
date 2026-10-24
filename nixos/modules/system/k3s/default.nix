@@ -116,6 +116,23 @@ in
         the partition directly and the k3sloop losetup service is dropped.
       '';
     };
+
+    podCIDR = lib.mkOption {
+      type = lib.types.nullOr lib.types.str;
+      default = null;
+      example = "10.42.0.0/24";
+      description = ''
+        This node's pod CIDR, as Cilium's cluster-pool IPAM allocated it
+        (`cilium-dbg node list`, or the CiliumNode's spec.ipam.podCIDRs).
+        When set, the node advertises it as a Tailscale subnet route, without
+        SNAT so pods keep their own source IPs, and accepts the other nodes'
+        routes into table 52. That is the underlay for Cilium's native routing
+        over the tailnet (routingMode=native, ipv4NativeRoutingCIDR=10.42.0.0/16,
+        autoDirectNodeRoutes=false). It's harmless under VXLAN: host-to-pod
+        traffic for another node just takes tailscale0 straight to it.
+        The tailnet policy must auto-approve 10.42.0.0/16 for tag:k8s.
+      '';
+    };
   };
 
   config = lib.mkIf cfg.enable {
@@ -150,7 +167,10 @@ in
     # 2026-10-22. These rules give such packets table 52 first, like every
     # other pod's. Cilium's mark nibbles (bits 8-11) that carry an identity:
     # 0x4 overlay, 0xa/0xb proxy, 0xf identity. Tailscale's own packets have
-    # that nibble clear, so they still bypass.
+    # that nibble clear, so they still bypass. Native routing still needs
+    # these: forwarded pod packets then carry the 0xf identity mark into their
+    # route lookup (lcm lab, 2026-10-24: an identity-9992 pod lost every
+    # cross-node packet without them and none with them).
     systemd.services.cilium-tailscale-mark-rules = {
       description = "Route Cilium identity-marked packets via Tailscale's table";
       wantedBy = [ "multi-user.target" ];
@@ -172,6 +192,17 @@ in
         done
       '';
     };
+
+    # `tailscale set` runs live (tailscaled-set.service), no restart. Only
+    # this node's pod /24 is advertised. Accepting routes also takes any other
+    # subnet route the tailnet carries (today: none, only exit nodes, which
+    # are never used unless selected), so advertise a LAN subnet elsewhere
+    # with care: the nodes would route the LAN through it.
+    services.tailscale.extraSetFlags = lib.mkIf (cfg.podCIDR != null) [
+      "--advertise-routes=${cfg.podCIDR}"
+      "--snat-subnet-routes=false"
+      "--accept-routes"
+    ];
 
     # The node's firewall: the tailnet and Cilium's own interfaces are
     # trusted; the LAN NIC gets only what LAN hosts use. Traffic for the

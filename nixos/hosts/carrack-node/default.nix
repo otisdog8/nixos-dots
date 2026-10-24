@@ -51,6 +51,7 @@
       persistDir = "/data";
       liveMigration = true;
       cephLoopback = false;
+      podCIDR = "10.42.3.0/24"; # Cilium cluster-pool allocation (cilium-dbg node list)
       extraFlags = [
         "--bind-address=100.103.225.29"
         "--node-ip=100.103.225.29"
