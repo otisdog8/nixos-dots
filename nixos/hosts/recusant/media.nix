@@ -52,6 +52,9 @@ in
 
   services.nginx.virtualHosts."sab.rooty.dev" = {
     serverAliases = [ "sab.recusant.rooty.dev" ]; # direct tailnet name, matches the wildcard cert
+    # Large remux/season-pack NZBs can exceed nginx's global 10m upload cap.
+    # Keep a finite SAB-only limit; do not relax other vhosts or backend binding.
+    extraConfig = "client_max_body_size 50m;";
     useACMEHost = "recusant.rooty.dev";
     forceSSL = true;
     listenAddresses = [ tailscaleIp ];
