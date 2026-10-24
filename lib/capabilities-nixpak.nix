@@ -79,6 +79,16 @@ lib.mkMerge [
   (lib.mkIf caps.network {
     bubblewrap.network = true;
     etc.sslCertificates.enable = true;
+    # Over nixpak's /etc/resolv.conf (so after it): resolved's stub, as a file
+    # that keeps its inode across DNS changes (nixos/modules/system/
+    # sandbox-resolv.nix). Absent (no resolved, or a VM's nested container),
+    # nixpak's bind stays.
+    bubblewrap.bind.ro = lib.mkAfter [
+      [
+        "/run/sbx-resolv/resolv.conf"
+        "/etc/resolv.conf"
+      ]
+    ];
   })
 
   (lib.mkIf caps.gpu {
