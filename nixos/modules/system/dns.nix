@@ -5,7 +5,10 @@
 #            upstream is a static stamp with the IP baked in, so we never
 #            do a bootstrap DNS lookup on the hot path)
 # Split-DNS: Tailscale pushes *.ts.net + tailnet rules to resolved via D-Bus
-# Captive:   handled by `programs.captive-browser` in networking.nix
+# DHCP DNS:  NetworkManager pushes NOTHING to resolved (dns=none +
+#            systemd-resolved=false), so 127.0.0.1 is the only resolver
+# Captive:   handled by `programs.captive-browser` in networking.nix (it
+#            reads the DHCP server from nmcli and resolves via it directly)
 {
   config,
   lib,
@@ -55,7 +58,7 @@ let
   #   dns-mode encrypted       dnscrypt + DNSSEC=no (the configured default)
   #   dns-mode plain <ip>      global DNS -> <ip> plaintext, bypass dnscrypt, DNSSEC=no
   #   dns-mode validated <ip>  like plain but turns local DNSSEC validation on
-  #   dns-mode dhcp            clear global DNS -> DHCP/VPN-pushed resolver, DNSSEC=no
+  #   dns-mode dhcp            global DNS -> snapshot of NM's DHCP/VPN-pushed servers, DNSSEC=no
   #   dns-mode dnssec-on       keep dnscrypt, DNSSEC=yes (strict local validation)
   #   dns-mode dnssec-off      keep dnscrypt, DNSSEC=no (same as the default; clears dnssec-on)
   #   dns-mode status          show effective resolver + any active override
@@ -64,6 +67,7 @@ let
     runtimeInputs = [
       pkgs.systemd
       pkgs.coreutils
+      config.networking.networkmanager.package
     ];
     text = ''
       dropin=/run/systemd/resolved.conf.d/zz-dns-override.conf
@@ -119,8 +123,37 @@ let
           ;;
         dhcp)
           need_root "$@"
-          write_override "DNS=" "no"
-          echo "dhcp: cleared global DNS -> uses DHCP/VPN-pushed resolver, DNSSEC=no."
+          # NM doesn't push DNS to resolved (dns=none, see below), so just
+          # clearing the global DNS would leave resolved with no server at
+          # all. Instead snapshot the servers NM learned (DHCP/RA/VPN; still
+          # in each device's IP config) into the global DNS= line. IPv6
+          # link-local servers need their interface ("%ifname", resolved.conf(5)
+          # DNS=). `-e no`: don't backslash-escape the colons in IPv6 values.
+          servers=""
+          dev=""
+          while IFS= read -r line; do
+            key="''${line%%:*}"
+            val="''${line#*:}"
+            val="''${val//\\/}" # belt and braces vs. "\:" escaping
+            [ -n "$val" ] || continue
+            case "$key" in
+              GENERAL.DEVICE) dev="$val" ;;
+              IP4.DNS*) servers="$servers $val" ;;
+              IP6.DNS*)
+                case "$val" in
+                  fe80:* | FE80:*) servers="$servers $val%$dev" ;;
+                  *) servers="$servers $val" ;;
+                esac
+                ;;
+            esac
+          done < <(nmcli -t -e no -f GENERAL.DEVICE,IP4.DNS,IP6.DNS device show)
+          servers="''${servers# }"
+          if [ -z "$servers" ]; then
+            echo "dhcp: NetworkManager knows no DHCP/VPN DNS servers; nothing changed." >&2
+            exit 1
+          fi
+          write_override "DNS=$servers" "no"
+          echo "dhcp: global DNS -> $servers (DHCP/VPN-pushed, plaintext; snapshot — re-run after roaming), DNSSEC=no."
           ;;
         dnssec-on)
           need_root "$@"
@@ -234,10 +267,14 @@ in
         # for *.ts.net.
         #
         # NOTE: "~." here is NOT sufficient to stop per-link DNS leaks.
-        # resolved treats any +DefaultRoute link (DHCP interface with a
-        # default route) as a co-equal default-route scope and queries its
-        # DHCP-pushed servers in PARALLEL with 127.0.0.1. That's closed
-        # separately below via `ipv4.ignore-auto-dns` — don't rely on this.
+        # NM adds its own "~." to the default-route connection's link
+        # (nm-settings-nmcli(5), ipv4.dns-priority: "the '~.' special
+        # wildcard domain, which is added automatically to connections with
+        # the default route"), and equally-best routing domains are queried
+        # in PARALLEL (systemd-resolved.service(8), "Protocols and Routing").
+        # So DHCP-pushed servers would race 127.0.0.1 in cleartext. That's
+        # closed below by stopping NM from pushing DNS to resolved at all —
+        # don't rely on this line for it.
         Domains = "~.";
         # Fallback DNS disabled. By design FallbackDNS only arms when *no*
         # server is known, and DNS=127.0.0.1 is always set, so it shouldn't
@@ -276,27 +313,73 @@ in
       };
     };
 
-    # NM hands DNS to resolved instead of fighting over resolv.conf.
-    networking.networkmanager.dns = "systemd-resolved";
     networking.nameservers = lib.mkForce [ ];
 
-    # Drop DHCP-pushed per-link DNS so 127.0.0.1 (dnscrypt) is the ONLY
-    # resolver. Without this, resolved queries the DHCP servers (LAN gateway
-    # + whatever public resolver the router advertises, e.g. 8.8.8.8) in
-    # parallel with dnscrypt — plaintext, bypassing encryption — because a
-    # +DefaultRoute link is a co-equal default-route scope (a global "~."
-    # does not override it). 8.8.8.8 also returns proof-less DS answers that
-    # trip strict DNSSEC when it's enabled via `dns-mode dnssec-on`
-    # (`no-signature` on unsigned names like a CNAME to *.up.railway.app). Tailscale MagicDNS is unaffected: tailscaled
-    # registers its DNS via resolved's D-Bus, not NM. Trade-off: no LAN
-    # name resolution via the gateway — if you need it, add a specific
-    # `~lan-domain` split rule pointing at the gateway rather than leaning
-    # on the default route. Verify post-rebuild: `resolvectl status` should
-    # show the ethernet link with "Current Scopes: none" (no DNS servers).
-    networking.networkmanager.connectionConfig = {
-      "ipv4.ignore-auto-dns" = true;
-      "ipv6.ignore-auto-dns" = true;
-    };
+    # NM must NOT hand any DNS to resolved, so 127.0.0.1 (dnscrypt) is the
+    # ONLY resolver. If NM pushes the DHCP servers (LAN gateway + whatever
+    # public resolver the router advertises, e.g. 8.8.8.8) onto the link
+    # together with its automatic "~." (see the Domains= note above),
+    # resolved queries them in parallel with dnscrypt — plaintext,
+    # bypassing encryption. 8.8.8.8 also returns proof-less DS answers that
+    # trip strict DNSSEC under `dns-mode dnssec-on` (`no-signature` on
+    # unsigned names like a CNAME to *.up.railway.app).
+    #
+    # What does NOT work (the previous attempt here): setting
+    # `ipv4.ignore-auto-dns`/`ipv6.ignore-auto-dns` via
+    # `networking.networkmanager.connectionConfig`. That renders a
+    # [connection] default, and NetworkManager.conf(5) "CONNECTION SECTION"
+    # says "Not all properties can be overwritten, only the following
+    # properties are supported" — ignore-auto-dns is not on that list, so NM
+    # silently ignored it. Per-profile ignore-auto-dns (nmcli / dispatcher)
+    # would work but is per-connection state on an impermanent system and
+    # racy at activation; NM's dns-priority / "~." juggling only ranks NM's
+    # own connections against each other and can't make resolved's GLOBAL
+    # server exclusive.
+    #
+    # What does: NetworkManager.conf(5), [main]:
+    #   dns=none             "NetworkManager will not modify resolv.conf.
+    #                         This implies rc-manager unmanaged" — resolv.conf
+    #                         stays NixOS's stub symlink (resolved.nix).
+    #   systemd-resolved=false
+    #                        "Additionally, send the connection DNS
+    #                         configuration to systemd-resolved. Defaults to
+    #                         "true". [...] complementary to the dns setting"
+    #                         — i.e. dns=none ALONE still pushes per-link DNS
+    #                         to resolved; this key is what actually stops it.
+    # mkForce: nixpkgs' resolved.nix sets networkmanager.dns =
+    # "systemd-resolved" at normal priority. Explicit "none" also matters
+    # because an UNSET dns= auto-selects systemd-resolved when resolv.conf
+    # is resolved's stub symlink (NetworkManager.conf(5), dns).
+    #
+    # NM still learns the DHCP servers — they stay in the device's IP config
+    # (`nmcli device show` → IP4.DNS), just unused for system resolution.
+    # Things that depend on that keep working:
+    #   - programs.captive-browser: its dhcp-dns command is
+    #     `nmcli dev show | fgrep IP4.DNS` (nixpkgs captive-browser.nix) and
+    #     its SOCKS proxy resolves the portal via that server directly, never
+    #     through resolved. (Per-profile ignore-auto-dns would have emptied
+    #     IP4.DNS and broken this.)
+    #   - `dns-mode dhcp` reads the same IP4.DNS/IP6.DNS (see above).
+    # Not affected: Tailscale MagicDNS — tailscaled programs resolved over
+    # its own D-Bus API (SetLinkDNS/SetLinkDomains on tailscale0), not via NM.
+    # Not affected: systemd-networkd links (VM guests), which talk to
+    # resolved directly.
+    # Trade-offs: (1) no LAN names via the gateway — add a `~lan-domain`
+    # split rule (resolved dnsDelegates) rather than leaning on DHCP DNS.
+    # (2) NM VPNs (protonvpn-gui) no longer get their pushed DNS: lookups go
+    # 127.0.0.1 → dnscrypt → DoH, which egresses through the tunnel's default
+    # route (encrypted, no leak), but Proton's resolver/NetShield is unused;
+    # `dns-mode dhcp` or `dns-mode plain 10.2.0.1` while connected if wanted.
+    # (3) On a captive portal, system DNS fails until you log in through
+    # captive-browser (DoH is blocked; nothing cleartext to fall back on).
+    #
+    # Verify post-switch: `resolvectl status` → Global "DNS Servers:
+    # 127.0.0.1" + "DNS Domain: ~."; wlan/ethernet links with NO "DNS
+    # Servers" line and "Current Scopes: none"; tailscale0 still carrying
+    # 100.100.100.100 + its ts.net domains. Links configured by the OLD NM
+    # keep stale servers until reboot or `sudo resolvectl revert <iface>`.
+    networking.networkmanager.dns = lib.mkForce "none";
+    networking.networkmanager.settings.main.systemd-resolved = false;
 
     # Boot-time race fix: dnscrypt-proxy ships with Type=simple, so a plain
     # After= on it only blocks until fork() — not until 127.0.0.1:53 is

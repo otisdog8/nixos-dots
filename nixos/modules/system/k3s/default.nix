@@ -116,6 +116,36 @@ in
         the partition directly and the k3sloop losetup service is dropped.
       '';
     };
+
+    cephLanPeers = lib.mkOption {
+      type = lib.types.listOf lib.types.str;
+      default = [ ];
+      example = [ "10.0.0.10/32" "10.0.0.11/32" "10.0.0.12/32" ];
+      description = ''
+        Source addresses allowed to reach Ceph daemons running on host networking: mons on
+        tcp/3300 (msgr2) and OSD/MDS/mgr on tcp/6800-7568. For Rook with
+        `network.provider: host` and `addressRanges` on the LAN. Pods on other nodes reach
+        those LAN addresses masqueraded to their node's LAN IP, so the nodes' own LAN IPs
+        are enough. The tailnet and pod interfaces are already trusted.
+      '';
+    };
+
+    podCIDR = lib.mkOption {
+      type = lib.types.nullOr lib.types.str;
+      default = null;
+      example = "10.42.0.0/24";
+      description = ''
+        This node's pod CIDR, as Cilium's cluster-pool IPAM allocated it
+        (`cilium-dbg node list`, or the CiliumNode's spec.ipam.podCIDRs).
+        When set, the node advertises it as a Tailscale subnet route, without
+        SNAT so pods keep their own source IPs, and accepts the other nodes'
+        routes into table 52. That is the underlay for Cilium's native routing
+        over the tailnet (routingMode=native, ipv4NativeRoutingCIDR=10.42.0.0/16,
+        autoDirectNodeRoutes=false). It's harmless under VXLAN: host-to-pod
+        traffic for another node just takes tailscale0 straight to it.
+        The tailnet policy must auto-approve 10.42.0.0/16 for tag:k8s.
+      '';
+    };
   };
 
   config = lib.mkIf cfg.enable {
@@ -150,7 +180,10 @@ in
     # 2026-10-22. These rules give such packets table 52 first, like every
     # other pod's. Cilium's mark nibbles (bits 8-11) that carry an identity:
     # 0x4 overlay, 0xa/0xb proxy, 0xf identity. Tailscale's own packets have
-    # that nibble clear, so they still bypass.
+    # that nibble clear, so they still bypass. Native routing still needs
+    # these: forwarded pod packets then carry the 0xf identity mark into their
+    # route lookup (lcm lab, 2026-10-24: an identity-9992 pod lost every
+    # cross-node packet without them and none with them).
     systemd.services.cilium-tailscale-mark-rules = {
       description = "Route Cilium identity-marked packets via Tailscale's table";
       wantedBy = [ "multi-user.target" ];
@@ -172,6 +205,24 @@ in
         done
       '';
     };
+
+    # Ceph on host networking over the LAN (Rook network.provider=host, msgr2 secure): only the
+    # listed peers may reach the mons (3300) and OSD/MDS/mgr (6800-7568). Plain iptables, like
+    # the lcm module's per-source rules.
+    networking.firewall.extraCommands = lib.mkIf (cfg.cephLanPeers != [ ]) (lib.concatMapStrings (c: ''
+      iptables -w -A nixos-fw -p tcp -s ${c} -m multiport --dports 3300,6800:7568 -j nixos-fw-accept
+    '') cfg.cephLanPeers);
+
+    # `tailscale set` runs live (tailscaled-set.service), no restart. Only
+    # this node's pod /24 is advertised. Accepting routes also takes any other
+    # subnet route the tailnet carries (today: none, only exit nodes, which
+    # are never used unless selected), so advertise a LAN subnet elsewhere
+    # with care: the nodes would route the LAN through it.
+    services.tailscale.extraSetFlags = lib.mkIf (cfg.podCIDR != null) [
+      "--advertise-routes=${cfg.podCIDR}"
+      "--snat-subnet-routes=false"
+      "--accept-routes"
+    ];
 
     # The node's firewall: the tailnet and Cilium's own interfaces are
     # trusted; the LAN NIC gets only what LAN hosts use. Traffic for the
@@ -235,6 +286,21 @@ in
 
     environment.systemPackages = with pkgs; [
       k3s
+      # Node debugging: the guests have no nix to fetch tools ad hoc, and the
+      # store is the hypervisor's (read-only virtiofs), so these cost no guest
+      # disk. Network (WireGuard/tunnel and NIC offload tests, conntrack),
+      # CPU/steal/IO (mpstat, iostat, pidstat, sar), storage (fio on CephFS),
+      # and process tracing (strace, lsof, perf, bpftrace).
+      wireguard-tools
+      ethtool
+      conntrack-tools
+      socat
+      sysstat
+      fio
+      strace
+      lsof
+      config.boot.kernelPackages.perf
+      bpftrace
     ];
 
     services.k3s = {
@@ -402,6 +468,17 @@ in
       # The agent port (7790) needs no firewall entry: peers use the tailnet IPs (tailscale0 is
       # trusted) and pods come in on lxc+ (trusted too); the LAN can't reach it.
       logShipping.victoriaLogsUrl = lib.mkDefault config.modules.system.netconsole.collector.victoriaLogsUrl;
+      # Checkpoint images can go over the LAN instead (~270 MB/s vs ~140 over the tailnet):
+      # `lcm migrate --transfer-network 10.0.0.0/24` ships to the destination's LAN address over
+      # TLS 1.3 on 7791, both ends pinned to a key derived from the agent token. Only the nodes'
+      # own LAN addresses may connect.
+      transportTLS = {
+        enable = true;
+        allowedCIDRs = [ "10.0.0.10/32" "10.0.0.11/32" "10.0.0.12/32" ];
+        # The default for lcm migrate/drain on the nodes; a node whose 7791 doesn't answer yet
+        # (mid-rollout) gets the tailnet instead.
+        transferNetwork = "10.0.0.0/24";
+      };
       # LivePods (lcm.rooty.dev/v1alpha1): the controller, leader-elected across the nodes, keeps
       # exactly one pod per LivePod (recreated after a node failure, managed by GitOps) and sleeps
       # and wakes on-demand ones. It does nothing until the CRD exists (homelab).

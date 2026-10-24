@@ -80,9 +80,14 @@ The `nixos-dots-push`, `nixos-dots-pull` and `nixos-dots-rebuild` templates
 come with any tier. They act on the host's own checkout
 (`modules.agentAuth.hostCommands.checkout`, default
 `/persist/home/jrt/Documents/nixos-dots`), which must be unlocked with
-git-crypt to build. A host without a checkout simply has templates that fail;
-keeping a checkout (and the git-crypt key) on a node is a choice, not a
-requirement: the node can be rebuilt from a workstation instead.
+git-crypt to build. None of them runs the checkout's hooks or a command its
+git config names (sandboxes can write `.git/`): push goes to
+`hostCommands.pushRemote`, pull fetches from `hostCommands.remote`, and the
+rebuild builds the approved commit from the checkout's objects in a fresh
+root-owned copy, never the work tree. A host without a checkout simply has
+templates that fail; keeping a checkout (and the git-crypt key) on a node is
+a choice, not a requirement: the node can be rebuilt from a workstation
+instead.
 
 ## 2. Deploy
 

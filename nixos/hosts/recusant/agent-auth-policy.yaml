@@ -294,6 +294,17 @@ platforms:
       - admin
       - pod-exec
       - secret-reader
+    # Every grant in these reaches a human, whatever the role or rule:
+    # workload-manager or job-runner there runs as the namespace's
+    # ServiceAccounts. agent-auth holds the provisioner's own token Secret;
+    # the rest are the cluster's controllers. `default`
+    # (cluster_grant_namespace) is always included.
+    sensitive_namespaces:
+      - kube-system
+      - kube-public
+      - kube-node-lease
+      - flux-system
+      - agent-auth
 # Approval prompts on the desktops jrt is at (hostd's helper in the session;
 # modules/system/agent-auth-daemons.nix), next to the Discord message: the
 # first answer decides. Anything running as jrt on such a desktop can answer

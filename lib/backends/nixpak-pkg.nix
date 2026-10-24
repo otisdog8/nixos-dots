@@ -94,7 +94,13 @@ let
         '    dieWithParent = mkOption {' \
         '    uid = mkOption { default = null; type = types.nullOr types.int; description = "UID inside the sandbox (bwrap --uid)."; };
     gid = mkOption { default = null; type = types.nullOr types.int; description = "GID inside the sandbox (bwrap --gid)."; };
+    preLaunch = mkOption { default = ""; type = types.lines; description = "Shell run by the wrapper (makeWrapper --run, bash -e) before the launcher reads its bwrap args."; };
     dieWithParent = mkOption {'
+      # bubblewrap.preLaunch: host-side shell in the wrapper, before nixpak's
+      # launcher resolves the bwrap args (the git guard below sets env vars there).
+      substituteInPlace modules/launch.nix --replace-fail \
+        '"--set BWRAP_EXE ''${config.bubblewrap.package}/bin/bwrap"' \
+        '(optionals (config.bubblewrap.preLaunch != "") "--run ''${escapeShellArg config.bubblewrap.preLaunch}") "--set BWRAP_EXE ''${config.bubblewrap.package}/bin/bwrap"'
       substituteInPlace modules/launch.nix --replace-fail \
         '    "--unshare-user-try"' \
         '    "--unshare-user-try"
@@ -110,6 +116,145 @@ let
   };
   mkNixPak = (import "${patchedNixpak}/modules") { inherit lib pkgs; };
   bindPath = import ../paths.nix { inherit lib; };
+
+  # ── Git guard ──────────────────────────────────────────────────────────────
+  # A folder the sandbox gets read-write must not let it change what the HOST's
+  # git runs when the user later runs git there: <root>/.git/config (aliases,
+  # core.fsmonitor, core.pager, filters, ...) and <root>/.git/hooks are
+  # read-only inside (the user's ask: "make git ro"), and so are
+  # .git/commondir and .git/config.worktree where they exist. .git itself is
+  # bound onto itself, so the sandbox can't rename it away and put its own in
+  # its place (a mount point can't be renamed or removed: EBUSY). A .git FILE
+  # (a linked worktree's or submodule's "gitdir: ..." pointer) is bound
+  # read-only, so it can't be pointed at a gitdir of the sandbox's.
+  #
+  # Inside, git still commits, branches, checks out, fetches, pushes, stashes
+  # and gcs; what writes .git/config fails ("could not write config file
+  # .git/config: Device or resource busy"): git config, git remote add,
+  # branch --set-upstream-to, push -u (its tracking setup), submodule init.
+  #
+  # Each root's binds are bind-try (skipped when the source is missing; bwrap
+  # never creates anything on the host for a missing SOURCE), but bwrap fails
+  # outright on a source path THROUGH a file (.git/config when .git is a
+  # worktree's .git file: ENOTDIR). So the wrapper (bubblewrap.preLaunch, on
+  # the host side, before the launcher reads its args) looks at each root and
+  # exports SBX_GIT_<key>_D (a real .git directory) or SBX_GIT_<key>_F (a
+  # regular .git file); unset, a source falls back to a path that can't exist
+  # (/var/empty is root's and empty) and its binds are skipped. Ordering: our
+  # patched nixpak emits tmpfs, bind.rw, bind.ro, then the hard binds (see its
+  # launch.nix); the pins are mkAfter in bind.rw, so they land on top of every
+  # folder bind, and the read-only binds come after all of them.
+  #
+  # The wrapper also makes a missing .git/hooks (a repo made with an empty
+  # template) as an empty folder, when it's the caller's own: git's behaviour
+  # doesn't change, and the read-only bind then has something to cover (a
+  # mount needs an existing target, and one bwrap made would be left on disk).
+  #
+  # Not covered (no mount can cover a name that doesn't exist yet without
+  # leaving a file on the host):
+  #   - .git/commondir created inside: git then takes config and hooks from the
+  #     directory it names (one of the sandbox's) on the host's next git run.
+  #   - a repo the sandbox makes (git init/clone), or a .git it makes in any
+  #     subfolder, and a gitlink it adds to the index pointing at a nested repo
+  #     of its own: the host's `git status` at the root recurses into that
+  #     submodule and runs its config's core.fsmonitor/filters. Also the
+  #     existing submodules' .git/modules/*/{config,hooks}.
+  #   - folders it gets that CONTAIN repos (the guard is per granted root).
+  #   - a repo whose .git didn't exist when the sandbox started (persistent
+  #     group sandboxes: git init in a project afterwards).
+  #   - a .git/config or .git/hooks that is a symlink: bwrap binds over what it
+  #     points to, and the link itself stays replaceable.
+  # So this raises the bar; a repo a sandbox could write is still one to look
+  # at before running the host's git in it.
+  #
+  # Roots: sbx.gitGuard.<key> = { src; dst; }: `src` the root's host path as a
+  # shell word (expanded in the wrapper: "$PWD", "$HOME"/x), `dst` its path in
+  # the sandbox (a sloth value). Keys are hashes of both, so the same root
+  # declared by several modules (a group's members) merges into one. A module
+  # with a fixed `key`, so a group sandbox importing every member's module
+  # evaluates it once.
+  gitGuardModule =
+    {
+      config,
+      lib,
+      sloth,
+      ...
+    }:
+    let
+      roots = config.sbx.gitGuard;
+      absent = "/var/empty/.sbx-no-git";
+      var = k: kind: "SBX_GIT_${k}_${kind}";
+      gitDir = k: sloth.envOr (var k "D") absent;
+      dstGit = r: sloth.concat' r.dst "/.git";
+      readOnly = [
+        "config"
+        "config.worktree"
+        "commondir"
+        "hooks"
+      ];
+      mkdir = "${pkgs.coreutils}/bin/mkdir";
+      check = k: r: ''
+        __sbx_g=${r.src}/.git
+        if [ -d "$__sbx_g" ] && [ ! -L "$__sbx_g" ]; then
+          if [ ! -e "$__sbx_g/hooks" ] && [ ! -L "$__sbx_g/hooks" ] && [ -O "$__sbx_g" ]; then
+            ${mkdir} -m 0755 -- "$__sbx_g/hooks" 2>/dev/null || true
+          fi
+          export ${var k "D"}="$__sbx_g"; unset ${var k "F"}
+        elif [ -f "$__sbx_g" ] && [ ! -L "$__sbx_g" ]; then
+          export ${var k "F"}="$__sbx_g"; unset ${var k "D"}
+        else
+          unset ${var k "D"} ${var k "F"}
+        fi
+      '';
+    in
+    {
+      key = "sbx-git-guard";
+      options.sbx.gitGuard = lib.mkOption {
+        type = lib.types.attrsOf lib.types.anything;
+        default = { };
+        description = "Read-write roots whose .git the sandbox may not repoint or reconfigure (see nixpak-pkg.nix).";
+      };
+      config = lib.mkIf (roots != { }) {
+        bubblewrap.preLaunch = lib.concatStrings (lib.mapAttrsToList check roots) + "unset __sbx_g\n";
+        bubblewrap.bind.rw = lib.mkAfter (
+          lib.mapAttrsToList (k: r: [
+            (gitDir k)
+            (dstGit r)
+          ]) roots
+        );
+        bubblewrap.bind.ro = lib.mkAfter (
+          lib.concatLists (
+            lib.mapAttrsToList (
+              k: r:
+              map (n: [
+                (sloth.concat' (gitDir k) "/${n}")
+                (sloth.concat' (dstGit r) "/${n}")
+              ]) readOnly
+              ++ [
+                [
+                  (sloth.envOr (var k "F") absent)
+                  (dstGit r)
+                ]
+              ]
+            ) roots
+          )
+        );
+      };
+    };
+  # One root: its sbx.gitGuard entry, keyed by a hash of where it is.
+  gitRoot =
+    src: dst:
+    let
+      key = builtins.hashString "sha256" (
+        builtins.toJSON [
+          src
+          dst
+        ]
+      );
+    in
+    {
+      ${builtins.substring 0 16 key} = { inherit src dst; };
+    };
 in
 let
   # The app's sandbox as a nixpak module, without its entry point: this app's
@@ -135,8 +280,35 @@ let
           (import ../capabilities-nixpak.nix (
             { inherit lib; } // lib.optionalAttrs (gpuDevices != null) { inherit gpuDevices; }
           ) (appCfg.capabilities // { x11 = appCfg.capabilities.x11 || x11Forward; }))
+          gitGuardModule
         ]
         ++ cfg.sandbox.nixpakModules;
+
+      # The git guard (gitGuardModule above) on every read-write extraBind (a
+      # group's projects among them): checked at its source, bound at its path
+      # in the sandbox, as the binds below resolve them. ($PWD's, for
+      # capabilities.cwd, is in capabilities-nixpak.nix.)
+      sbx.gitGuard =
+        let
+          lit = lib.escapeShellArg;
+        in
+        lib.mkMerge (
+          lib.concatMap (
+            p:
+            if bindPath.isAbsolute p then
+              if identity != null && lib.hasPrefix "${identity.home}/" p then
+                [ (gitRoot (lit "${sharedHome}/${lib.removePrefix "${identity.home}/" p}") p) ]
+              else
+                [ (gitRoot (lit p) p) ]
+            else if bindPath.isPwdRelative p then
+              [ (gitRoot ''"$PWD"/${lit p}'' (sloth.concat' (sloth.env "PWD") "/${p}")) ]
+            else if sharedHome != null then
+              [ (gitRoot (lit "${sharedHome}/${p}") (sloth.concat' sloth.homeDir "/${p}")) ]
+              ++ lib.optional (identity != null) (gitRoot (lit "${sharedHome}/${p}") "${identity.oldHome}/${p}")
+            else
+              [ (gitRoot ''"$HOME"/${lit p}'' (sloth.concat' sloth.homeDir "/${p}")) ]
+          ) cfg.sandbox.extraBinds
+        );
 
       # (X11 forward: the socket is bound via the x11 capability above, DISPLAY comes
       # from gui.nix's envOr "DISPLAY" ":0", and auth from the launcher's xhost.)
