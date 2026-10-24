@@ -48,6 +48,8 @@
     # IP only). netconsole is opt-in: k3s module + recusant/galaxy enable it.
     modules/system/node-exporter.nix
     modules/system/netconsole.nix
+    # journal-shipping defaults itself on everywhere but the live USB.
+    modules/system/journal-shipping.nix
     modules/system/node-vm.nix
 
     # System modules (conditionally enabled)

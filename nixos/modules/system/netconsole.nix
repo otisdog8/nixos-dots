@@ -221,7 +221,8 @@ in
 
       services.vector = {
         enable = true;
-        journaldAccess = false;
+        # journal-shipping.nix turns it on in the same Vector instance.
+        journaldAccess = lib.mkDefault false;
         settings = {
           sources.netconsole = {
             type = "socket";
