@@ -409,6 +409,9 @@ in
       transportTLS = {
         enable = true;
         allowedCIDRs = [ "10.0.0.10/32" "10.0.0.11/32" "10.0.0.12/32" ];
+        # The default for lcm migrate/drain on the nodes; a node whose 7791 doesn't answer yet
+        # (mid-rollout) gets the tailnet instead.
+        transferNetwork = "10.0.0.0/24";
       };
       # LivePods (lcm.rooty.dev/v1alpha1): the controller, leader-elected across the nodes, keeps
       # exactly one pod per LivePod (recreated after a node failure, managed by GitOps) and sleeps
