@@ -117,6 +117,19 @@ in
       '';
     };
 
+    cephLanPeers = lib.mkOption {
+      type = lib.types.listOf lib.types.str;
+      default = [ ];
+      example = [ "10.0.0.10/32" "10.0.0.11/32" "10.0.0.12/32" ];
+      description = ''
+        Source addresses allowed to reach Ceph daemons running on host networking: mons on
+        tcp/3300 (msgr2) and OSD/MDS/mgr on tcp/6800-7568. For Rook with
+        `network.provider: host` and `addressRanges` on the LAN. Pods on other nodes reach
+        those LAN addresses masqueraded to their node's LAN IP, so the nodes' own LAN IPs
+        are enough. The tailnet and pod interfaces are already trusted.
+      '';
+    };
+
     podCIDR = lib.mkOption {
       type = lib.types.nullOr lib.types.str;
       default = null;
@@ -192,6 +205,13 @@ in
         done
       '';
     };
+
+    # Ceph on host networking over the LAN (Rook network.provider=host, msgr2 secure): only the
+    # listed peers may reach the mons (3300) and OSD/MDS/mgr (6800-7568). Plain iptables, like
+    # the lcm module's per-source rules.
+    networking.firewall.extraCommands = lib.mkIf (cfg.cephLanPeers != [ ]) (lib.concatMapStrings (c: ''
+      iptables -w -A nixos-fw -p tcp -s ${c} -m multiport --dports 3300,6800:7568 -j nixos-fw-accept
+    '') cfg.cephLanPeers);
 
     # `tailscale set` runs live (tailscaled-set.service), no restart. Only
     # this node's pod /24 is advertised. Accepting routes also takes any other

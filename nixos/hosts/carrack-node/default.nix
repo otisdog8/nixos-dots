@@ -51,6 +51,7 @@
       persistDir = "/data";
       liveMigration = true;
       cephLoopback = false;
+      cephLanPeers = [ "10.0.0.10/32" "10.0.0.11/32" "10.0.0.12/32" ]; # Ceph on the LAN (docs: lcm docs/ceph-lan.md)
       podCIDR = "10.42.3.0/24"; # Cilium cluster-pool allocation (cilium-dbg node list)
       extraFlags = [
         "--bind-address=100.103.225.29"
