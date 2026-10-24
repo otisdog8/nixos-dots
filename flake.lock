@@ -973,11 +973,11 @@
         ]
       },
       "locked": {
-        "lastModified": 1792805994,
-        "narHash": "sha256-XRuJwhBkOjWILTBp5jHEygpmzWPjfqpXzbE850gAs4c=",
+        "lastModified": 1792807336,
+        "narHash": "sha256-kWj6wEuR1rqCQnzvg4N2yU5ZPUJ9MOk7ZaNY0RWzlZM=",
         "owner": "uorux",
         "repo": "live-container-migration",
-        "rev": "34ee603095b7ff5c64736c4bfb3d8e31b87e979e",
+        "rev": "68634da828cf09d18547ae857ffd8041deb65f03",
         "type": "github"
       },
       "original": {
