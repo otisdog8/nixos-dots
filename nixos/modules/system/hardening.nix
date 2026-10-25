@@ -229,6 +229,17 @@ in
       '';
     };
 
+    zeroMemory = lib.mkOption {
+      type = lib.types.bool;
+      default = true;
+      description = ''
+        Zero memory on every allocation and free (init_on_alloc=1,
+        init_on_free=1): no stale data in fresh pages, at a CPU cost that
+        grows with allocation churn (JVMs, databases, the page cache). Off on
+        the node VMs, whose CPU is the scarce resource (node-vm.nix).
+      '';
+    };
+
     hardenMounts = lib.mkOption {
       type = lib.types.bool;
       default = cfg.profile != "k3s-node";
@@ -332,8 +343,6 @@ in
     boot.kernelParams = [
       # Heap/page hardening
       "slab_nomerge"
-      "init_on_alloc=1"
-      "init_on_free=1"
       "page_alloc.shuffle=1"
 
       # Stack offset randomisation on syscall entry
@@ -342,6 +351,10 @@ in
       # Disable obsolete/dangerous interfaces
       "vsyscall=none"
       "debugfs=off"
+    ]
+    ++ lib.optionals cfg.zeroMemory [
+      "init_on_alloc=1"
+      "init_on_free=1"
     ];
 
     boot.blacklistedKernelModules =
