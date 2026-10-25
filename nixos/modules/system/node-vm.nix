@@ -136,6 +136,20 @@ let
           isolation made a node VM stall (2026-10-24).
         '';
       };
+      coreScheduling = lib.mkOption {
+        type = lib.types.enum [ "vm" "vcpu" "off" ];
+        default = "vm";
+        description = ''
+          crosvm's core scheduling, which keeps the vCPUs from sharing a physical
+          core with other threads (SMT side channels). "vm": all of the VM's
+          vCPUs share one cookie, so they may run on sibling threads together but
+          nothing outside the VM runs next to them. "vcpu" (crosvm's own default):
+          a cookie per vCPU, so no two vCPUs share a core either; at most one
+          vCPU per core runs at a time, which with vCPUs pinned to sibling
+          threads left the guest too slow to boot (2026-10-25) and without
+          pinning shows up as steal. "off": no core scheduling.
+        '';
+      };
       mac = lib.mkOption {
         type = lib.types.strMatching "([0-9a-f]{2}:){5}[0-9a-f]{2}";
         description = "The guest NIC's MAC: what the LAN's DHCP knows it by.";
@@ -229,7 +243,13 @@ let
           --name ${tap name}
           --mem size=${toString v.memoryMiB}
           --cpus num-cores=${toString v.vcpus}${lib.optionalString (v.pinCpus != null) "\n          --cpu-affinity ${lib.concatStringsSep ":" (lib.imap0 (i: c: "${toString i}=${toString c}") v.pinCpus)}"}
-          --no-usb
+          --no-usb${
+            {
+              vm = "\n          --per-vm-core-scheduling";
+              vcpu = "";
+              off = "\n          --core-scheduling false";
+            }.${v.coreScheduling}
+          }
           --hugepages
           --serial type=stdout,hardware=serial,console=true
           -s ${rt name}/crosvm.sock
