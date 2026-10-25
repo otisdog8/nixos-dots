@@ -512,15 +512,17 @@ class FilterTest(unittest.TestCase):
         read_pkt(self.client)
         self.assertIsNotNone(self.command(98, 12, L(70) + b"v" + bytes([1]) + struct.pack("!I", 0)))
 
-    def test_deny_outputs_only_on_monitors(self):
-        """Only a dialog for what other apps play offers "deny recording
-        outputs": a device the app names (a microphone, often) asks alone."""
+    def test_deny_all_per_kind(self):
+        """A dialog for what other apps play offers "deny recording outputs",
+        one for a device the app names (a microphone, often) "deny recording
+        devices": denying one kind leaves the other asking."""
         self.client.sendall(pkt(record_payload(35, name="alsa_input.usb-mic", tag=2)))
         read_pkt(self.server)
         self.client.sendall(pkt(record_payload(35, name="alsa_output.hdmi.monitor", tag=3)))
         read_pkt(self.server)
         self.assertEqual([k[1] for k, _, _ in self.answers], ["device", "monitor"])
-        self.assertEqual(self.deny_alls, [None, broker.PA_DENY_OUTPUTS])
+        self.assertEqual(self.deny_alls, [broker.PA_DENY_DEVICES, broker.PA_DENY_OUTPUTS])
+        self.assertNotEqual(broker.PA_DENY_DEVICES[1], broker.PA_DENY_OUTPUTS[1])
 
     def test_client_proplist_routes(self):
         self.assertIsNotNone(self.command(broker.PA_SET_CLIENT_NAME, 1, P({"target.object": "x"})))
