@@ -84,6 +84,8 @@
     IPAddressDeny = "any";
     PrivatePIDs = true;
     KillSignal = "SIGKILL";
+    # ...and that stop is the normal one: not a failure.
+    SuccessExitStatus = "SIGKILL";
     ProtectProc = "invisible";
     ProcSubset = "pid";
     ProtectKernelTunables = true;

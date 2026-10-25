@@ -1840,6 +1840,7 @@ let
         PrivateIPC = true;
         PrivatePIDs = true;
         KillSignal = "SIGKILL";
+        SuccessExitStatus = "SIGKILL";
         ProtectProc = "invisible";
         AmbientCapabilities = "";
         MemoryDenyWriteExecute = true;
