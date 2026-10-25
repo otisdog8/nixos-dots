@@ -71,6 +71,7 @@ rec {
       PrivatePIDs = true;
       ProtectProc = "invisible";
       KillSignal = "SIGKILL";
+      SuccessExitStatus = "SIGKILL";
       ProtectKernelTunables = true;
       ProtectKernelModules = true;
       ProtectKernelLogs = true;
