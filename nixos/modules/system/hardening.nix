@@ -229,6 +229,16 @@ in
       '';
     };
 
+    debugfs = lib.mkOption {
+      type = lib.types.bool;
+      default = false;
+      description = ''
+        Leave debugfs available (no debugfs=off). It exposes kernel internals
+        to root; the node-VM hypervisors keep it for scheduler tuning
+        (/sys/kernel/debug/sched).
+      '';
+    };
+
     zeroMemory = lib.mkOption {
       type = lib.types.bool;
       default = true;
@@ -350,8 +360,8 @@ in
 
       # Disable obsolete/dangerous interfaces
       "vsyscall=none"
-      "debugfs=off"
     ]
+    ++ lib.optional (!cfg.debugfs) "debugfs=off"
     ++ lib.optionals cfg.zeroMemory [
       "init_on_alloc=1"
       "init_on_free=1"
