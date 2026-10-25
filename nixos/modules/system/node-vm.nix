@@ -182,7 +182,9 @@ let
       disks = lib.mkOption { type = lib.types.listOf disk; };
       stopTimeout = lib.mkOption {
         type = lib.types.ints.positive;
-        default = 210;
+        # A node VM with drainOnPowerKey (k3s/shutdown.nix) takes up to 6 min
+        # to leave service before its ~2 min shutdown.
+        default = 540;
         description = "Seconds the guest gets to power off before crosvm is killed.";
       };
     };

@@ -51,6 +51,9 @@
       serverAddr = "https://100.126.30.73:6443"; # arquitens
       persistDir = "/data";
       liveMigration = true;
+      # First node to take the power button through node-power-off (drain,
+      # then power off); the others follow once it's seen working.
+      drainOnPowerKey = true;
       cephLoopback = false;
       cephLanPeers = [ "10.0.0.10/32" "10.0.0.11/32" "10.0.0.12/32" ]; # Ceph on the LAN (docs: lcm docs/ceph-lan.md)
       podCIDR = "10.42.2.0/24"; # Cilium cluster-pool allocation (cilium-dbg node list)

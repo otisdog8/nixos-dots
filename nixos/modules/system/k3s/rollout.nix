@@ -230,6 +230,12 @@ let
         ceph osd set noout || log "Ceph didn't answer: no noout"
       fi
       keep=1
+      ${lib.optionalString config.modules.system.k3s.tailscaleServices ''
+        # Before kubelet's shutdown stops Cilium under it (tailscale-serve's own
+        # drain comes after that).
+        log "leaving svc:k8s"
+        ${lib.getExe config.services.tailscale.package} serve drain svc:k8s || log "tailscale serve drain failed"
+      ''}
       log "rebooting; node-rollout-finish completes it at boot ('node-rollout status')"
       systemctl reboot
     '';
