@@ -58,6 +58,7 @@ let
   core = import ../../../lib/vm/core { inherit lib pkgs; };
   cfg = config.modules.system.nodeVms;
   guestCfg = config.modules.system.nodeVmGuest;
+  pinned = lib.concatLists (lib.mapAttrsToList (_: v: lib.optionals (v.pinCpus != null) v.pinCpus) cfg);
   smokeCfg = config.modules.system.nodeVmSmoke;
 
   rt = name: "/run/node-vm/${name}";
@@ -122,6 +123,19 @@ let
       };
       memoryMiB = lib.mkOption { type = lib.types.ints.positive; };
       vcpus = lib.mkOption { type = lib.types.ints.positive; };
+      pinCpus = lib.mkOption {
+        type = lib.types.nullOr (lib.types.listOf lib.types.ints.unsigned);
+        default = null;
+        example = [ 6 7 8 9 10 11 12 13 14 15 ];
+        description = ''
+          Host CPUs to pin the vCPUs to, one each (vCPU i on pinCpus[i]), and to
+          isolate from everything else on the machine (isolcpus, nohz_full,
+          rcu_nocbs): a woken vCPU then finds its CPU idle instead of queueing
+          behind other threads. Keep the machine's IRQs off them too
+          (irqaffinity= in the host's kernel parameters). Pinning without the
+          isolation made a node VM stall (2026-10-24).
+        '';
+      };
       mac = lib.mkOption {
         type = lib.types.strMatching "([0-9a-f]{2}:){5}[0-9a-f]{2}";
         description = "The guest NIC's MAC: what the LAN's DHCP knows it by.";
@@ -214,7 +228,7 @@ let
           run
           --name ${tap name}
           --mem size=${toString v.memoryMiB}
-          --cpus num-cores=${toString v.vcpus}
+          --cpus num-cores=${toString v.vcpus}${lib.optionalString (v.pinCpus != null) "\n          --cpu-affinity ${lib.concatStringsSep ":" (lib.imap0 (i: c: "${toString i}=${toString c}") v.pinCpus)}"}
           --no-usb
           --hugepages
           --serial type=stdout,hardware=serial,console=true
@@ -440,6 +454,10 @@ in
       assertions = lib.mapAttrsToList (name: _: {
         assertion = builtins.stringLength (tap name) <= 15;
         message = "modules.system.nodeVms.${name}: the name is too long for its macvtap (nv-<name>, 15 characters).";
+      }) cfg
+      ++ lib.mapAttrsToList (name: v: {
+        assertion = v.pinCpus == null || builtins.length v.pinCpus == v.vcpus;
+        message = "modules.system.nodeVms.${name}: pinCpus needs exactly one host CPU per vCPU (${toString v.vcpus}).";
       }) cfg;
 
       # CPU steal: a node VM's vCPUs halt and get woken ~15-20k times a second
@@ -452,7 +470,14 @@ in
       boot.kernelParams = [
         "kvm_amd.avic=1"
         "kvm.halt_poll_ns=500000"
-      ];
+      ]
+      # The pinned vCPUs' CPUs belong to them alone: no other tasks
+      # (isolcpus=domain), no managed IRQs, no periodic tick while one task
+      # runs (nohz_full) and no RCU callbacks (rcu_nocbs).
+      ++ lib.optionals (pinned != [ ]) (
+        let l = lib.concatMapStringsSep "," toString pinned; in
+        [ "isolcpus=domain,managed_irq,${l}" "nohz_full=${l}" "rcu_nocbs=${l}" ]
+      );
 
       boot.kernelModules = [
         "macvtap"

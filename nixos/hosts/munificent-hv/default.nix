@@ -15,6 +15,10 @@
 }:
 {
   networking.hostName = "munificent-hv";
+
+  # Device interrupts on the host's own CPUs, off the node VM's pinned ones
+  # (modules.system.nodeVms.node.pinCpus).
+  boot.kernelParams = [ "irqaffinity=0-5" ];
   time.timeZone = "America/Los_Angeles";
 
   boot.supportedFilesystems = [ "btrfs" ];
@@ -51,6 +55,8 @@
       enable = true;
       profile = "server";
       blacklistAfAlg = true;
+      # Scheduler tuning and inspection for the node VM (/sys/kernel/debug/sched).
+      debugfs = true;
     };
 
     # The same root LUKS as the bare-metal node, so the same PCR 15.
@@ -81,7 +87,12 @@
       # starting) soft-locked every vCPU of arquitens for 20-30 s (2026-10-21
       # 22:42 PDT). Pods request ~29 CPUs across the cluster, so 10 (room for
       # the sensitive cluster's VM) needs those requests trimmed first.
-      vcpus = 12;
+      vcpus = 10;
+      # Pilot of pinning + isolation (node-vm.nix pinCpus): vCPU i on host
+      # CPU 6+i, the last five cores (siblings are 2k/2k+1); the host keeps
+      # CPUs 0-5 (IRQs below). CPU steal was 25-48% of what the VM wanted
+      # (2026-10-25), ~200 us per vCPU wake-up queueing with host CPUs idle.
+      pinCpus = [ 6 7 8 9 10 11 12 13 14 15 ];
       # The USB dongle's own MAC: the node keeps 10.0.0.12 and netconsole's
       # "munificent" entry (whose device is the MAC's enx altname).
       mac = "00:24:27:88:a9:cd";
