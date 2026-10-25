@@ -56,7 +56,6 @@ in
     # Same kernel as the host: nothing extra to build, and it has virtio-fs/vsock.
     kernelPackages = agentVmHost.kernelPackages;
     loader.grub.enable = false;
-    initrd.systemd.enable = true;
     initrd.kernelModules = [
       "virtio_pci"
       "virtio_blk"

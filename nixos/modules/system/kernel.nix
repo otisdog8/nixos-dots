@@ -10,8 +10,6 @@
     kernelPackages = pkgs.linuxPackages_latest;
 
     initrd = {
-      systemd.enable = true;
-      verbose = false;
       availableKernelModules = [
         "xhci_pci"
         "thunderbolt"

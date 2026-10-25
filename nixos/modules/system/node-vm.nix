@@ -578,9 +578,6 @@ in
       # Booted by crosvm directly (kernel, initrd, init= from the machine).
       boot.loader.grub.enable = false;
       boot.loader.systemd-boot.enable = lib.mkForce false;
-      # The hosts get it from secureboot.nix; the impermanence rollback is an
-      # initrd unit.
-      boot.initrd.systemd.enable = true;
       boot.kernelParams = [
         "console=ttyS0,115200"
         # A panic restarts the VM (crosvm exits, the unit restarts).

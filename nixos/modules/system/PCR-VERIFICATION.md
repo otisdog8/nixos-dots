@@ -32,9 +32,9 @@ to abuse.
 
 ## Prerequisites
 
-- `boot.initrd.systemd.enable = true` (provided globally by
+- A systemd initrd (the only one NixOS has since 26.11).
+- `boot.initrd.systemd.tpm2.enable = true` (provided globally by
   `modules/system/secureboot.nix`).
-- `boot.initrd.systemd.tpm2.enable = true` (same).
 - TPM2 already enrolled into the LUKS header via `systemd-cryptenroll`.
   Verify with `sudo cryptsetup luksDump <luks-device> | grep -i token`.
 - A root account with a real `hashedPassword` set (so the initrd emergency

@@ -33,10 +33,7 @@ in
     # Boot configuration
     # boot.kernelPackages = pkgs.linuxPackages_latest;
     boot = {
-      initrd.systemd = {
-        enable = true;
-        tpm2.enable = true;
-      };
+      initrd.systemd.tpm2.enable = true;
 
       # Use the systemd-boot EFI boot loader.
       loader = {

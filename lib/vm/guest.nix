@@ -218,7 +218,6 @@ in
   boot = {
     kernelPackages = sbxHost.kernelPackages;
     loader.grub.enable = false;
-    initrd.systemd.enable = true;
     initrd.kernelModules = [
       "virtio_pci"
       "virtiofs"
