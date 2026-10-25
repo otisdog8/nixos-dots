@@ -442,6 +442,18 @@ in
         message = "modules.system.nodeVms.${name}: the name is too long for its macvtap (nv-<name>, 15 characters).";
       }) cfg;
 
+      # CPU steal: a node VM's vCPUs halt and get woken ~15-20k times a second
+      # (IPIs, mostly TLB shootdowns), and each wake-up was a VM exit plus a
+      # host reschedule: 70-250 us apiece, up to 5-7 of 12 vCPUs stolen at
+      # peak (2026-10-24). AVIC delivers interrupts to vCPUs in hardware
+      # (needs xAPIC mode in the guest on Zen 3: nox2apic, below), and a
+      # longer KVM halt poll (default 200 us) catches most wake-ups before the
+      # vCPU thread sleeps: 69 -> 40 us per wake-up, guest steal 10.9 -> 5.0%.
+      boot.kernelParams = [
+        "kvm_amd.avic=1"
+        "kvm.halt_poll_ns=500000"
+      ];
+
       boot.kernelModules = [
         "macvtap"
       ]
@@ -528,7 +540,15 @@ in
         "console=ttyS0,115200"
         # A panic restarts the VM (crosvm exits, the unit restarts).
         "panic=-1"
+        # xAPIC, not x2APIC: Zen 3 has AVIC but not x2AVIC, and KVM turns
+        # AVIC off for a guest in x2APIC mode (see the host side above).
+        "nox2apic"
       ];
+      # Poll briefly before halting an idle vCPU, so a wake-up that comes
+      # quickly needs no VM exit. crosvm doesn't advertise KVM's
+      # poll-control feature, hence force. Measured: IPIs roughly halved.
+      boot.kernelModules = [ "cpuidle-haltpoll" ];
+      boot.extraModprobeConfig = "options cpuidle_haltpoll force=1";
       # No nix here: the store is the machine's and read-only (and its GC is
       # the machine's, which keeps this system: the machine's config holds it).
       nix.enable = false;
@@ -537,6 +557,13 @@ in
       # No firmware to update in a VM; its refresh timer only loaded modules at random.
       services.fwupd.enable = lib.mkForce false;
     })
+
+    # CPU is what these VMs are short of: no zeroing of every page on
+    # allocation and free (hardening.nix, zeroMemory). Where the option
+    # exists: the smoke guest has no hardening module.
+    (lib.optionalAttrs (lib.hasAttrByPath [ "modules" "system" "hardening" "zeroMemory" ] options) (
+      lib.mkIf guestCfg.enable { modules.system.hardening.zeroMemory = false; }
+    ))
 
     # Home Manager's activation needs nix (nix-build's sanity check, its
     # generation's GC root), and a guest has none. The guest links the
