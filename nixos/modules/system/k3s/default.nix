@@ -95,6 +95,21 @@ in
       '';
     };
 
+    inClusterHosts = lib.mkOption {
+      type = lib.types.listOf lib.types.str;
+      default = [ "git.rooty.dev" ];
+      description = ''
+        Hostnames of the cluster's own services that this node resolves to
+        Traefik's ClusterIP instead of their public address, so the node
+        reaches them without leaving home. The registry above all: from the
+        nodes, git.rooty.dev goes out to a VPS ingress and back over the
+        tailnet, and 4 of 5 requests there hung for 10 s on 2026-10-24
+        (straight to Traefik: 5 of 5 in under 0.1 s). A pre-pull through it
+        failed and left a broken image record behind on carrack. TLS still
+        names the host, so certificates and pull secrets are unchanged.
+      '';
+    };
+
     liveMigration = lib.mkOption {
       type = lib.types.bool;
       default = false;
@@ -423,6 +438,8 @@ in
         '')
       ];
     };
+
+    networking.hosts.${traefikClusterIp} = cfg.inClusterHosts;
 
     boot.kernelModules = [
       "rbd"
