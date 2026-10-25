@@ -39,9 +39,9 @@ let
 
   # Each guest's tailnet address, after its first login (bootstrap, step 5).
   tailnetIps = {
-    arquitens = null;
-    carrack = null;
-    munificent = null;
+    arquitens = "100.88.244.30";
+    carrack = "100.98.145.93";
+    munificent = "100.118.43.36";
   };
   ready = lib.all (ip: ip != null) (lib.attrValues tailnetIps);
 
