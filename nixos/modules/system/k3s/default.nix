@@ -95,6 +95,21 @@ in
       '';
     };
 
+    inClusterHosts = lib.mkOption {
+      type = lib.types.listOf lib.types.str;
+      default = [ "git.rooty.dev" ];
+      description = ''
+        Hostnames of the cluster's own services that this node resolves to
+        Traefik's ClusterIP instead of their public address, so the node
+        reaches them without leaving home. The registry above all: from the
+        nodes, git.rooty.dev goes out to a VPS ingress and back over the
+        tailnet, and 4 of 5 requests there hung for 10 s on 2026-10-24
+        (straight to Traefik: 5 of 5 in under 0.1 s). A pre-pull through it
+        failed and left a broken image record behind on carrack. TLS still
+        names the host, so certificates and pull secrets are unchanged.
+      '';
+    };
+
     liveMigration = lib.mkOption {
       type = lib.types.bool;
       default = false;
@@ -403,6 +418,28 @@ in
         RestartSec = 15;
       };
     };
+
+    # k3s binds its API and supervisor to the tailnet address (--bind-address),
+    # which isn't on tailscale0 until tailscaled has logged in. Started before
+    # that, k3s exits ("bind: cannot assign requested address"), restarts every
+    # few seconds, and systemd's start limit (5 in 10 s) then stops it for good:
+    # the node stays NotReady until someone restarts k3s (carrack after a
+    # reboot, 2026-10-24). Wait for the address, and never stop retrying.
+    systemd.services.k3s = lib.mkIf (bindFlag != null) {
+      unitConfig.StartLimitIntervalSec = 0;
+      serviceConfig.ExecStartPre = [
+        (pkgs.writeShellScript "k3s-wait-bind-address" ''
+          for _ in $(seq 300); do
+            ${pkgs.iproute2}/bin/ip -o addr show | ${pkgs.gnugrep}/bin/grep -qF " ${apiAddress}/" && exit 0
+            sleep 1
+          done
+          echo "${apiAddress} is on no interface after 300 s" >&2
+          exit 1
+        '')
+      ];
+    };
+
+    networking.hosts.${traefikClusterIp} = cfg.inClusterHosts;
 
     boot.kernelModules = [
       "rbd"
