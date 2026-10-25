@@ -86,6 +86,11 @@ platforms:
       # The wiki (`wiki:` below) is written through the broker only: a token
       # for its repo would write past the per-project rule.
       - "uorux/agent-wiki"
+      # The sensitive cluster's repo: Flux there applies what it holds, so
+      # no agent touches it. Both spellings: the `repo` validator accepts a
+      # trailing .git as another name.
+      - "*/homelab-sensitive"
+      - "*/homelab-sensitive.git"
     # Hard ceiling — requests above this are denied before any policy rule runs.
     # Must be a subset of what the GitHub App itself was granted (keep this list
     # and the App's permissions in sync; keys are the API permission names).
