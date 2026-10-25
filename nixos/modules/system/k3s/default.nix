@@ -199,6 +199,17 @@ in
     # these: forwarded pod packets then carry the 0xf identity mark into their
     # route lookup (lcm lab, 2026-10-24: an identity-9992 pod lost every
     # cross-node packet without them and none with them).
+    #
+    # Rule 5205: tailscaled's OWN connections carry the bypass mark too, and
+    # with native routing the other nodes' pod CIDRs exist only in table 52,
+    # so the main table sends them out the LAN's default route, where they're
+    # lost. `tailscale serve` (svc:k8s) dials Traefik's ClusterIP from such a
+    # socket, so it reached only the node-local Traefik pod: ~2/3 of public
+    # HTTPS through the VPS ingresses hung (HAProxy SD) from native routing's
+    # go-live until this rule (2026-10-25; 20/20 after it). Only pod
+    # destinations: tailscaled's WireGuard packets go to node IPs and still
+    # bypass, and the local /24 isn't in table 52, so it falls through to the
+    # main table's cilium_host route.
     systemd.services.cilium-tailscale-mark-rules = {
       description = "Route Cilium identity-marked packets via Tailscale's table";
       wantedBy = [ "multi-user.target" ];
@@ -213,11 +224,14 @@ in
           ip rule del priority 5200 fwmark "$m/0xff0f00" lookup 52 2>/dev/null || true
           ip rule add priority 5200 fwmark "$m/0xff0f00" lookup 52
         done
+        ip rule del priority 5205 fwmark 0x80000/0xff0000 to 10.42.0.0/16 lookup 52 2>/dev/null || true
+        ip rule add priority 5205 fwmark 0x80000/0xff0000 to 10.42.0.0/16 lookup 52
       '';
       preStop = ''
         for m in 0x80400 0x80a00 0x80b00 0x80f00; do
           ip rule del priority 5200 fwmark "$m/0xff0f00" lookup 52 2>/dev/null || true
         done
+        ip rule del priority 5205 fwmark 0x80000/0xff0000 to 10.42.0.0/16 lookup 52 2>/dev/null || true
       '';
     };
 
