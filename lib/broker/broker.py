@@ -814,9 +814,11 @@ PA_STREAM_KIND = {
 PA_MAX_PENDING_RECORDS = 4  # record streams of one connection awaiting a decision
 # The "deny all" of the dialogs for recording what other apps play (a monitor,
 # Broker.decide): an app enumerating sources (a game's voice chat, say) asks
-# once each otherwise. Microphones and the devices an app names keep asking one
-# by one, to be granted on their own.
+# once each otherwise. The devices an app names (every input device, in that
+# voice chat) have their own, so denying them all leaves the outputs asking and
+# the other way round. The default microphone keeps asking on its own.
 PA_DENY_OUTPUTS = ("Deny recording outputs for this session", ("microphone", "outputs"))
+PA_DENY_DEVICES = ("Deny recording devices for this session", ("microphone", "devices"))
 
 
 def pa_routes(props):
@@ -1221,7 +1223,7 @@ class PulseFilter:
                     # A source by index (or a stream) can't be told apart from
                     # a later one with the same number.
                     allow_session=named,
-                    deny_all=PA_DENY_OUTPUTS if kind == "monitor" else None,
+                    deny_all=PA_DENY_OUTPUTS if kind == "monitor" else PA_DENY_DEVICES,
                 )
             log(f"{self.sandbox}: audio: record {kind} {escape(source or '(default source)')[:300]}: {why}")
             if ok:
