@@ -9,7 +9,23 @@ keys:
   - &arquitens_node age1y4ffuhz7gzlf7jeyr9jx0wdn9vsfj7aepzwz034x8lqtuyvnxu8s2xut82
   - &carrack_node age1a9es4xeqx7jmlkelwemngg5l0y7lpsvjpdklc4zfl5gqcfyzkd9qrh3cr7
   - &munificent_node age19f6cnz38nv5prpezwp9yp32w0tcwylnpex8pgzxk640jgc6gjezs6ueaxf
+  # The sensitive cluster's server VMs (hosts/<machine>-sensitive): ssh-to-age
+  # of /persist/etc/ssh/ssh_host_ed25519_key.pub, made on each guest's disk
+  # from its hypervisor (sensitive-common.nix, bootstrap step 3).
+  - &arquitens_sensitive age1p5g0uksx65sjtcfka8q4vj57t63z3tdqm7upnmdyc0665endzggsfzsuya
+  - &carrack_sensitive age1947jn6rvlmfnudvm0t3lld9k4f89wa3c27h4shu4ytc80dpc4q8qxnl503
+  - &munificent_sensitive age147xkdu56y4xkqgzltj7mea27grhtcewpg58hmth34elazkgk4grq9rh7k3
 creation_rules:
+  # The sensitive cluster's k3s token (modules/system/k3s-sensitive.nix): its
+  # three servers and the admin workstations only. Never a main node or
+  # recusant: the main cluster must not be able to join this one.
+  - path_regex: .*hosts/sensitive-k3s-token\.yaml
+    age:
+      - *arquitens_sensitive
+      - *carrack_sensitive
+      - *munificent_sensitive
+      - *galaxy_host
+      - *constitution_host
   # k3s cluster token, decrypted on every k3s server node (modules/system/k3s/token-sops.nix).
   - path_regex: .*system/k3s/k3s-token\.yaml
     age:
