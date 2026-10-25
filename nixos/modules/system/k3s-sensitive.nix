@@ -248,8 +248,14 @@ in
     services.logind.settings.Login.InhibitDelayMaxSec = gracePeriod;
     systemd.settings.Manager.RebootWatchdogSec = "3min";
 
-    # etcd, containerd's images, the local PVs. /etc/rancher isn't kept:
-    # k3s writes its kubeconfig there at every start.
-    environment.persistence."/data".directories = [ "/var/lib/rancher" ];
+    # etcd, containerd's images, the local PVs; and the node's password
+    # (/etc/rancher/node), which the servers check every time it joins: a
+    # new one each boot (the root is wiped) and they'd refuse the node as a
+    # duplicate. The rest of /etc/rancher is k3s's kubeconfig, rewritten at
+    # every start, and registries.yaml from this module.
+    environment.persistence."/data".directories = [
+      "/var/lib/rancher"
+      "/etc/rancher/node"
+    ];
   };
 }
