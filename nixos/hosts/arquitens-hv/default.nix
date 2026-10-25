@@ -109,6 +109,38 @@
         }
       ];
     };
+
+    # The sensitive cluster's server (hosts/arquitens-sensitive). What separates
+    # it from the main node is KVM and this kernel, so no vhost-net (the
+    # guest's packets stay in its jailed crosvm process); it doesn't need
+    # the throughput. Its own macvtap on the dongle: the two guests reach
+    # each other over the LAN, though the sensitive one listens there for
+    # nothing but Tailscale. Memory: 46 + 8 GiB of guests leaves ~5.5 GiB
+    # for this machine and both VMMs. vCPUs overcommit the 16 threads.
+    system.nodeVms.sensitive = {
+      guest = outputs.nixosConfigurations.arquitens-sensitive;
+      memoryMiB = 8 * 1024;
+      vcpus = 4;
+      vhostNet = false;
+      # Locally administered; give it a DHCP reservation if it should keep
+      # its LAN address (nothing depends on it: the cluster uses the tailnet).
+      mac = "02:5e:73:00:00:01";
+      parentInterface = "enp4s0f4u1";
+      disks = [
+        {
+          device = "/dev/vg/sensitive";
+          serial = "sensitive-root";
+        }
+        {
+          device = "/dev/vg/sensitive-swap";
+          serial = "sensitive-swap";
+        }
+        {
+          device = "/dev/vg/sensitive-data";
+          serial = "sensitive-data";
+        }
+      ];
+    };
   };
 
   # The dongle gives its MAC to the VM and takes a locally administered one

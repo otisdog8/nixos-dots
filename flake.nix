@@ -199,6 +199,12 @@
           hostDir = "munificent-node";
           stateVersion = "24.05";
         };
+        # The sensitive cluster's server on munificent, a VM beside the node
+        # (hosts/sensitive-common.nix).
+        munificent-sensitive = helper.mkNixos {
+          hostname = "munificent-sensitive";
+          stateVersion = "26.05";
+        };
         arquitens = helper.mkNixos {
           hostname = "arquitens";
           stateVersion = "24.05";
@@ -215,6 +221,12 @@
           hostDir = "arquitens-node";
           stateVersion = "24.05";
         };
+        # The sensitive cluster's server on arquitens, a VM beside the node
+        # (hosts/sensitive-common.nix).
+        arquitens-sensitive = helper.mkNixos {
+          hostname = "arquitens-sensitive";
+          stateVersion = "26.05";
+        };
         carrack = helper.mkNixos {
           hostname = "carrack";
           stateVersion = "24.05";
@@ -228,6 +240,12 @@
           hostname = "carrack";
           hostDir = "carrack-node";
           stateVersion = "24.05";
+        };
+        # The sensitive cluster's server on carrack, a VM beside the node
+        # (hosts/sensitive-common.nix).
+        carrack-sensitive = helper.mkNixos {
+          hostname = "carrack-sensitive";
+          stateVersion = "26.05";
         };
         galaxy = helper.mkNixos {
           hostname = "galaxy";
