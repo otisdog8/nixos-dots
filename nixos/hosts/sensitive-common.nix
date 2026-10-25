@@ -13,7 +13,7 @@
 #      lvcreate -L 200G -n sensitive-data vg
 #   2. mkfs.btrfs -L sensitive /dev/vg/sensitive, and in it the subvolumes
 #      root, persist, large, cache, dots; mkswap /dev/vg/sensitive-swap;
-#      mkfs.xfs -L sensitive-data /dev/vg/sensitive-data
+#      mkfs.xfs -L sens-data /dev/vg/sensitive-data
 #   3. The guest's ssh host key, made where it stays: ssh-keygen -t ed25519
 #      -N "" -f <persist>/etc/ssh/ssh_host_ed25519_key (persist mounted from
 #      step 2). Its public key, through ssh-to-age, is the guest's sops
