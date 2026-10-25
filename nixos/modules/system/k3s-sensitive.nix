@@ -81,9 +81,6 @@ in
       }
     ];
 
-    # As modules/system/k3s.
-    boot.kernelPackages = lib.mkOverride 90 pkgs.linuxPackages_7_2;
-
     # Piraeus (LINSTOR) replicates volumes with DRBD 9, which the guest's
     # kernel needs as a module of its own build: Piraeus's module loader
     # can't compile one on NixOS.

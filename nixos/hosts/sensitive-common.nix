@@ -13,7 +13,7 @@
 #      lvcreate -L 200G -n sensitive-data vg
 #   2. mkfs.btrfs -L sensitive /dev/vg/sensitive, and in it the subvolumes
 #      root, persist, large, cache, dots; mkswap /dev/vg/sensitive-swap;
-#      mkfs.xfs -L sensitive-data /dev/vg/sensitive-data
+#      mkfs.xfs -L sens-data /dev/vg/sensitive-data
 #   3. The guest's ssh host key, made where it stays: ssh-keygen -t ed25519
 #      -N "" -f <persist>/etc/ssh/ssh_host_ed25519_key (persist mounted from
 #      step 2). Its public key, through ssh-to-age, is the guest's sops
@@ -31,6 +31,7 @@
   config,
   inputs,
   lib,
+  pkgs,
   ...
 }:
 let
@@ -72,6 +73,11 @@ in
     time.timeZone = "America/Los_Angeles";
 
     boot.supportedFilesystems = [ "btrfs" ];
+    # An explicitly chosen series, as main's nodes (modules/system/k3s), not
+    # the fleet's linuxPackages_latest. Here rather than with k3s, so the
+    # first boot (k3s still off) runs the kernel the cluster will. Move with
+    # main's. DRBD 9 (Piraeus) is built for it (k3s-sensitive.nix).
+    boot.kernelPackages = lib.mkOverride 90 pkgs.linuxPackages_7_2;
 
     modules = {
       desktop.full.enable = false;
