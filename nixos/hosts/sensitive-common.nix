@@ -31,6 +31,7 @@
   config,
   inputs,
   lib,
+  pkgs,
   ...
 }:
 let
@@ -72,6 +73,11 @@ in
     time.timeZone = "America/Los_Angeles";
 
     boot.supportedFilesystems = [ "btrfs" ];
+    # An explicitly chosen series, as main's nodes (modules/system/k3s), not
+    # the fleet's linuxPackages_latest. Here rather than with k3s, so the
+    # first boot (k3s still off) runs the kernel the cluster will. Move with
+    # main's. DRBD 9 (Piraeus) is built for it (k3s-sensitive.nix).
+    boot.kernelPackages = lib.mkOverride 90 pkgs.linuxPackages_7_2;
 
     modules = {
       desktop.full.enable = false;
