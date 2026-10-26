@@ -22,6 +22,9 @@ let
   cfg = config.modules.system.k3sSensitive;
 
   gracePeriod = 60;
+  # Traefik's Service, pinned in homelab-sensitive (infra/traefik).
+  traefikClusterIp = "10.53.0.80";
+  tailscale = lib.getExe config.services.tailscale.package;
   kubeletConfig = pkgs.writeText "k3s-sensitive-kubelet-config.yaml" ''
     apiVersion: kubelet.config.k8s.io/v1beta1
     kind: KubeletConfiguration
@@ -147,8 +150,6 @@ in
       interfaces.tailscale0 = {
         allowedTCPPorts = [
           22 # ssh, Jacob's devices only (tailnet policy)
-          443 # Traefik's svc entrypoint (broker and LiteLLM APIs)
-          8443 # Traefik's admin entrypoint (panels, Authelia, Grafana)
           6443 # API server: the other servers, pods, kubectl
           2379 # etcd clients
           2380 # etcd peers
@@ -222,6 +223,63 @@ in
         "--embedded-registry"
       ]
       ++ map (ip: "--tls-san=${ip}") cfg.serverIps;
+    };
+
+    # svc:sensitive, the tailnet's way in whichever server is up: one
+    # Tailscale Service, one tailnet address, which *.s.rooty.dev resolves
+    # to. Plain tcp forwarding, TLS end to end (Traefik's and k3s's own
+    # certificates; Tailscale terminates nothing). The tailnet policy grants
+    # its ports separately:
+    #  - 443: Traefik's websecure entrypoint, the APIs (broker, LiteLLM).
+    #  - 8443: Traefik's admin entrypoint: panels, Authelia, Grafana.
+    #  - 6443: this server's own API, as api.s.rooty.dev (a SAN above). Not
+    #    the kubernetes Service: tailscaled's own connections skip
+    #    Tailscale's routes, so it couldn't reach another server's tailnet
+    #    address (modules/system/k3s, 2026-10-18).
+    # tailscaled answers the service's address itself and dials these from
+    # the host, so nothing listens on the guest's own 443/8443 and the
+    # firewall above opens neither.
+    services.tailscale.serve = {
+      enable = true;
+      services.sensitive.endpoints = {
+        "tcp:443" = "tcp://${traefikClusterIp}:443";
+        "tcp:8443" = "tcp://${traefikClusterIp}:8443";
+        "tcp:6443" = "tcp://${cfg.nodeIp}:6443";
+      };
+    };
+    # As modules/system/k3s: wait for tailscaled to be logged in, then for
+    # Traefik's ClusterIP to answer from here (k3s counts as started long
+    # before Cilium routes ClusterIPs), and only then advertise. Bound to
+    # k3s, and drained when it stops: open connections finish, new ones go
+    # to the other servers.
+    systemd.services.tailscale-serve = {
+      bindsTo = [ "k3s.service" ];
+      after = [ "k3s.service" ];
+      wantedBy = [ "k3s.service" ];
+      unitConfig.StartLimitIntervalSec = 0;
+      serviceConfig = {
+        ExecStop = "${tailscale} serve drain svc:sensitive";
+        ExecStartPre = pkgs.writeShellScript "tailscale-serve-wait" ''
+          running=
+          for _ in $(seq 60); do
+            if ${tailscale} status --json 2>/dev/null \
+              | ${lib.getExe pkgs.jq} -e '.BackendState == "Running"' >/dev/null; then
+              running=1
+              break
+            fi
+            sleep 2
+          done
+          [ -n "$running" ] || { echo "tailscaled not Running after 120s" >&2; exit 1; }
+          for _ in $(seq 300); do
+            ${pkgs.coreutils}/bin/timeout 3 ${pkgs.bash}/bin/bash -c ': </dev/tcp/${traefikClusterIp}/443' 2>/dev/null && exit 0
+            sleep 2
+          done
+          echo "Traefik's ClusterIP (${traefikClusterIp}:443) doesn't answer from here after 10 min" >&2
+          exit 1
+        '';
+        Restart = "on-failure";
+        RestartSec = 15;
+      };
     };
 
     # As modules/system/k3s: the API binds the tailnet address, which isn't
