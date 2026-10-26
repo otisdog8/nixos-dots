@@ -132,7 +132,10 @@ in
     # nothing but Tailscale's direct-path UDP (remote-access.nix).
     networking.firewall = {
       enable = true;
+      # mkForce replaces every definition, nixpkgs' own [ "lo" ] too: list it,
+      # or the API server can't reach etcd on 127.0.0.1:2379 (2026-10-25).
       trustedInterfaces = lib.mkForce [
+        "lo"
         "cilium_host"
         "cilium_net"
         "cilium_vxlan"
