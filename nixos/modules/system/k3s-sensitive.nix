@@ -86,14 +86,26 @@ in
 
     # Piraeus (LINSTOR) replicates volumes with DRBD 9, which the guest's
     # kernel needs as a module of its own build: Piraeus's module loader
-    # can't compile one on NixOS.
+    # can't compile one on NixOS (homelab-sensitive removes it). Its
+    # storage pool is an LVM thin pool, so device-mapper's thin target too,
+    # loaded here: the satellite has no /lib/modules to load it from.
     boot.extraModulePackages = [ config.boot.kernelPackages.drbd ];
     boot.kernelModules = [
       "drbd"
       "drbd_transport_tcp"
+      "dm_thin_pool"
     ];
     boot.extraModprobeConfig = ''
       options drbd usermode_helper=disabled
+    '';
+
+    # The guest's own LVM looks at no device: the one LVM disk here is
+    # LINSTOR's (hosts/sensitive-disks.nix), and only the satellite's LVM,
+    # with its own configuration, manages it. Two LVMs activating the same
+    # VG, or this one scanning the DRBD devices built on it, is what Piraeus
+    # warns about; scanning nothing rules out both.
+    environment.etc."lvm/lvm.conf".text = ''
+      devices/global_filter = [ "r|.*|" ]
     '';
 
     # As modules/system/k3s: Cilium's VXLAN rides tailscale0, whose 500-packet
@@ -157,16 +169,14 @@ in
           4240 # cilium-health
           4244 # Hubble server
           9100 # node-exporter (the in-cluster DaemonSet, host network)
-          3366 # LINSTOR satellite (controller to satellite)
-          3367 # LINSTOR satellite, TLS
+          9962 # Cilium agent metrics
+          9963 # Cilium operator metrics
+          2381 # etcd metrics (--etcd-expose-metrics)
         ];
-        allowedTCPPortRanges = [
-          {
-            # DRBD resources' replication, one port each (Piraeus's default range).
-            from = 7000;
-            to = 7999;
-          }
-        ];
+        # Nothing for LINSTOR or DRBD: the satellites, and DRBD's
+        # replication with them, are on the pod network (Cilium's VXLAN
+        # below), where the cluster's network policy decides who reaches
+        # them.
         allowedUDPPorts = [
           8472 # Cilium VXLAN between the servers
         ];
@@ -212,6 +222,9 @@ in
         "--disable=servicelb"
         # Secrets in etcd encrypted (and so in its snapshots).
         "--secrets-encryption"
+        # etcd's metrics on the node's address too, :2381 (plain HTTP,
+        # read-only), for the cluster's vmagent.
+        "--etcd-expose-metrics"
         "--tls-san=api.s.rooty.dev"
         "--kube-apiserver-arg default-not-ready-toleration-seconds=60"
         "--kube-apiserver-arg default-unreachable-toleration-seconds=60"
@@ -314,9 +327,14 @@ in
     # new one each boot (the root is wiped) and they'd refuse the node as a
     # duplicate. The rest of /etc/rancher is k3s's kubeconfig, rewritten at
     # every start, and registries.yaml from this module.
+    #
+    # LVM's metadata backups and archive of LINSTOR's VG: the satellite
+    # keeps them here rather than in /etc/lvm (homelab-sensitive,
+    # infra/storage), for recovering the VG's metadata by hand.
     environment.persistence."/data".directories = [
       "/var/lib/rancher"
       "/etc/rancher/node"
+      "/var/lib/linstor-lvm"
     ];
   };
 }

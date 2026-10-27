@@ -6,7 +6,12 @@
 #                          cache, dots)
 #   virtio-sensitive-swap  vg/sensitive-swap: zswap's backing swap
 #   virtio-sensitive-data  vg/sensitive-data: XFS /data, k3s's (etcd,
-#                          containerd, local PVs) and LINSTOR's storage pool
+#                          containerd, local PVs) and LINSTOR's LVM
+#                          metadata backups (k3s-sensitive.nix)
+#   virtio-sensitive-linstor
+#                          vg/sensitive-linstor: no filesystem, not mounted;
+#                          LINSTOR's storage pool, an LVM thin pool Piraeus
+#                          makes on it (homelab-sensitive, infra/storage)
 #
 # No LUKS of their own: they're inside the machine's.
 { ... }:

@@ -139,6 +139,14 @@
           device = "/dev/vg/sensitive-data";
           serial = "sensitive-data";
         }
+        {
+          # LINSTOR's own: an LVM thin pool inside, made by Piraeus
+          # (homelab-sensitive, infra/storage). This machine's LVM doesn't
+          # look inside LVs (scan_lvs is off by default), so it never sees
+          # or activates the guest's VG.
+          device = "/dev/vg/sensitive-linstor";
+          serial = "sensitive-linstor";
+        }
       ];
     };
   };

@@ -10,10 +10,13 @@
 #
 # Bootstrap, per machine, by hand on <machine>-hv (sudo):
 #   1. lvcreate -L 32G -n sensitive vg; lvcreate -L 8G -n sensitive-swap vg;
-#      lvcreate -L 200G -n sensitive-data vg
+#      lvcreate -L 200G -n sensitive-data vg;
+#      lvcreate -L 100G -n sensitive-linstor vg
 #   2. mkfs.btrfs -L sensitive /dev/vg/sensitive, and in it the subvolumes
 #      root, persist, large, cache, dots; mkswap /dev/vg/sensitive-swap;
-#      mkfs.xfs -L sens-data /dev/vg/sensitive-data
+#      mkfs.xfs -L sens-data /dev/vg/sensitive-data. Nothing on
+#      sensitive-linstor: Piraeus makes its pool there, on a blank device
+#      (wipefs -a it if it ever held anything).
 #   3. The guest's ssh host key, made where it stays: ssh-keygen -t ed25519
 #      -N "" -f <persist>/etc/ssh/ssh_host_ed25519_key (persist mounted from
 #      step 2). Its public key, through ssh-to-age, is the guest's sops
