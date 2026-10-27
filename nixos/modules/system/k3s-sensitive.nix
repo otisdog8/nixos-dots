@@ -145,8 +145,26 @@ in
     # which ports exist at all, so a policy mistake opens nothing that isn't
     # listed here. Cilium's own interfaces stay trusted. The LAN gets
     # nothing but Tailscale's direct-path UDP (remote-access.nix).
+    # Cilium's DNS proxy, which FQDN rules (toFQDNs) need, behind two
+    # reverse-path checks. Cilium marks what it sends to its proxy
+    # (0x200/0xf00) and routes that mark to a table holding only a local
+    # route; both checks honour marks (hardening.nix's src_valid_mark=1, the
+    # firewall's --validmark), find that route and drop (2026-10-27):
+    # - the kernel's, on the pod's query, as a martian: a source that
+    #   resolves locally needs accept_local on the interface it came in on.
+    #   Pods' lxc interfaces are made at runtime from `default`; it also
+    #   reaches tailscale0 (whose peers can't send from this guest's
+    #   addresses) and Cilium's own. The firewall's rpfilter, which has no
+    #   --accept-local, still refuses a local source on every other packet.
+    # - the firewall's, on CoreDNS's answer: exempt the proxy mark only.
+    #   Marks never arrive from the wire, so a sender can't set it.
+    boot.kernel.sysctl."net.ipv4.conf.default.accept_local" = 1;
+
     networking.firewall = {
       enable = true;
+      extraCommands = ''
+        iptables -t mangle -I nixos-fw-rpfilter 1 -m mark --mark 0x200/0xf00 -j RETURN
+      '';
       # mkForce replaces every definition, nixpkgs' own [ "lo" ] too: list it,
       # or the API server can't reach etcd on 127.0.0.1:2379 (2026-10-25).
       trustedInterfaces = lib.mkForce [
