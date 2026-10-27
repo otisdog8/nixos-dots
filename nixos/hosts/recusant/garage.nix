@@ -7,8 +7,17 @@
 #   velero        — k3s cluster backups (velero)                   [in use]
 #   cnpg-backups  — k3s CloudNativePG WAL/base backups             [in use]
 #   gitea-rgw     — k3s Gitea object storage                       [in use]
-# The three k8s buckets are mirrored off-site to MEGA S4 with a read-only
-# key (backup-sync-ro) — see s4-backups.nix.
+#   sensitive-cnpg-broker  — the sensitive cluster's broker database  [new]
+#   sensitive-cnpg-litellm — the sensitive cluster's LiteLLM database [new]
+# The k8s buckets are mirrored off-site to MEGA S4 with a read-only key
+# (backup-sync-ro) — see s4-backups.nix.
+#
+# The sensitive-cnpg-* buckets hold ciphertext only: the sensitive cluster
+# encrypts (rclone crypt, its key never on this host) before writing, each
+# through its own bucket-scoped key (sensitive-cnpg-<tenant>-rw). Over the
+# tailnet, through the TLS vhost below; the tailnet policy grants
+# tag:sensitive this host's :443. (uorux/homelab-sensitive,
+# infra/databases/README.md.)
 #
 # Exposure: the S3 API binds recusant's tailscale IP so both the local Attic
 # server AND the k8s backup tenant on arquitens can reach it over the tailnet.

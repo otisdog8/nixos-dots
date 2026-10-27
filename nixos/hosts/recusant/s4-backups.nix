@@ -13,7 +13,8 @@
 # forget/prune retention, so this leg has real versioning.
 #
 # ── rclone S3→S3 → S4 bucket `recusant-garage` ───────────────────────────────
-# Mirrors the k8s-tenant Garage buckets (velero, cnpg-backups, gitea-rgw) —
+# Mirrors the k8s-tenant Garage buckets (velero, cnpg-backups, gitea-rgw,
+# and the sensitive cluster's sensitive-cnpg-*, already ciphertext) —
 # deliberately NOT nix-cache, which is a regenerable attic binary cache sharing
 # the same Garage instance. This content is sensitive (cnpg WAL = full DB
 # contents, velero backups can include k8s Secrets, gitea-rgw = repo data), so
@@ -94,6 +95,10 @@ let
     "velero"
     "cnpg-backups"
     "gitea-rgw"
+    # The sensitive cluster's database backups (garage.nix): encrypted
+    # before they reach Garage, so S4CRYPT encrypts them a second time.
+    "sensitive-cnpg-broker"
+    "sensitive-cnpg-litellm"
   ];
   # How long overwritten/deleted objects survive in archive/ — the undo window.
   # Days (int), not an rclone age string: the prune keys on the archive DATE
