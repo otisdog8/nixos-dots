@@ -256,25 +256,32 @@ in
       ++ map (ip: "--tls-san=${ip}") cfg.serverIps;
     };
 
-    # svc:sensitive, the tailnet's way in whichever server is up: one
-    # Tailscale Service, one tailnet address, which *.s.rooty.dev resolves
-    # to. Plain tcp forwarding, TLS end to end (Traefik's and k3s's own
-    # certificates; Tailscale terminates nothing). The tailnet policy grants
-    # its ports separately:
-    #  - 443: Traefik's websecure entrypoint, the APIs (broker, LiteLLM).
-    #  - 8443: Traefik's admin entrypoint: panels, Authelia, Grafana.
-    #  - 6443: this server's own API, as api.s.rooty.dev (a SAN above). Not
-    #    the kubernetes Service: tailscaled's own connections skip
-    #    Tailscale's routes, so it couldn't reach another server's tailnet
-    #    address (modules/system/k3s, 2026-10-18).
-    # tailscaled answers the service's address itself and dials these from
-    # the host, so nothing listens on the guest's own 443/8443 and the
-    # firewall above opens neither.
+    # The tailnet's ways in, whichever server is up: two Tailscale Services,
+    # each its own tailnet address, so the tailnet policy grants them to
+    # different peers (it grants by address and port, never by name). Plain
+    # tcp forwarding, TLS end to end (Traefik's and k3s's own certificates;
+    # Tailscale terminates nothing).
+    #  - svc:sensitive, which *.s.rooty.dev resolves to: :443, Traefik's
+    #    websecure entrypoint, the APIs (broker, LiteLLM), for agents and
+    #    hosts.
+    #  - svc:sensitive-admin, which each admin name has its own record for
+    #    (grafana, logs, auth, api; ahead of the wildcard): :443, Traefik's
+    #    admin entrypoint (its Service port 8443: panels, Authelia,
+    #    Grafana), and :6443, this server's own API as api.s.rooty.dev (a
+    #    SAN above). Not the kubernetes Service: tailscaled's own
+    #    connections skip Tailscale's routes, so it couldn't reach another
+    #    server's tailnet address (modules/system/k3s, 2026-10-18). For
+    #    Jacob's devices only.
+    # tailscaled answers the services' addresses itself and dials these from
+    # the host, so nothing listens on the guest's own 443 and the firewall
+    # above doesn't open it.
     services.tailscale.serve = {
       enable = true;
       services.sensitive.endpoints = {
         "tcp:443" = "tcp://${traefikClusterIp}:443";
-        "tcp:8443" = "tcp://${traefikClusterIp}:8443";
+      };
+      services.sensitive-admin.endpoints = {
+        "tcp:443" = "tcp://${traefikClusterIp}:8443";
         "tcp:6443" = "tcp://${cfg.nodeIp}:6443";
       };
     };
@@ -289,7 +296,10 @@ in
       wantedBy = [ "k3s.service" ];
       unitConfig.StartLimitIntervalSec = 0;
       serviceConfig = {
-        ExecStop = "${tailscale} serve drain svc:sensitive";
+        ExecStop = [
+          "${tailscale} serve drain svc:sensitive"
+          "${tailscale} serve drain svc:sensitive-admin"
+        ];
         ExecStartPre = pkgs.writeShellScript "tailscale-serve-wait" ''
           running=
           for _ in $(seq 60); do
@@ -335,6 +345,31 @@ in
       mirrors:
         "*":
     '';
+
+    # gVisor: a `runsc` runtime beside runc, for pods that name the
+    # `gvisor` RuntimeClass (homelab-sensitive, infra/runtime): agent-facing
+    # workloads like LiteLLM, whose system calls then reach gVisor's kernel
+    # rather than this one. k3s doesn't detect runsc itself; its containerd
+    # config imports config-v3.toml.d/*.toml from its template directory, so
+    # one file adds the runtime and leaves k3s's own config alone. The shim
+    # (containerd-shim-runsc-v1) and runsc are found on k3s's PATH. systrap
+    # platform (the default): no KVM inside this VM. systemd-cgroup because
+    # k3s runs the kubelet with the systemd cgroup driver under systemd.
+    systemd.services.k3s.path = [ pkgs.gvisor ];
+    systemd.tmpfiles.settings."10-k3s-runsc"."/var/lib/rancher/k3s/agent/etc/containerd/config-v3.toml.d/runsc.toml"."L+".argument =
+      "${pkgs.writeText "k3s-containerd-runsc.toml" ''
+        version = 3
+
+        [plugins.'io.containerd.cri.v1.runtime'.containerd.runtimes.runsc]
+          runtime_type = "io.containerd.runsc.v1"
+
+        [plugins.'io.containerd.cri.v1.runtime'.containerd.runtimes.runsc.options]
+          TypeUrl = "io.containerd.runsc.v1.options"
+          ConfigPath = "${pkgs.writeText "runsc.toml" ''
+            [runsc_config]
+              systemd-cgroup = "true"
+          ''}"
+      ''}";
 
     # Kubelet's graceful shutdown is clamped to logind's delay.
     services.logind.settings.Login.InhibitDelayMaxSec = gracePeriod;
