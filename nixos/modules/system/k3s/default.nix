@@ -174,7 +174,7 @@ in
 
     # Keep cluster nodes on the explicitly selected kernel series instead of
     # following the fleet-wide linuxPackages_latest default.
-    boot.kernelPackages = lib.mkOverride 90 pkgs.linuxPackages_7_2;
+    boot.kernelPackages = lib.mkOverride 90 pkgs.linuxPackages_7_3;
 
     # Cilium's VXLAN between nodes rides tailscale0, so every cross-node pod
     # packet waits in the tun's ring until tailscaled reads it. The ring is

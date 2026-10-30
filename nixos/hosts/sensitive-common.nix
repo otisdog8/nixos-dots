@@ -80,7 +80,7 @@ in
     # the fleet's linuxPackages_latest. Here rather than with k3s, so the
     # first boot (k3s still off) runs the kernel the cluster will. Move with
     # main's. DRBD 9 (Piraeus) is built for it (k3s-sensitive.nix).
-    boot.kernelPackages = lib.mkOverride 90 pkgs.linuxPackages_7_2;
+    boot.kernelPackages = lib.mkOverride 90 pkgs.linuxPackages_7_3;
 
     modules = {
       desktop.full.enable = false;
