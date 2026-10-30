@@ -42,7 +42,7 @@ VM, a VM on a k3s node, galaxy's GPU in its VM.
   same amount (k3s `--kubelet-arg=system-reserved=memory=…`). Disk: a sparse
   image at `/large/agent-vm/disk.img` (all three nodes have `/large`), 256G
   nominal.
-- The VM reaches the internet, the broker and attic on recusant, the homelab
+- The VM reaches the internet, the broker (svc:sensitive), attic on recusant, the homelab
   gateways and the nodes' 6443/443/80, and nothing else of the LAN or the
   tailnet (`modules.agentVm.network` in `nixos/default.nix`). On a node that
   includes the node's own API server, like any other client's.
@@ -98,8 +98,11 @@ restarted by a rebuild; a changed guest takes effect at `agent-vm restart`.
 
 ## 3. Pair hostd
 
-The broker's side needs the admin token (recusant's `agent-auth/env`
-secret); the code is typed at a prompt, never passed as an argument.
+The broker's side needs the admin token (the broker's `ADMIN_TOKEN`, in
+homelab-sensitive's `agent-auth-env` Secret) and the admin door:
+`AGENT_AUTH_URL=https://broker-admin.s.rooty.dev` (the agent door,
+broker.s.rooty.dev, refuses `/admin`). The code is typed at a prompt, never
+passed as an argument.
 
 ```sh
 # where the admin token is:
@@ -123,6 +126,13 @@ sudo agent-auth-hostd totp-enroll          # four QR codes, each shown once
 `user-arm`, `user-direct`, `root-arm`, `root-direct`, generated on the host.
 Name them by host in the authenticator: every host has its own four. Nothing
 runs on the host before this.
+
+A shell (`host_shell`) opens with its tier's arm code, never a direct one, or
+with Allow at the host's own desk and the password (polkit). Optional
+secrets, each with `sudo agent-auth-hostd totp-enroll --add <name>`:
+`user-shell` / `root-shell` (a shell code of its own instead of the arm
+code) and `root-unlock` (remote unlock after a lockdown; without it, unlock
+at the host).
 
 ## 5. Check hostd
 
@@ -170,7 +180,7 @@ avm ls
 ```
 
 The mint is approved by policy (`agents`/`mint` for a VM's orchestrator in
-recusant's `agent-auth-policy.yaml`); everything the new agent then asks for
+homelab-sensitive's `infra/agent-auth/app/policy.yaml`); everything the new agent then asks for
 goes through the same rules as any agent's, by its recorded fields
 (`placement: sandbox`, its project).
 
@@ -179,7 +189,7 @@ goes through the same rules as any agent's, by its recorded fields
 Nothing per host is needed in the broker's policy. Worth doing when a host
 gets a VM whose projects should have "their own" repo and namespace rules:
 list the project under `projects:` in
-`nixos/hosts/recusant/agent-auth-policy.yaml`.
+homelab-sensitive's `infra/agent-auth/app/policy.yaml`.
 
 ## Undo
 

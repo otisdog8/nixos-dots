@@ -56,12 +56,13 @@
       url = "github:uorux/live-container-migration";
       inputs.nixpkgs.follows = "nixpkgs";
     };
-    # agent-auth: credential broker for AI agents; runs on recusant as a native
-    # NixOS service (nixos/hosts/recusant/agent-auth.nix).
+    # agent-auth: credential broker for AI agents. The broker runs in the
+    # sensitive cluster (homelab-sensitive, infra/agent-auth); from here:
+    # hostd and sandboxd (nixos/modules/system/agent-auth-daemons.nix) and the
+    # client tools. The Rust port, at a release tag: the broker's image is
+    # pinned to the same one.
     agent-auth = {
-      # agent-sandbox: hostd and sandboxd (nixos/modules/system/agent-auth-daemons.nix).
-      # Back to main once it's merged there.
-      url = "github:uorux/agent-auth/agent-sandbox";
+      url = "github:uorux/agent-auth/v0.1.1?dir=rust";
       # Drop the follows if the package fails against nixos-unstable and you'd
       # rather build with agent-auth's own pinned nixpkgs.
       inputs.nixpkgs.follows = "nixpkgs";

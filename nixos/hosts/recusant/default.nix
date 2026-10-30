@@ -50,7 +50,6 @@
     ./backups.nix
     ./s4-backups.nix
     ./ddns.nix
-    ./agent-auth.nix
     ./hindsight.nix
     ./hermes-homelab-recusant.nix
     ./hermes-a2a.nix

@@ -118,9 +118,15 @@
           "ovh-1.rooty.dev"
         ];
         allowPorts = [
-          # recusant's nginx: agent-auth (the broker) and attic.
+          # recusant's nginx: attic.
           {
             addr = "100.110.239.45";
+            ports = [ 443 ];
+          }
+          # The sensitive cluster's svc:sensitive (*.s.rooty.dev): the
+          # broker, broker.s.rooty.dev.
+          {
+            addr = "100.112.98.253";
             ports = [ 443 ];
           }
         ]

@@ -1,6 +1,7 @@
 # agent-auth's daemons (agent-auth's docs/sandbox-design.md), both pinned to
 # the same broker key:
-#   - hostd, on every host: dials out to the broker on recusant, pairs once per
+#   - hostd, on every host: dials out to the broker (the sensitive cluster's
+#     broker.s.rooty.dev), pairs once per
 #     host. Where the agent VM runs it freezes the VM on lockdown; with
 #     modules.agentAuth.hostCommands it runs approved commands. It
 #     decides itself what runs, from this config, its own TOTP secrets
@@ -14,8 +15,8 @@
 # Inert until both exist:
 #   - the agent-auth flake input provides the modules;
 #   - `brokerPublicKey` below is set: the broker's public signing key, from
-#     `agent-auth admin broker-key` once BROKER_SIGNING_KEY is in recusant's
-#     agent-auth/env secret. Pinned here, in an audited commit, so no network
+#     `agent-auth admin broker-key` (the broker's BROKER_SIGNING_KEY; the
+#     same key moved from recusant to the sensitive cluster). Pinned here, in an audited commit, so no network
 #     path can substitute another broker.
 # Then pair, once each (the code is entered at the prompt, never as an
 # argument: it would land in shell history):
@@ -34,7 +35,7 @@
 }:
 let
   brokerPublicKey = "ed25519:CAGm4HjX5-lT9w2JNi7U1yomf5i7u8Sge5G7o0eNWpY";
-  brokerUrl = "https://agent-auth.recusant.rooty.dev";
+  brokerUrl = "https://broker.s.rooty.dev";
   modules = inputs.agent-auth.nixosModules or { };
   pinned = brokerPublicKey != null;
   hostName = config.networking.hostName;
@@ -82,8 +83,9 @@ let
 
   # The deploy steps as hostd templates (capability `tpl.<name>`): one named
   # command per step, with checked parameters, in place of an `sh -c` line an
-  # agent wrote. Mirrored, names and patterns, in recusant's
-  # agent-auth-policy.yaml (platforms.hostexec.templates) so the broker shows
+  # agent wrote. Mirrored, names and patterns, in the broker's policy
+  # (homelab-sensitive, infra/agent-auth/app/policy.yaml,
+  # platforms.hostexec.templates) so the broker shows
   # what a request expands to; what runs is this host's copy.
   checkout = commands.checkout;
   branchPattern = "[A-Za-z0-9][A-Za-z0-9._/-]*";
@@ -327,7 +329,7 @@ in
       focused window isn't fullscreen and do-not-disturb
       (`agent-auth-hostctl dnd 2h`) is off; Deny is the default button.
       Which requests may be asked at a desk is the broker's policy
-      (recusant's agent-auth-policy.yaml, `desktop:`)
+      (homelab-sensitive's infra/agent-auth/app/policy.yaml, `desktop:`)
     '';
     idleAfter = lib.mkOption {
       type = lib.types.ints.positive;

@@ -50,11 +50,11 @@ let
   instance = "hermes-homelab-recusant";
   stateDir = "/var/lib/${instance}";
 
-  agentAuth = inputs.agent-auth.packages.${pkgs.stdenv.hostPlatform.system}.default;
+  agentAuth = inputs.agent-auth.packages.${pkgs.stdenv.hostPlatform.system}.client;
 
-  # Dispatcher talks to the LOCAL broker (skip the nginx/TLS hop the system-wide
-  # AGENT_AUTH_URL uses) and to Hermes's loopback webhook.
-  brokerUrl = "http://127.0.0.1:${toString config.services.agent-auth.port}";
+  # Dispatcher talks to the broker (the sensitive cluster's, over the tailnet)
+  # and to Hermes's loopback webhook.
+  brokerUrl = "https://broker.s.rooty.dev";
   webhookPort = 8644;
   onOpenUrl = "http://127.0.0.1:${toString webhookPort}/webhooks/a2a-dispatch";
   stateFile = "${stateDir}/.hermes/a2a-serve-state.json";
@@ -150,7 +150,6 @@ in
     # broker or gateway not being up yet.
     after = [
       "network-online.target"
-      "agent-auth.service"
       "${instance}.service"
     ];
     wants = [ "network-online.target" ];

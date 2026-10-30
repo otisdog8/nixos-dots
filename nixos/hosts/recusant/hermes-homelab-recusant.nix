@@ -21,7 +21,7 @@
 #      server, note the ops channel ID. The agent answers @mentions in that
 #      one channel only (DISCORD_ALLOWED_CHANNELS); exec/skill approvals
 #      appear there too.
-#   2. agent-auth identity (broker runs on this host — see agent-auth.nix):
+#   2. agent-auth identity (the broker: homelab-sensitive, infra/agent-auth):
 #        agent-auth admin agent-create hermes-homelab-recusant \
 #          --lldap-username hermes-homelab-recusant --description "Hermes homelab ops"
 #      → copy the aa_... key ONCE into AGENT_AUTH_API_KEY below.
@@ -59,13 +59,12 @@
   ...
 }:
 let
-  # Only the MCP client entrypoint out of the broker venv — its bin/ carries
-  # generic console scripts (fastapi, alembic, ...) that would shadow real
-  # packages on the agent's PATH (same trick as modules/apps/agent-auth-client.nix).
+  # Only the MCP client entrypoint on the agent's PATH, not the CLI beside it
+  # in agent-auth's client package.
   agentAuthMcp = pkgs.runCommand "agent-auth-mcp-client" { } ''
     mkdir -p $out/bin
     ln -s ${
-      inputs.agent-auth.packages.${pkgs.stdenv.hostPlatform.system}.default
+      inputs.agent-auth.packages.${pkgs.stdenv.hostPlatform.system}.client
     }/bin/agent-auth-mcp $out/bin/agent-auth-mcp
   '';
 
@@ -315,13 +314,13 @@ in
       # ${VAR} placeholders resolve from $HERMES_HOME/.env at runtime, so the
       # store-side config.yaml never contains a secret.
       mcp_servers = {
-        # Credential broker (../agent-auth.nix). The tool descriptions teach
+        # Credential broker (broker.s.rooty.dev). The tool descriptions teach
         # the request → wait → retry/escalate protocol; grants get human
         # approval in Discord on the broker side.
         agent-auth = {
           command = "agent-auth-mcp";
           env = {
-            AGENT_AUTH_URL = "http://127.0.0.1:${toString config.services.agent-auth.port}";
+            AGENT_AUTH_URL = "https://broker.s.rooty.dev";
             AGENT_AUTH_API_KEY = "\${AGENT_AUTH_API_KEY}";
           };
         };
