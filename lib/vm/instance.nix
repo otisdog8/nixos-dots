@@ -987,6 +987,10 @@ let
       --mem size=${toString memory}
       --cpus num-cores=${toString vcpus}
       ${lib.optionalString (!camera) "--no-usb"}
+      # No emulated i8042 or CMOS RTC (less host-side emulation to attack):
+      # reboot is the FADT reset register, wall time comes from kvmclock.
+      --no-i8042
+      --no-rtc
       ${if prefault then "--prefault-memory" else "--balloon-page-reporting"}
       --serial type=stdout,hardware=serial,console=true
       --vsock "cid=$cid"

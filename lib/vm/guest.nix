@@ -215,7 +215,10 @@ let
   '';
 in
 {
-  imports = [ ./guest-graphics.nix ];
+  imports = [
+    ./guest-graphics.nix
+    ./guest-hardening.nix
+  ];
 
   system.stateVersion = sbxHost.stateVersion;
   networking.hostName = "sandbox-vm";

@@ -166,7 +166,10 @@ in
         "${kernel.dev}/lib/modules/${kernel.modDirVersion}/build"
         "M=$(PWD)"
         "CONFIG_VIRTIO_GPU_NV=m"
-        "NVGPU_RUST=0"
+        # The Rust ioctl parsers (no unsafe, no panics), upstream's default:
+        # /dev/nvidia* is 0666 in the guest, and these parse what it's sent.
+        # The Makefile stops the build if this rustc isn't the kernel's.
+        "NVGPU_RUST=1"
       ];
       buildFlags = [ "modules" ];
       # modules_install, not a copy: it runs the kernel's signing rule, which

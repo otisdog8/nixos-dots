@@ -299,6 +299,10 @@ let
       --mem size=${toString cfg.memory}
       --cpus num-cores=${toString cfg.vcpus}
       --no-usb
+      # No emulated i8042 or CMOS RTC (less host-side emulation to attack):
+      # reboot is the FADT reset register, wall time comes from kvmclock.
+      --no-i8042
+      --no-rtc
       --balloon-page-reporting
       --serial type=stdout,hardware=serial,console=true
       --vsock "cid=${toString cid}"

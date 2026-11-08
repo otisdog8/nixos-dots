@@ -49,6 +49,8 @@ let
   '';
 in
 {
+  imports = [ ./guest-hardening.nix ];
+
   system.stateVersion = agentVmHost.stateVersion;
   networking.hostName = "agent-vm";
 

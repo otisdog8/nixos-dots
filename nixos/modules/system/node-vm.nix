@@ -253,6 +253,12 @@ let
             }.${v.coreScheduling}
           }
           --hugepages
+          # No emulated i8042 or CMOS RTC: a reboot is the FADT reset
+          # register, which crosvm reports as a reset (32) like before; wall
+          # time comes from kvmclock (then timesyncd), and nothing here reads
+          # or sets an RTC.
+          --no-i8042
+          --no-rtc
           --serial type=stdout,hardware=serial,console=true
           -s ${rt name}/crosvm.sock
           --shared-dir "${core.storeShare}"
@@ -345,7 +351,8 @@ let
             "/dev/kvm rw"
             "char-macvtap rw"
           ]
-          # root:kvm 0666 (udev's static node); the VMM is in kvm anyway.
+          # root:kvm 0660 (hardening.nix's udev rule); the VMM unit has kvm as a
+          # supplementary group (core.hardening.vmm).
           ++ lib.optional v.vhostNet "/dev/vhost-net rw"
           ++ map (d: "${d} rw") devices;
           # The guest's memory is shmem charged here, and once its page cache
