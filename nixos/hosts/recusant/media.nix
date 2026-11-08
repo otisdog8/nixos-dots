@@ -31,6 +31,11 @@ in
   modules.apps.sabnzbd = {
     enable = true;
     openFirewall = false;
+    # download_dir and complete_dir in the persisted ini.
+    writablePaths = [
+      "/media/Downloads/sabnzbd-incomplete"
+      "/media/Downloads/sabnzbd"
+    ];
   };
 
   services.nginx.virtualHosts."jellyfin.rooty.dev" = {
