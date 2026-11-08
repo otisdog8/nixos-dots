@@ -12,6 +12,20 @@
     pkgs,
     ...
   }:
+  let
+    # Without their .desktop entries. wine.desktop and protontricks-launch.desktop
+    # register as the handler for .exe/.msi/.bat/.lnk, and the desktop portal
+    # opens a file with the only handler without asking, so a sandboxed app
+    # could hand the host's unsandboxed wine a Windows binary to run. Start
+    # things with `wine …` (or wine-vm) explicitly instead.
+    noDesktop =
+      pkg:
+      pkgs.symlinkJoin {
+        name = "${pkg.name}-no-desktop";
+        paths = [ pkg ];
+        postBuild = "rm -rf $out/share/applications";
+      };
+  in
   {
     imports = [
       ../../../lib/features/gui.nix
@@ -25,7 +39,31 @@
       name = "wine";
       # wineWow64Packages: new WoW64 mode wine (replaces deprecated wineWowPackages),
       # supports running 32-bit Windows apps on a 64-bit-only host.
-      package = pkgs.wineWow64Packages.staging;
+      #
+      # winemenubuilder off (every wine command wrapped with
+      # WINEDLLOVERRIDES=winemenubuilder.exe=d): it writes the prefixes'
+      # programs and file associations into ~/.local/share/applications and
+      # ~/.local/share/mime, which would make the unsandboxed wine a file
+      # handler again, the way the .desktop entries above did. Entries it made
+      # before stay until removed: ~/.local/share/applications/wine*,
+      # ~/.local/share/mime/packages/x-wine*, ~/.config/menus/applications-merged/wine*.
+      package =
+        let
+          wine = pkgs.wineWow64Packages.staging;
+        in
+        pkgs.symlinkJoin {
+          name = "${wine.name}-no-menubuilder";
+          paths = [ (noDesktop wine) ];
+          nativeBuildInputs = [ pkgs.makeWrapper ];
+          postBuild = ''
+            for f in ${wine}/bin/*; do
+              [ -f "$f" ] && [ -x "$f" ] || continue
+              rm "$out/bin/$(basename "$f")"
+              makeWrapper "$f" "$out/bin/$(basename "$f")" \
+                --suffix WINEDLLOVERRIDES ";" "winemenubuilder.exe=d"
+            done
+          '';
+        };
       packageName = "wine";
 
       # Unsandboxed: wine runs arbitrary Windows binaries from arbitrary install
@@ -71,7 +109,7 @@
           # winetricks, protontricks, dxvk, and vkd3d-proton are separate.
           environment.systemPackages = with pkgs; [
             winetricks
-            protontricks
+            (noDesktop protontricks)
             dxvk
             vkd3d-proton
             # Performance overlay + frame limiter
