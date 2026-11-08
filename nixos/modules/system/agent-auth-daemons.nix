@@ -236,6 +236,8 @@ let
   # git-crypt fail, never yields other content), and built as a path: flake.
   # The GitHub copy can't be built (its secrets.nix is git-crypt's
   # ciphertext).
+  # TODO: think about requiring signed commits (or another signature or
+  # approval check) before building: this builds any commit id it's given.
   dotsRebuild = pkgs.writeShellScriptBin "nixos-dots-rebuild" ''
     set -euo pipefail
     export PATH=${deployPath}:$PATH

@@ -855,6 +855,21 @@ in
     security.forcePageTableIsolation = lib.mkDefault (!isGuest);
     # security.lockKernelModules intentionally left default (false) so DKMS
     # modules (nvidia, openrazer, virtualbox) can still load at runtime.
+    # TODO: consider raising lockdown to integrity at runtime after boot (a
+    # timer ~15 min after boot, so a bad setting can't brick early boot; a
+    # one-way write to /sys/kernel/security/lockdown). Under integrity only
+    # signed modules load, and the modules here load unsigned
+    # (TAINT_UNSIGNED_MODULE on excelsior, in-tree ones included): so every
+    # module a host will ever need must have loaded by then (nvidia,
+    # v4l2loopback, the nvgpu kmod, drbd, and the hotplugged ones), or
+    # nixpkgs' module signing must be sorted out first.
+    # Desktops could likely take confidentiality (it breaks kernel-memory
+    # reads: kprobes, bpftrace, perf kernel samples, /proc/kcore; Cilium and
+    # Tetragon only matter on k3s). Not obviously necessary.
+
+    # TODO (low priority): sudo-rs or run0 instead of setuid sudo, and
+    # security.sudo.execWheelOnly meanwhile. sudo-rs is memory-safe with
+    # fewer features, but has had logic CVEs of its own.
 
     # Tighter umask for newly created system files / new accounts.
     security.loginDefs.settings.UMASK = lib.mkDefault "027";

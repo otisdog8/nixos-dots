@@ -25,6 +25,11 @@ let
   # Traefik's Service, pinned in homelab-sensitive (infra/traefik).
   traefikClusterIp = "10.53.0.80";
   tailscale = lib.getExe config.services.tailscale.package;
+  # TODO: seccompDefault: true (RuntimeDefault for every pod that doesn't
+  # name a profile; containerd's in k3s 1.36 also blocks io_uring and
+  # userfaultfd). Test an lcm migration first (CRIU), and give what fails an
+  # explicit Unconfined. Running containers keep their profile until
+  # they're recreated.
   kubeletConfig = pkgs.writeText "k3s-sensitive-kubelet-config.yaml" ''
     apiVersion: kubelet.config.k8s.io/v1beta1
     kind: KubeletConfiguration

@@ -82,6 +82,12 @@
           # `op` and offer system authentication (docs/op-broker.md, "Why not
           # the container"); the container stays available per host.
           modules.apps.onepassword.sandbox.mode = lib.mkDefault "vm";
+          # TODO: hostKeyring = false, with a Secret Service inside the VM instead
+          # (gnome-keyring or KeePassXC's, its collection on the VM's persisted
+          # storage, unlocked at login by a key only the VM's storage holds).
+          # Today the VM reaches the host's whole Secret Service, every unlocked
+          # kwallet collection, for one device token. Check that 1Password
+          # still remembers the device for two-factor sign-in after the change.
           modules.apps.onepassword.sandbox.vm.hostKeyring = lib.mkDefault true;
           # 1Password copies through data-control (arboard / wl-clipboard-rs),
           # which a sandbox's Wayland socket doesn't have: nothing it copied

@@ -32,6 +32,11 @@ let
   apiAddress = lib.removePrefix "--bind-address=" bindFlag;
   traefikClusterIp = "10.43.243.178";
   lldapClusterIp = "10.43.6.245";
+  # TODO: seccompDefault: true (RuntimeDefault for every pod that doesn't
+  # name a profile; containerd's in k3s 1.36 also blocks io_uring and
+  # userfaultfd). Test an lcm migration first (CRIU), and give what fails an
+  # explicit Unconfined. Running containers keep their profile until
+  # they're recreated.
   kubeletConfig = pkgs.writeText "k3s-kubelet-config.yaml" ''
     apiVersion: kubelet.config.k8s.io/v1beta1
     kind: KubeletConfiguration
