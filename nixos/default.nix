@@ -95,7 +95,9 @@
       pcr-verification.enable = lib.mkDefault false; # Opt-in per host
       secureboot.enable = lib.mkDefault true; # Opt-out per host (liveusb disables)
       remote-access.enable = lib.mkDefault true;
-      virt.enable = lib.mkDefault true;
+      # libvirt is off unless a host asks (virt.nix's KVM module options
+      # apply either way); the sandbox, agent and node VMs are crosvm.
+      virt.enable = lib.mkDefault false;
       hardware.openrazer.enable = lib.mkDefault false;
       # Disk-health hygiene (scrubs/TRIM/SMART). Every piece is a no-op on hosts
       # lacking the relevant hardware/filesystem, so it's on by default fleet-wide.
@@ -287,6 +289,15 @@
 
   # Services
   services.fwupd.enable = true;
+  # No udisks, though fwupd turns it on: it lets any session process have
+  # root attach and mount a crafted image (loop-setup is allow_active), which
+  # puts every filesystem and the LVM/bcache parsers in reach. fwupd finds
+  # the ESP through EspLocation instead (efiSysMountPoint), and loses only
+  # disk firmware updates. No file-manager automount.
+  services.udisks2.enable = lib.mkForce false;
+  # No ModemManager (NetworkManager turns it on with mkDefault, so a plain
+  # value): nothing here has a modem, and it probes every serial port.
+  networking.modemmanager.enable = false;
   services.dbus.implementation = "broker";
 
   system.stateVersion = stateVersion;

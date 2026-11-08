@@ -45,7 +45,8 @@
 
   # Enable full desktop environment
   # This automatically enables: browsers, communication, productivity, media bundles
-  # along with shared desktop modules (base, fonts, xdg, theming, printing)
+  # along with shared desktop modules (base, fonts, xdg, theming; printing is
+  # off by default, desktop/full/default.nix)
   modules = {
     # The agents' shared sandbox is a VM here (`claude-agents`, `codex-agents`,
     # and the other agents' plain commands).

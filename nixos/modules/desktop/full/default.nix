@@ -46,7 +46,8 @@ in
           fonts.enable = lib.mkDefault true;
           xdg.enable = lib.mkDefault true;
           theming.enable = lib.mkDefault true;
-          printing.enable = lib.mkDefault true;
+          # No CUPS or Avahi (network parsers, mDNS on the LAN); turn on per host.
+          printing.enable = lib.mkDefault false;
         };
       };
 

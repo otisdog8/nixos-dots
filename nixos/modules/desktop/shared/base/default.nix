@@ -64,8 +64,8 @@ in
       # Trayscale - Tailscale system tray
       services.trayscale.enable = true;
 
-      # Dconf settings for virt-manager
-      dconf.settings = {
+      # Dconf settings for virt-manager, where libvirt runs (virt.nix).
+      dconf.settings = lib.mkIf config.virtualisation.libvirtd.enable {
         "org/virt-manager/virt-manager/connections" = {
           autoconnect = [ "qemu:///system" ];
           uris = [ "qemu:///system" ];

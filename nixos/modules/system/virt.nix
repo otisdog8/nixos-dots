@@ -36,7 +36,13 @@ in
         ''
           options kvm_amd nested=${n}
           options kvm_intel nested=${n}
-        '';
+        ''
+        # No virtual PMU on the servers (recusant, the *-hv hosts): crosvm
+        # passes CPUID leaf 0xA through, so every guest reaches KVM's PMU
+        # emulation. Guests lose hardware perf events, nothing else.
+        + lib.optionalString (
+          config.modules.system.hardening.enable && config.modules.system.hardening.profile == "server"
+        ) "options kvm enable_pmu=0\n";
     }
     (lib.mkIf cfg.enable {
       # Virtualization packages
