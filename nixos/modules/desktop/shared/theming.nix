@@ -164,6 +164,10 @@ in
 
       services.mako = {
         enable = true;
+        # Images decoded by glycin's sandboxed loaders, not gdk-pixbuf's own
+        # (pkgs/mako-glycin). The same package is on the system's PATH
+        # (hyprland/default.nix), for makoctl.
+        package = pkgs.callPackage ../../../../pkgs/mako-glycin { };
         settings = {
           border-color = "#282a36";
           "urgency=low" = {

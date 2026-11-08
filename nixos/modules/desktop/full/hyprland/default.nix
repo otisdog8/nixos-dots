@@ -262,7 +262,9 @@ in
       fuzzel
       brightnessctl
       hyprpolkitagent
-      mako
+      # mako with glycin (pkgs/mako-glycin): the one its user unit runs
+      # (shared/theming.nix), so `mako` here is the same build.
+      (pkgs.callPackage ../../../../../pkgs/mako-glycin { })
       hyprshade
       psmisc
       hyprlandPkg
