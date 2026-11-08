@@ -224,6 +224,8 @@ in
   networking.hostName = "sandbox-vm";
 
   boot = {
+    # lib/vm/guest-kernel.nix's minimal kernel, or the host's
+    # (modules.sandbox.vm.guestKernel).
     kernelPackages = sbxHost.kernelPackages;
     loader.grub.enable = false;
     initrd.kernelModules = [

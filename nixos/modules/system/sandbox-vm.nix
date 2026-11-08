@@ -23,6 +23,13 @@ let
     src = inputs.virtio-nvgpu;
   };
 
+  # The guests' kernel (modules.sandbox.vm.guestKernel): lib/vm/guest-kernel.nix,
+  # or the host's own. The nvgpu kmod is built against whichever it is.
+  guestKernel = import ../../../lib/vm/guest-kernel.nix { inherit lib pkgs; };
+  minimalKernel = cfg.guestKernel == "minimal";
+  guestKernelPackages =
+    if minimalKernel then guestKernel.kernelPackages else config.boot.kernelPackages;
+
   # Groups (modules.sandbox.groups) as VMs: one instance per group, from the
   # member records of whichever of its apps are enabled here.
   mkInstance = import ../../../lib/vm/instance.nix { inherit config lib pkgs; };
@@ -127,8 +134,7 @@ let
       locale = config.i18n.defaultLocale;
       timeZone = config.time.timeZone;
       stateVersion = config.system.stateVersion;
-      # Same kernel as the host: nothing extra to build, and it has virtio-fs/vsock.
-      kernelPackages = config.boot.kernelPackages;
+      kernelPackages = guestKernelPackages;
       # virtio-nvgpu guests run NVIDIA's userspace at exactly the host driver's
       # release, so they take the host's own driver package.
       nvidiaPackage = if cfg.nvgpuAvailable then config.hardware.nvidia.package else null;
@@ -137,7 +143,7 @@ let
         if cfg.nvgpuAvailable then
           {
             inherit (nvgpu) wlGuest;
-            kmod = nvgpu.kmod config.boot.kernelPackages;
+            kmod = nvgpu.kmod guestKernelPackages;
           }
         else
           null;
@@ -148,6 +154,7 @@ let
       # nixpkgs a second time.
       { nixpkgs.pkgs = pkgs; }
     ]
+    ++ lib.optional minimalKernel guestKernel.module
     ++ cfg.guestModules;
   };
 in
@@ -172,6 +179,34 @@ in
         sockets, the rest of the guest filesystem). Defense in depth; off by
         default until it has been tried on hardware.
       '';
+    };
+
+    guestKernel = lib.mkOption {
+      type = lib.types.enum [
+        "minimal"
+        "host"
+      ];
+      default = "minimal";
+      description = ''
+        The kernel the app VMs boot (and, by default, the agent VM:
+        modules.agentVm.guestKernel).
+        - minimal: lib/vm/guest-kernel.nix, the same 7.3 source as nixpkgs'
+          linux_7_3 with only what these guests use (crosvm's virtio devices,
+          the guest's own services, the apps' sandboxes, 32-bit, USB cameras).
+          Built here (not in the binary cache): one build serves every VM on
+          every host whose nixpkgs is the same.
+        - host: the host's own boot.kernelPackages, as before; the fallback
+          if the minimal kernel lacks something an app needs.
+        Takes effect at each VM's next start.
+      '';
+    };
+
+    minimalGuestKernel = lib.mkOption {
+      type = lib.types.raw;
+      readOnly = true;
+      internal = true;
+      default = guestKernel;
+      description = "lib/vm/guest-kernel.nix: the minimal guest kernel, its kernelPackages, and the NixOS module a guest booting it needs (also the agent VM's).";
     };
 
     dns = lib.mkOption {

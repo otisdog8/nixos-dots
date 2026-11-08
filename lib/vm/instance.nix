@@ -928,8 +928,9 @@ let
     # crosvm's GPU device always gives cross-domain VMs a display on the same
     # Wayland socket (its `hidden` is honoured on Windows only), and opens it as
     # a host window, titled "crosvm", once the guest scans anything out: the
-    # kernel's framebuffer console does, at boot. Cross-domain Wayland doesn't
-    # use the display, so the guest's connector is disabled and nothing is.
+    # host kernel's framebuffer console does, at boot (guestKernel = "host";
+    # the minimal kernel has no fbdev or VT). Cross-domain Wayland doesn't use
+    # the display, so the guest's connector is disabled and nothing is.
     ++ lib.optional crossDomain "video=Virtual-1:d"
     # zswap in front of the guest's swap (guest.nix sbx-swap): this kernel's
     # compressor is zstd by default; the shrinker writes cold pages out to

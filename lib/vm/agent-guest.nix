@@ -55,7 +55,7 @@ in
   networking.hostName = "agent-vm";
 
   boot = {
-    # Same kernel as the host: nothing extra to build, and it has virtio-fs/vsock.
+    # The app VMs' minimal kernel or the host's (modules.agentVm.guestKernel).
     kernelPackages = agentVmHost.kernelPackages;
     loader.grub.enable = false;
     initrd.kernelModules = [

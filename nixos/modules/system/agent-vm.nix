@@ -58,6 +58,11 @@ let
   # fork's patched crosvm.
   gpu = cfg.gpu.enable;
   nvgpu = config.modules.sandbox.vm.nvgpu;
+  # The guest's kernel (modules.agentVm.guestKernel): the app VMs' minimal one
+  # (lib/vm/guest-kernel.nix), or the host's own.
+  minimalKernel = cfg.guestKernel == "minimal";
+  minimal = config.modules.sandbox.vm.minimalGuestKernel;
+  guestKernelPackages = if minimalKernel then minimal.kernelPackages else config.boot.kernelPackages;
   gpuUser = "sbx-agentvm-gpu";
   gpuWindowArgs = nvgpu.windowArgs {
     windowMiB = cfg.gpu.windowMiB;
@@ -97,14 +102,13 @@ let
       locale = config.i18n.defaultLocale;
       timeZone = config.time.timeZone;
       stateVersion = config.system.stateVersion;
-      # Same kernel as the host: nothing extra to build, and it has virtio-fs/vsock.
-      kernelPackages = config.boot.kernelPackages;
+      kernelPackages = guestKernelPackages;
       # virtio-nvgpu's guest module for that kernel, and NVIDIA's userspace at
       # exactly the host driver's release (the guest's must be the host's).
       nvgpu =
         if gpu then
           {
-            kmod = nvgpu.kmod config.boot.kernelPackages;
+            kmod = nvgpu.kmod guestKernelPackages;
             nvidiaPackage = config.hardware.nvidia.package;
           }
         else
@@ -115,6 +119,7 @@ let
       # Reuse the host's package set (overlays included).
       { nixpkgs.pkgs = pkgs; }
     ]
+    ++ lib.optional minimalKernel minimal.module
     ++ cfg.guestModules;
   };
   guestTop = guest.config.system.build.toplevel;
@@ -405,6 +410,21 @@ in
     vcpus = lib.mkOption {
       type = lib.types.ints.positive;
       default = 8;
+    };
+
+    guestKernel = lib.mkOption {
+      type = lib.types.enum [
+        "minimal"
+        "host"
+      ];
+      default = config.modules.sandbox.vm.guestKernel;
+      defaultText = lib.literalExpression "config.modules.sandbox.vm.guestKernel";
+      description = ''
+        The guest's kernel: "minimal", the app VMs' (lib/vm/guest-kernel.nix,
+        with btrfs, overlayfs and the nvgpu kmod for this VM), or "host", the
+        host's own boot.kernelPackages. Takes effect at the next
+        `agent-vm restart`.
+      '';
     };
 
     disk = {
