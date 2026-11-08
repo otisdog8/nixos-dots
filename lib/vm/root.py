@@ -31,8 +31,9 @@ bounding set, no network).
       hooks read-only), set up on the clone first. Then it's moved onto a mount point
       in a private tmpfs at the stage, in the host's mount namespace, which is
       where systemd resolves BindPaths= sources. Private, as is BASE/stage
-      itself (a bind onto itself, made once), so none of it propagates into
-      any other unit's namespace, not even the empty tmpfs. Before that
+      itself (a bind onto itself, made private after it's attached, and again
+      on every launch), so none of it propagates into any other unit's
+      namespace, not even the empty tmpfs. Before that
       namespace is entered every capability the work there doesn't need is
       gone for good (restrict_caps): the unit's read-only view of the host
       stays behind.
@@ -305,20 +306,66 @@ def drop_to(uid, gid, groups):
     os.setresuid(uid, uid, uid)
 
 
+_creds = {}
+
+
 def user_creds(user):
-    return user["uid"], user["gid"], os.getgrouplist(user["name"], user["gid"])
+    """(uid, gid, groups), looked up once: stage() primes it before entering
+    the host's mount namespace, so the group database read is the unit's."""
+    key = (user["name"], user["uid"], user["gid"])
+    if key not in _creds:
+        _creds[key] = (user["uid"], user["gid"], os.getgrouplist(user["name"], user["gid"]))
+    return _creds[key]
 
 
-def as_user(creds, fn):
+PR_SET_DUMPABLE = 4
+
+
+def child_setup(creds, keep):
+    """In a fresh child: every fd but stdio and `keep` closed (it gets none of
+    root's others), the timeout armed, dropped to `creds`, and not dumpable
+    (no ptrace or /proc access by the uid it now shares)."""
+    keep = set(keep) | {0, 1, 2}
+    for name in os.listdir("/proc/self/fd"):
+        fd = int(name)
+        if fd not in keep:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+    signal.alarm(CHILD_TIMEOUT)
+    drop_to(*creds)
+    prctl(PR_SET_DUMPABLE, 0)
+
+
+def reap(child, ready_fd):
+    """Wait for `ready_fd` (or the child's exit) until the deadline; a child
+    that hasn't answered by then (stopped by its uid's other processes, say,
+    where the alarm can't fire) is killed. True if `ready_fd` is readable."""
+    pfd = os.pidfd_open(child)
+    try:
+        p = select.poll()
+        p.register(pfd, select.POLLIN)
+        if ready_fd is not None:
+            p.register(ready_fd, select.POLLIN)
+        events = dict(p.poll((CHILD_TIMEOUT + 5) * 1000))
+        if not events:
+            os.kill(child, signal.SIGKILL)
+        return ready_fd is not None and ready_fd in events
+    finally:
+        os.close(pfd)
+
+
+def as_user(creds, fn, keep=()):
     """Run `fn` (returning an fd) in a child with `creds` (uid, gid, groups);
-    the fd comes back over a socket. The child dies after CHILD_TIMEOUT."""
+    the fd comes back over a socket. The child keeps only the fds in `keep`
+    (what `fn` uses) and dies after CHILD_TIMEOUT."""
     a, b = socket.socketpair(socket.AF_UNIX, socket.SOCK_SEQPACKET)
     child = os.fork()
     if child == 0:
         a.close()
         try:
-            signal.alarm(CHILD_TIMEOUT)
-            drop_to(*creds)
+            child_setup(creds, list(keep) + [b.fileno()])
             fd = fn()
             socket.send_fds(b, [b"ok"], [fd])
             os._exit(0)
@@ -329,7 +376,10 @@ def as_user(creds, fn):
                 os._exit(1)
     b.close()
     try:
-        msg, fds, _flags, _addr = socket.recv_fds(a, 700, 1)
+        if reap(child, a.fileno()):
+            msg, fds, _flags, _addr = socket.recv_fds(a, 700, 1)
+        else:
+            msg, fds = b"", []
     finally:
         a.close()
         os.waitpid(child, 0)
@@ -343,18 +393,19 @@ def as_user(creds, fn):
     raise Refused(text.split(":", 2)[2] if text.startswith("err:") else "timed out or died")
 
 
-def run_as(creds, fn):
-    """Run `fn` in a child with `creds`; True if it finished without error."""
+def run_as(creds, fn, keep=()):
+    """Run `fn` in a child with `creds` (keeping only the fds in `keep`); True
+    if it finished without error in time."""
     child = os.fork()
     if child == 0:
         try:
-            signal.alarm(CHILD_TIMEOUT)
-            drop_to(*creds)
+            child_setup(creds, keep)
             fn()
             os._exit(0)
         except BaseException as e:
             log(f"as uid {creds[0]}: {e}")
             os._exit(1)
+    reap(child, None)
     _, status = os.waitpid(child, 0)
     return status == 0
 
@@ -545,18 +596,21 @@ def mount_id(fd):
 
 def private_mount_root(parent_fd, name):
     """Make parent/name (a root-only folder) a private mount of its own, a bind
-    onto itself, unless it already is one: what is mounted under it later then
-    propagates nowhere, where under the shared /run every new mount is copied
-    into each namespace that has /run as a slave. Only this bind is copied,
-    once, empty."""
+    onto itself (unless it already is a mount): what is mounted under it later
+    then propagates nowhere, where under the shared /run every new mount is
+    copied into each namespace that has /run as a slave. Only this bind is
+    copied, once, empty. Private AFTER it's attached (attached under a shared
+    mount it would join a new peer group), and again if it already was a
+    mount (one made shared by an older version stays a mount until reboot)."""
     fd = os.open(name, os.O_PATH | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC, dir_fd=parent_fd)
     try:
         if mount_id(fd) != mount_id(parent_fd):
+            mount_setattr(fd, propagation=MS_PRIVATE, recursive=False)
             return
         tree = open_tree(fd, recursive=False)
         try:
-            mount_setattr(tree, propagation=MS_PRIVATE, recursive=False)
             move_mount(tree, fd)
+            mount_setattr(tree, propagation=MS_PRIVATE, recursive=False)
         finally:
             os.close(tree)
     finally:
@@ -612,7 +666,7 @@ def user_git_entry(user):
             return fd
 
         try:
-            return as_user(creds, fn)
+            return as_user(creds, fn, (dir_fd,))
         except FileNotFoundError:
             return None
 
@@ -632,8 +686,9 @@ def read_only_onto(fd, recursive):
 def guard_git(tree, lookup, path):
     """The git guard (above) on the detached `tree`, a read-write clone of
     `path`. `lookup(dir_fd, name, make_dir)`: git_entry, as whoever may look
-    there. What it covered (relative names); a .git or entry that is a
-    symlink is left alone (logged)."""
+    there. What it covered (relative names); a .git that is a symlink is left
+    alone (logged), an entry in it that is one (or anything but a file or a
+    folder) fails it."""
 
     def entry(dir_fd, name, make_dir=False):
         try:
@@ -659,14 +714,17 @@ def guard_git(tree, lookup, path):
             move_mount(pin, g)
             done = [".git"]
             for name in GIT_READ_ONLY:
-                fd = entry(pin, name, make_dir=name == "hooks")
+                # A symlink (or a FIFO, a socket…) where one should be fails
+                # the share: it can't be pinned, and git would follow it.
+                fd = lookup(pin, name, name == "hooks")
                 if fd is None:
                     continue
                 try:
                     mode = os.fstat(fd).st_mode
-                    if stat.S_ISREG(mode) or stat.S_ISDIR(mode):
-                        read_only_onto(fd, recursive=stat.S_ISDIR(mode))
-                        done.append(f".git/{name}")
+                    if not (stat.S_ISREG(mode) or stat.S_ISDIR(mode)):
+                        raise Refused(f"{path}: .git/{name} is not a file or a folder")
+                    read_only_onto(fd, recursive=stat.S_ISDIR(mode))
+                    done.append(f".git/{name}")
                 finally:
                     os.close(fd)
             return done
@@ -740,7 +798,8 @@ def stage_items(cfg, project):
 def launch_dir(base, rt):
     """RT, a launch dir straight under BASE."""
     canonical(rt)
-    if not rt.startswith(base.rstrip("/") + "/") or "/" in rt[len(base.rstrip("/")) + 1 :]:
+    b = base.rstrip("/")
+    if not rt.startswith(b + "/") or "/" in rt[len(b) + 1 :] or rt == f"{b}/stage":
         raise Refused(f"{rt}: not a launch dir of {base}")
     return rt
 
@@ -764,6 +823,7 @@ def stage(cfg, base, key, rt, project=None):
         check_item(item, user)
     stash_owner = pwd.getpwnam(cfg["stashOwner"]).pw_uid if any(i.get("stash") for i in items) else None
     ids = stage_idmap(cfg)
+    user_creds(user)  # the group lookup, before the host's namespace
     enter_host_mount_ns()
     userns = idmap_userns(*ids) if ids else None
     try:
@@ -896,24 +956,61 @@ def unstage(base, key):
 # ── Removing a launch's runtime dir ──────────────────────────────────────────
 
 
-def rmtree_at(pfd, name, dev):
-    """Remove `name` in the directory `pfd`: never following a link, never
-    leaving the filesystem `dev`, and refusing a directory swapped mid-way."""
-    st = os.lstat(name, dir_fd=pfd)
-    if not stat.S_ISDIR(st.st_mode):
-        os.unlink(name, dir_fd=pfd)
-        return
+# Deeper than this, a tree is refused (and the walk never runs out of fds).
+REMOVE_MAX_DEPTH = 256
+
+
+def open_checked(pfd, name, st, dev, take=False):
+    """`name` in `pfd`, the directory lstat said it was (`st`), on `dev`.
+    With `take`, made root's (0700) before anyone goes into it, so its owner
+    can't change it under root from then on."""
     if st.st_dev != dev:
         raise OSError(errno.EXDEV, f"{name}: on another filesystem, left alone")
     fd = os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC, dir_fd=pfd)
     try:
-        if (os.fstat(fd).st_dev, os.fstat(fd).st_ino) != (st.st_dev, st.st_ino):
+        fst = os.fstat(fd)
+        if (fst.st_dev, fst.st_ino) != (st.st_dev, st.st_ino):
             raise OSError(errno.ESTALE, f"{name}: changed while being removed")
-        for n in os.listdir(fd):
-            rmtree_at(fd, n, dev)
-    finally:
+        if take:
+            os.fchown(fd, os.geteuid(), os.getegid())
+            os.fchmod(fd, 0o700)
+    except BaseException:
         os.close(fd)
-    os.rmdir(name, dir_fd=pfd)
+        raise
+    return fd
+
+
+def rmtree_at(pfd, name, dev, take=False):
+    """Remove `name` in the directory `pfd`: never following a link, never
+    leaving the filesystem `dev`, refusing a directory swapped mid-way or a
+    tree deeper than REMOVE_MAX_DEPTH. Iterative (no recursion limit). With
+    `take`, each directory is made root's before root goes into it."""
+    st = os.lstat(name, dir_fd=pfd)
+    if not stat.S_ISDIR(st.st_mode):
+        os.unlink(name, dir_fd=pfd)
+        return
+    fd = open_checked(pfd, name, st, dev, take)
+    stack = [(pfd, name, fd, iter(os.listdir(fd)))]
+    try:
+        while stack:
+            parent, n, dfd, names = stack[-1]
+            child = next(names, None)
+            if child is None:
+                stack.pop()
+                os.close(dfd)
+                os.rmdir(n, dir_fd=parent)
+                continue
+            cst = os.lstat(child, dir_fd=dfd)
+            if not stat.S_ISDIR(cst.st_mode):
+                os.unlink(child, dir_fd=dfd)
+                continue
+            if len(stack) >= REMOVE_MAX_DEPTH:
+                raise OSError(errno.ELOOP, f"{name}: nested deeper than {REMOVE_MAX_DEPTH}, left alone")
+            cfd = open_checked(dfd, child, cst, dev, take)
+            stack.append((dfd, child, cfd, iter(os.listdir(cfd))))
+    finally:
+        for _, _, dfd, _ in stack:
+            os.close(dfd)
 
 
 def empty_dir(pfd, name, dev):
@@ -925,10 +1022,21 @@ def empty_dir(pfd, name, dev):
         os.close(fd)
 
 
-def remove_entry(pfd, name, dev, as_owner=run_as):
+def owner_creds(st):
+    """An owner's uid, its passwd gid (else the folder's group), no groups."""
+    try:
+        gid = pwd.getpwuid(st.st_uid).pw_gid
+    except KeyError:
+        gid = st.st_gid
+    return st.st_uid, gid, []
+
+
+def remove_entry(pfd, name, dev, as_owner=run_as, depth=0):
     """Remove `name` from the root-owned directory `pfd`. A directory of
     someone else's is emptied by its owner (as_owner); root then removes it, or,
-    if the owner keeps adding to it, takes it back first and empties it itself."""
+    if the owner keeps adding to it, takes it back first (each folder made
+    root's before root goes in) and empties it itself. A folder of root's that
+    others may write is taken the same way."""
     try:
         st = os.lstat(name, dir_fd=pfd)
     except FileNotFoundError:
@@ -938,21 +1046,25 @@ def remove_entry(pfd, name, dev, as_owner=run_as):
         return
     if st.st_dev != dev:
         raise OSError(errno.EXDEV, f"{name}: on another filesystem, left alone")
+    if depth >= REMOVE_MAX_DEPTH:
+        raise OSError(errno.ELOOP, f"{name}: nested deeper than {REMOVE_MAX_DEPTH}, left alone")
     if st.st_uid != os.geteuid():
-        as_owner((st.st_uid, st.st_gid, []), lambda: empty_dir(pfd, name, dev))
+        as_owner(owner_creds(st), lambda: empty_dir(pfd, name, dev), (pfd,))
         try:
             os.rmdir(name, dir_fd=pfd)
             return
         except OSError as e:
             if e.errno not in (errno.ENOTEMPTY, errno.EEXIST):
                 raise
-        os.chown(name, os.geteuid(), os.getegid(), dir_fd=pfd, follow_symlinks=False)
-        rmtree_at(pfd, name, dev)
+        rmtree_at(pfd, name, dev, take=True)
         return
-    fd = os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC, dir_fd=pfd)
+    if st.st_mode & 0o022:
+        rmtree_at(pfd, name, dev, take=True)
+        return
+    fd = open_checked(pfd, name, st, dev)
     try:
         for n in os.listdir(fd):
-            remove_entry(fd, n, dev, as_owner)
+            remove_entry(fd, n, dev, as_owner, depth + 1)
     finally:
         os.close(fd)
     os.rmdir(name, dir_fd=pfd)
@@ -1031,7 +1143,7 @@ def gpu_open(rt, backend, principal, capture, setfacl):
             wait_sockets(gfd, names)
 
         # Inside the backend's folder only as the backend.
-        if not run_as((bpw.pw_uid, bpw.pw_gid, []), wait):
+        if not run_as((bpw.pw_uid, bpw.pw_gid, []), wait, (rtfd,)):
             raise Refused("the backend never made its sockets")
         # Root's from here: the backend can't swap what's in it any more.
         os.chown("gpu", 0, 0, dir_fd=rtfd, follow_symlinks=False)

@@ -272,6 +272,33 @@ class Child(Tmp):
         self.assertTrue(vmroot.run_as(self.creds, lambda: None))
         self.assertFalse(vmroot.run_as(self.creds, lambda: 1 / 0))
 
+    def test_child_gets_only_what_it_keeps(self):
+        os.makedirs(self.p("a"))
+        mine = os.open(self.d, os.O_PATH | os.O_DIRECTORY)
+        kept = os.open(self.p("a"), os.O_PATH | os.O_DIRECTORY)
+        try:
+
+            def look():
+                open_fds = set(map(int, os.listdir("/proc/self/fd")))
+                if mine in open_fds or kept not in open_fds:
+                    raise AssertionError(f"fds {open_fds}")
+                return os.open(".", os.O_PATH | os.O_DIRECTORY, dir_fd=kept)
+
+            fd = vmroot.as_user(self.creds, look, (kept,))
+            self.assertEqual(os.readlink(f"/proc/self/fd/{fd}"), self.p("a"))
+            os.close(fd)
+        finally:
+            os.close(mine)
+            os.close(kept)
+
+    def test_stopped_child_killed(self):
+        """A child stopped by its uid's other processes (the alarm can't fire)
+        is killed at the deadline."""
+        with mock.patch.object(vmroot, "CHILD_TIMEOUT", 0):
+            with self.assertRaises(vmroot.Refused):
+                vmroot.as_user(self.creds, lambda: os.kill(os.getpid(), __import__("signal").SIGSTOP))
+            self.assertFalse(vmroot.run_as(self.creds, lambda: os.kill(os.getpid(), __import__("signal").SIGSTOP)))
+
 
 class Removal(Tmp):
     def tree(self):
@@ -311,7 +338,7 @@ class Removal(Tmp):
         self.tree()
         calls = []
 
-        def as_owner(creds, fn):
+        def as_owner(creds, fn, keep=()):
             calls.append(creds)
             fn()
             return True
@@ -324,7 +351,11 @@ class Removal(Tmp):
                 vmroot.remove_rt("base/id", uid=me, base_fd=b, as_owner=as_owner)
         finally:
             os.close(b)
-        self.assertEqual(calls, [(me, os.getgid(), [])])
+        try:
+            gid = __import__("pwd").getpwuid(me).pw_gid
+        except KeyError:
+            gid = os.getgid()
+        self.assertEqual(calls, [(me, gid, [])])
         self.assertFalse(os.path.exists(self.p("base", "id")))
         self.assertTrue(os.path.exists(self.p("outside", "keep")))
 
@@ -333,8 +364,11 @@ class Removal(Tmp):
         b = self.base_fd()
         me = os.geteuid()
         try:
-            with mock.patch.object(os, "geteuid", lambda: me + 1), mock.patch.object(os, "chown", lambda *a, **k: None):
-                vmroot.remove_rt("base/id", uid=me, base_fd=b, as_owner=lambda creds, fn: False)
+            with (
+                mock.patch.object(os, "geteuid", lambda: me + 1),
+                mock.patch.object(os, "fchown", lambda *a, **k: None),
+            ):
+                vmroot.remove_rt("base/id", uid=me, base_fd=b, as_owner=lambda creds, fn, keep=(): False)
         finally:
             os.close(b)
         self.assertFalse(os.path.exists(self.p("base", "id")))
@@ -351,8 +385,43 @@ class Removal(Tmp):
             os.close(fd)
         self.assertTrue(os.path.isdir(self.p("x", "y")))
 
+    def test_deep_tree(self):
+        """No recursion limit, and a tree nested deeper than REMOVE_MAX_DEPTH
+        is refused (an OSError, not a RecursionError), the rest left as is."""
+        fd = os.open(self.d, os.O_PATH | os.O_DIRECTORY)
+        try:
+            for name, depth in (("ok", vmroot.REMOVE_MAX_DEPTH - 1), ("deep", vmroot.REMOVE_MAX_DEPTH + 5)):
+                os.makedirs(os.path.join(self.d, name, *(["d"] * depth)))
+            vmroot.rmtree_at(fd, "ok", os.fstat(fd).st_dev)
+            self.assertFalse(os.path.exists(self.p("ok")))
+            with self.assertRaises(OSError) as cm:
+                vmroot.rmtree_at(fd, "deep", os.fstat(fd).st_dev)
+            self.assertEqual(cm.exception.errno, errno.ELOOP)
+            self.assertTrue(os.path.isdir(self.p("deep")))
+        finally:
+            os.close(fd)
+
+    def test_shared_root_folder_taken(self):
+        """A folder of root's that others may write is taken (made root's,
+        0700) before root goes into it."""
+        self.tree()
+        os.chmod(self.p("base", "id", "grants"), 0o777)
+        taken = []
+        b = self.base_fd()
+        try:
+            with mock.patch.object(os, "fchmod", lambda fd, mode: taken.append(os.readlink(f"/proc/self/fd/{fd}"))):
+                vmroot.remove_rt("base/id", uid=os.getuid(), base_fd=b)
+        finally:
+            os.close(b)
+        self.assertIn(self.p("base", "id", "grants"), taken)
+        self.assertFalse(os.path.exists(self.p("base", "id")))
+
     def test_cleanup_paths(self):
-        for base, rt in (("/run/sandbox-vm/x", "/run/sandbox-vm/y/main"), ("/run/sandbox-vm/x", "/run/sandbox-vm/x/a/b")):
+        for base, rt in (
+            ("/run/sandbox-vm/x", "/run/sandbox-vm/y/main"),
+            ("/run/sandbox-vm/x", "/run/sandbox-vm/x/a/b"),
+            ("/run/sandbox-vm/x", "/run/sandbox-vm/x/stage"),
+        ):
             with self.assertRaises(vmroot.Refused):
                 vmroot.cleanup(base, "main", rt)
 
@@ -775,21 +844,25 @@ class PrivateMountRoot(Tmp):
             os.close(b)
 
     def test_binds_private_onto_itself(self):
+        """Private AFTER it's attached: attached under a shared mount it would
+        otherwise join a new peer group."""
         self.run_it()
         self.assertEqual(
             self.calls,
             [
                 ("clone", False),
-                ("setattr", {"propagation": vmroot.MS_PRIVATE, "recursive": False}),
                 ("move", self.p("base", "stage")),
+                ("setattr", {"propagation": vmroot.MS_PRIVATE, "recursive": False}),
             ],
         )
 
     def test_already_a_mount(self):
+        """Made private again (one an older version left shared stays a mount
+        until reboot)."""
         ids = iter([2, 1])
         with mock.patch.object(vmroot, "mount_id", lambda fd: next(ids)):
             self.run_it()
-        self.assertEqual(self.calls, [])
+        self.assertEqual(self.calls, [("setattr", {"propagation": vmroot.MS_PRIVATE, "recursive": False})])
 
     def test_never_through_a_link(self):
         os.rmdir(self.p("base", "stage"))
@@ -989,8 +1062,16 @@ class GitGuardCalls(unittest.TestCase):
         self.assertEqual(self.calls, [])
         os.unlink(os.path.join(self.r, ".git"))
         self.git_dir("hooks/")
+        # One inside .git fails the share: it can't be pinned, git follows it.
         os.symlink("../real", os.path.join(self.r, ".git", "config"))
-        self.assertEqual(self.guard(), [".git", ".git/hooks"])
+        with self.assertRaises(M.Refused):
+            self.guard()
+
+    def test_fifo_entry_fails(self):
+        self.git_dir("config")
+        os.mkfifo(os.path.join(self.r, ".git", "hooks"))
+        with self.assertRaises(M.Refused):
+            self.guard()
 
     def test_lookup_errors_fail(self):
         """Anything but "missing" or "a symlink" fails the guard (the share is
