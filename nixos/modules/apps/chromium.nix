@@ -73,10 +73,6 @@
             # Downloads land in jrt's ~/Downloads/chromium (host-visible, persisted)
             # instead of the app's 0700 home, which jrt can't open.
             modules.apps.chromium.sandbox.sharedDownloads = true;
-            users.users."app-chromium".extraGroups = [
-              "video"
-              "audio"
-            ];
           }
           (browserSettings.chromiumConfig {
             appName = "chromium";

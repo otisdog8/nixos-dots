@@ -44,10 +44,6 @@
         { config, lib, ... }:
         {
           modules.apps.amazing-marvin.sandbox.dedicatedUser = true;
-          users.users."app-amazing-marvin".extraGroups = [
-            "video"
-            "audio"
-          ];
         };
     };
   }

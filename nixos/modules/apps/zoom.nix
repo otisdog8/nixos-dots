@@ -64,10 +64,6 @@
         {
           modules.apps.zoom.sandbox.dedicatedUser = true;
           modules.apps.zoom.sandbox.x11Forward = true;
-          users.users."app-zoom".extraGroups = [
-            "video"
-            "audio"
-          ];
         };
     };
   }

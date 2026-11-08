@@ -78,10 +78,6 @@
             # Downloads land in jrt's ~/Downloads/brave (host-visible, persisted)
             # instead of the app's 0700 home, which jrt can't open.
             modules.apps.brave.sandbox.sharedDownloads = true;
-            users.users."app-brave".extraGroups = [
-              "video"
-              "audio"
-            ];
           }
           (browserSettings.chromiumConfig {
             appName = "brave";

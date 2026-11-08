@@ -55,12 +55,6 @@
         { config, lib, ... }:
         {
           modules.apps.vesktop.sandbox.dedicatedUser = true;
-          # app-vesktop needs device access for camera (/dev/video*) and any ALSA
-          # fallback; mic itself rides the ACL'd PipeWire socket.
-          users.users."app-vesktop".extraGroups = [
-            "video"
-            "audio"
-          ];
         };
     };
   }

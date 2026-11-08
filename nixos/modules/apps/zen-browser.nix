@@ -83,10 +83,6 @@
         lib.mkMerge [
           {
             modules.apps.zen-browser.sandbox.dedicatedUser = true;
-            users.users."app-zen-browser".extraGroups = [
-              "video"
-              "audio"
-            ];
             # Shared downloads under a per-app subdir: zen's ~/Downloads becomes jrt's
             # ~/Downloads/zen-browser (host-visible, on /large where impermanence already
             # persists Downloads; the launcher ACLs it + tmpfiles creates it). Keeps each

@@ -88,10 +88,12 @@
           security.polkit.enable = true;
 
           modules.apps.obs-studio.sandbox.dedicatedUser = true;
-          users.users."app-obs-studio".extraGroups = [
-            "video"
-            "audio"
-          ];
+          # video: the virtual camera's v4l2loopback node (/dev/video1, bound from
+          # the start) is root:video 0660, and only the seat user gets a uaccess ACL.
+          # The group also opens the other /dev/video* and /dev/dri/card* nodes, but
+          # only those bound into the sandbox are there. No audio: no /dev/snd is
+          # bound; sound goes through the broker's Pulse relay.
+          users.users."app-obs-studio".extraGroups = [ "video" ];
         };
     };
   }

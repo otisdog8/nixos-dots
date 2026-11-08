@@ -94,10 +94,6 @@
         lib.mkMerge [
           {
             modules.apps.captive-browser-chromium.sandbox.dedicatedUser = true;
-            users.users."app-captive-browser-chromium".extraGroups = [
-              "video"
-              "audio"
-            ];
           }
           (browserSettings.chromiumConfig {
             appName = "captive-browser-chromium";

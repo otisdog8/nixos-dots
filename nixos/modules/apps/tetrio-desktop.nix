@@ -60,10 +60,6 @@
         { config, lib, ... }:
         {
           modules.apps.tetrio-desktop.sandbox.dedicatedUser = true;
-          users.users."app-tetrio-desktop".extraGroups = [
-            "video"
-            "audio"
-          ];
         };
     };
   }

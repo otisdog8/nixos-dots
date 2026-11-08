@@ -65,6 +65,10 @@
     # Literal names, not by-path: binds are try-binds, so if a future boot
     # reshuffles numbering the symptom returns (black tetrio) rather than
     # breaking anything — re-verify the map then.
+    # card1 is for the VMs' virtio-nvgpu backend, which takes its device
+    # allowlist from this list. A dedicated-uid container app gets the node
+    # bound but can't open it (root:video 0660, and the app uids aren't in
+    # `video`); it renders through renderD128 (0666) and /dev/nvidia0.
     sandbox.gpuDevices = [
       "/dev/dri/card1"
       "/dev/dri/renderD128"

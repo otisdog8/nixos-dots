@@ -81,10 +81,6 @@
             modules.apps.firefox.sandbox.dedicatedUser = true;
             # Downloads land in jrt's ~/Downloads/firefox (host-visible, persisted).
             modules.apps.firefox.sandbox.sharedDownloads = true;
-            users.users."app-firefox".extraGroups = [
-              "video"
-              "audio"
-            ];
           }
           (browserSettings.geckoConfig {
             appName = "firefox";

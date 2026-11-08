@@ -90,10 +90,6 @@
           # clipboard (marked as secrets for clipboard managers, as 1Password
           # marks them); it can't read the clipboard through it.
           modules.apps.onepassword.sandbox.vm.clipboard = lib.mkDefault true;
-          users.users."app-onepassword".extraGroups = [
-            "video"
-            "audio"
-          ];
         };
     };
   }

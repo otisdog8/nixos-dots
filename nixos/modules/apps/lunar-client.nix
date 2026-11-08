@@ -87,10 +87,6 @@
           # X11 forward for the Java/LWJGL game window (see
           # xwayland-forward.md; shares jrt's X server).
           modules.apps.lunar-client.sandbox.x11Forward = true;
-          users.users."app-lunar-client".extraGroups = [
-            "video"
-            "audio"
-          ];
         };
     };
   }

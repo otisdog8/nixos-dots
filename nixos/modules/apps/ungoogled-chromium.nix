@@ -81,10 +81,6 @@
                 "${ext.vimium}"
                 "${ext.ublock-origin-lite}"
               ];
-            users.users."app-ungoogled-chromium".extraGroups = [
-              "video"
-              "audio"
-            ];
           }
           (browserSettings.chromiumConfig {
             appName = "ungoogled-chromium";
