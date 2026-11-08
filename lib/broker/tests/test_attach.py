@@ -228,6 +228,7 @@ class AllowIp(unittest.TestCase):
         os.chmod(fake, 0o755)
         self.cfg = {
             "systemctl": fake,
+            "netGrants": os.path.join(d, "grants"),
             "netUnits": {
                 "vm-blender": ["sandbox-vm-blender-net@*.service"],
                 "zoom": ["sandbox-zoom.service"],
@@ -258,6 +259,20 @@ class AllowIp(unittest.TestCase):
                 ["set-property", "--runtime", "--", "sandbox-vm-blender-net@home-u-x\\x2dy.service", "IPAddressAllow=2001:db8::/32"],
             ],
         )
+
+    def test_records_grants_for_sbx_dnsallow(self):
+        self.req("zoom", "sandbox-zoom.service", "192.0.2.7")
+        self.req("zoom", "sandbox-zoom.service", "192.0.2.8")
+        self.req("zoom", "sandbox-zoom.service", "192.0.2.7")
+        with open(os.path.join(self.cfg["netGrants"], "grants.json")) as f:
+            self.assertEqual(json.load(f), {"units": {"sandbox-zoom.service": ["192.0.2.7/32", "192.0.2.8/32"]}})
+
+    def test_failed_grant_is_not_recorded(self):
+        with open(self.cfg["systemctl"], "a") as f:
+            f.write('[ "$1" = set-property ] && exit 1\n')
+        with self.assertRaises(attach.Refused):
+            self.req("zoom", "sandbox-zoom.service", "192.0.2.7")
+        self.assertFalse(os.path.exists(os.path.join(self.cfg["netGrants"], "grants.json")))
 
     def test_refuses_other_units_and_sandboxes(self):
         for sandbox, unit in (

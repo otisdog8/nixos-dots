@@ -642,6 +642,7 @@ in
     modules.sandbox.dnsAllow = lib.optional (netPolicy.names != [ ]) {
       units = [ "${unit}-net.service" ];
       inherit (netPolicy) names deny;
+      allow = netPolicy.ipAddressAllow;
     };
 
     # Operators may start, stop and restart the VM (not reconfigure it).

@@ -19,6 +19,18 @@
 # allowNames get their DNS forwarded to it by passt. A unit's allow entries win
 # over every deny, the slice's included, so answers in a local range
 # (netpolicy's static ones, or sbx-netlocal's current set) are never opened.
+#
+# Each rule carries its units' static IPAddressAllow= (`allow`) too: systemd
+# keeps a runtime property as a drop-in with the unit's whole list, which
+# outranks the unit file until reboot, so sbx-dnsallow always writes the whole
+# list (static and learned), and since the static list is in its config, a
+# rebuild that changes one restarts it, and its startup pass rewrites every
+# unit's drop-in to match. (A unit with restartIfChanged = false, like the
+# agent VM's, still needs a restart for its other changes; its filter doesn't.)
+# The broker's grant-net grants share that drop-in: sbx-attach records them
+# in /run/sbx-netgrants, and every write includes them. Once no sandbox has
+# allowNames left, the unit stays (on hosts with sandbox networks) as a
+# oneshot that puts the units it managed back to their unit files' lists.
 {
   config,
   lib,
@@ -30,6 +42,9 @@ let
   rules = config.modules.sandbox.dnsAllow;
   netLocal = config.modules.sandbox.netLocal;
   stateFile = "/run/sbx-netlocal/prefixes.json";
+  learnedFile = "/run/sbx-dnsallow/learned.json";
+  # sbx-attach's grant-net record (lib/broker/attach.py NET_GRANTS).
+  grantsDir = "/run/sbx-netgrants";
 
   program =
     name:
@@ -44,6 +59,8 @@ let
       systemctl = "${pkgs.systemd}/bin/systemctl";
       local = netpolicy.localCidrs;
       localFile = if netLocal.enable then stateFile else null;
+      state = learnedFile;
+      grants = grantsDir;
       inherit rules;
     }
   );
@@ -99,6 +116,16 @@ in
             type = lib.types.listOf lib.types.str;
             default = [ ];
             description = "The units' policy deny entries (lib/netpolicy.nix `deny`), which the names never open.";
+          };
+          allow = lib.mkOption {
+            type = lib.types.listOf lib.types.str;
+            default = [ ];
+            description = ''
+              The units' static IPAddressAllow= (lib/netpolicy.nix
+              `ipAddressAllow`), exactly as in their unit files: sbx-dnsallow
+              writes it along with the learned addresses, replacing the whole
+              list each time.
+            '';
           };
         };
       }
@@ -178,19 +205,62 @@ in
           message = "sandbox network.allowNames needs systemd-resolved (services.resolved.enable).";
         }
       ];
+    })
+
+    (lib.mkIf (rules != [ ] || netLocal.enable) {
+      # The grants lock exists before either side needs it (sbx-attach also
+      # makes it): a write that found none would race a first grant.
+      systemd.tmpfiles.settings.sbx-netgrants = {
+        ${grantsDir}.d = {
+          mode = "0755";
+          user = "root";
+          group = "root";
+        };
+        "${grantsDir}/lock".f = {
+          mode = "0644";
+          user = "root";
+          group = "root";
+        };
+      };
 
       systemd.services.sbx-dnsallow = {
-        description = "Open sandboxes' IP filters to their allowed names' addresses";
+        description =
+          if rules != [ ] then
+            "Open sandboxes' IP filters to their allowed names' addresses"
+          else
+            "Put sandboxes' IP filters back to their unit files' (no allowNames left)";
         wantedBy = [ "multi-user.target" ];
-        after = [ "systemd-resolved.service" ] ++ lib.optional netLocal.enable "sbx-netlocal.service";
-        wants = [ "systemd-resolved.service" ] ++ lib.optional netLocal.enable "sbx-netlocal.service";
+        after = [
+          "systemd-tmpfiles-setup.service"
+        ]
+        ++ lib.optional (rules != [ ]) "systemd-resolved.service"
+        ++ lib.optional netLocal.enable "sbx-netlocal.service";
+        wants =
+          lib.optional (rules != [ ]) "systemd-resolved.service"
+          ++ lib.optional netLocal.enable "sbx-netlocal.service";
         serviceConfig = hardening // {
-          ExecStart = "${dnsallow}/bin/sbx-dnsallow ${dnsallowConfig}";
-          Restart = "always";
-          RestartSec = 2;
           PrivateNetwork = true;
           RestrictAddressFamilies = [ "AF_UNIX" ];
-        };
+          # The learned addresses, kept across stops and starts (a rebuild)
+          # until reboot, like the runtime drop-ins they end up in.
+          RuntimeDirectory = "sbx-dnsallow";
+          RuntimeDirectoryMode = "0700";
+          RuntimeDirectoryPreserve = "yes";
+        }
+        // (
+          if rules != [ ] then
+            {
+              ExecStart = "${dnsallow}/bin/sbx-dnsallow ${dnsallowConfig}";
+              Restart = "always";
+              RestartSec = 2;
+            }
+          else
+            {
+              Type = "oneshot";
+              RemainAfterExit = true;
+              ExecStart = "${dnsallow}/bin/sbx-dnsallow --cleanup ${dnsallowConfig}";
+            }
+        );
       };
     })
   ];

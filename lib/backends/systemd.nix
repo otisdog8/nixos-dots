@@ -851,6 +851,7 @@ in
     modules.sandbox.dnsAllow = lib.optional (netPolicy.names != [ ]) {
       units = [ "${unitName}.service" ];
       inherit (netPolicy) names deny;
+      allow = netPolicy.ipAddressAllow;
     };
 
     users.groups = lib.optionalAttrs dedicated { "app-${appName}" = { }; };

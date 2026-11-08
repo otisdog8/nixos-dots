@@ -7,14 +7,38 @@ sbx-dnsallow: open a sandbox's IP filter to the addresses its allowed names
 resolve to. Subscribes to systemd-resolved's query monitor
 (io.systemd.Resolve.Monitor.SubscribeQueryResults, varlink) and, whenever a
 lookup of a name some sandbox may reach succeeds, adds the answer's A/AAAA
-addresses to that sandbox's units:
+addresses to that sandbox's units. Every update writes the unit's whole list,
+its static entries (the rule's `allow`, as in the unit file) and every address
+learned for it:
 
-    systemctl set-property --runtime UNIT IPAddressAllow=ADDR...
+    systemctl set-property --runtime UNIT IPAddressAllow= IPAddressAllow=ADDR...
+
+systemd keeps a runtime property in /run/systemd/system.control/UNIT.d/
+50-IPAddressAllow.conf, and that drop-in holds the unit's complete list at the
+time and outranks the unit file until reboot. Written piecemeal, it would pin
+the static entries of whichever build it was first written under: a rebuild
+that changed them would neither open the new ones nor close the removed ones.
+So the static list is part of this daemon's config (a change restarts it), and
+at startup it writes the current full list for every unit it manages,
+replacing whatever an earlier build left there. A unit it managed before that
+no rule covers any more is put back to its unit files' own IPAddressAllow=.
+
+The broker's network grants (sbx-attach's allow-ip, lib/broker/attach.py)
+land in the same drop-in, so they're part of every write too: sbx-attach
+records each in `grants` (GRANTS.json, until reboot like its drop-in), and
+both hold GRANTS' lock across reading or recording and their set-property.
+
+Learned addresses are kept in `state` (a runtime directory that outlives the
+daemon, until reboot like the drop-ins), so a restart doesn't close a
+sandbox's open connections until each name is looked up again. At startup
+they're checked again against the current rules: one whose name is no longer
+allowed, or is now denied, is dropped. An address not seen in a lookup for
+MAX_AGE seconds is dropped at the unit's next update, and a unit keeps at most
+MAX_PER_UNIT of them (the most recently seen).
 
 Names: "example.com" (exactly), "*.example.com" (any name under it, not the
 name itself). The query that matched may have been made by anyone on the host:
-that only ever opens addresses of names the sandbox was allowed anyway. The
-additions last until reboot (runtime drop-ins), across restarts of the unit.
+that only ever opens addresses of names the sandbox was allowed anyway.
 
 An allowed name never opens a local address: IPAddressAllow= wins over every
 deny (the static ranges and the slice's), so answers in `local` (netpolicy's
@@ -24,8 +48,13 @@ prefixes (`localFile`) are dropped. While localFile is configured but missing
 own `deny` (the sandbox's policy deny entries) is never opened by its names.
 
 Config (JSON): {"systemctl": PATH, "local": [CIDR...], "localFile": PATH or
-null, "rules": [{"units": [UNIT or GLOB...], "names": [NAME...],
-"deny": [CIDR or "any"...]}]}
+null, "state": PATH or null, "grants": DIR or null, "rules": [{"units":
+[UNIT or GLOB...], "names": [NAME...], "deny": [CIDR or "any"...], "allow":
+[ENTRY...]}]}
+
+`sbx-dnsallow --cleanup CONFIG` (the unit, once no sandbox has allowNames
+left): only the startup pass's second half, putting every unit it managed
+back to its unit files' list (and grants), then exit.
 
 sbx-netlocal: keep the sandboxes in a restricted network mode off the host's
 and LAN's public addresses. netpolicy's static ranges (RFC 1918, ULA, ...)
@@ -58,6 +87,7 @@ Config (JSON): {"ip": PATH, "systemctl": PATH, "slice": UNIT, "state": PATH,
 `sbx-netlocal --dry-run CONFIG` prints the set and changes nothing.
 """
 
+import fcntl
 import fnmatch
 import ipaddress
 import json
@@ -171,26 +201,274 @@ def rule_deny(rule):
     return nets
 
 
+MAX_AGE = 7 * 86400  # seconds a learned address lasts without another lookup
+MAX_PER_UNIT = 4096  # learned addresses per unit (the most recently seen)
+SAVE_EVERY = 600  # seconds between saves of the state for last-seen times only
+CHUNK = 256  # entries per IPAddressAllow= argument (one is capped at 128 KiB)
+TIMEOUT = 30  # seconds a systemctl call may take
+
+CONTROL_DIRS = ("/run/systemd/system.control/", "/etc/systemd/system.control/")
+# Drop-ins that aren't the unit's own configuration: runtime properties (ours
+# included) and transient units.
+NOT_STATIC = CONTROL_DIRS + ("/run/systemd/transient/",)
+
+
+def is_glob(pattern):
+    return any(c in pattern for c in "*?[")
+
+
+def unique(items):
+    out = []
+    for i in items:
+        if i not in out:
+            out.append(i)
+    return out
+
+
+def missing_unit(stderr):
+    return any(s in stderr for s in ("not loaded", "not found", "No such", "does not exist"))
+
+
 class Allower:
-    def __init__(self, cfg):
+    def __init__(self, cfg, now=time.time):
         self.systemctl = cfg["systemctl"]
         self.rules = cfg["rules"]
         self.local = Local(cfg.get("local") or [], cfg.get("localFile"))
-        self.done = set()  # (unit, address)
+        self.state = cfg.get("state")
+        self.grants = cfg.get("grants")
+        self.now = now
+        # unit -> {address: {"name": the name it answered, "seen": time}}, for
+        # every unit whose list this daemon has written.
+        self.learned = {}
+        self.dirty = False
+        self.saved = 0
 
-    def units(self, patterns):
+    def run(self, *args):
+        try:
+            return subprocess.run([self.systemctl, *args], capture_output=True, text=True, timeout=TIMEOUT)
+        except subprocess.TimeoutExpired:
+            return subprocess.CompletedProcess(args, 1, "", f"systemctl {args[0]} timed out")
+
+    # ── which rules, units and entries ──
+
+    @staticmethod
+    def covers(rule, unit):
+        return any(fnmatch.fnmatchcase(unit, p) if is_glob(p) else unit == p for p in rule["units"])
+
+    def rules_for(self, unit):
+        return [r for r in self.rules if self.covers(r, unit)]
+
+    def static(self, unit):
+        return unique(a for r in self.rules_for(unit) for a in r.get("allow") or [])
+
+    def valid(self, unit, name, addr, nets):
+        """Whether `name`'s answer `addr` may (still) be open to `unit`."""
+        if Local.contains(nets, addr):
+            return False
+        return any(
+            any(name_matches(name, p) for p in r["names"]) and not Local.contains(rule_deny(r), addr)
+            for r in self.rules_for(unit)
+        )
+
+    def units(self, patterns, every=False):
+        """The units `patterns` name: a glob, its active units (`every`: all
+        loaded ones, and any with a runtime property drop-in)."""
         out = []
         for p in patterns:
-            if any(c in p for c in "*?["):
-                r = subprocess.run(
-                    [self.systemctl, "list-units", "--no-legend", "--plain", "--state=active", p],
-                    capture_output=True,
-                    text=True,
-                )
-                out += [l.split()[0] for l in r.stdout.splitlines() if l.strip() and fnmatch.fnmatch(l.split()[0], p)]
-            else:
+            if not is_glob(p):
                 out.append(p)
-        return out
+                continue
+            state = "--all" if every else "--state=active"
+            r = self.run("list-units", "--no-legend", "--plain", state, p)
+            out += [l.split()[0] for l in r.stdout.splitlines() if l.strip() and fnmatch.fnmatchcase(l.split()[0], p)]
+            if every:
+                for d in CONTROL_DIRS:
+                    try:
+                        names = os.listdir(d)
+                    except OSError:
+                        continue
+                    out += [n[:-2] for n in names if n.endswith(".d") and fnmatch.fnmatchcase(n[:-2], p)]
+        return unique(out)
+
+    def prune(self, entries):
+        cutoff = self.now() - MAX_AGE
+        kept = sorted(
+            ((a, e) for a, e in entries.items() if e["seen"] >= cutoff),
+            key=lambda ae: ae[1]["seen"],
+            reverse=True,
+        )[:MAX_PER_UNIT]
+        return {a: e for a, e in sorted(kept, key=lambda ae: ae[1]["seen"])}
+
+    # ── writing ──
+
+    def granted(self, unit):
+        """The broker's grants to `unit` (sbx-attach's record); call with the
+        grants lock held."""
+        if not self.grants:
+            return []
+        try:
+            with open(os.path.join(self.grants, "grants.json")) as f:
+                nets = json.load(f)["units"].get(unit) or []
+            return [str(n) for n in nets if isinstance(n, str)]
+        except FileNotFoundError:
+            return []
+        except (OSError, ValueError, KeyError, TypeError, AttributeError) as e:
+            log(f"{self.grants}: {e}")
+            return []
+
+    def lock(self):
+        """sbx-attach's grants lock (an fd to close), or None without one."""
+        if not self.grants:
+            return None
+        try:
+            fd = os.open(os.path.join(self.grants, "lock"), os.O_RDONLY | os.O_CLOEXEC)
+        except FileNotFoundError:
+            return None
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        return fd
+
+    def set_allow(self, unit, entries):
+        """Set `unit`'s whole IPAddressAllow= list, `entries` and the broker's
+        grants, in one call (the reset first, all together: the filter is
+        never briefly empty). Returns the error, None on success, or
+        "missing" for a unit that isn't there."""
+        fd = self.lock()
+        try:
+            entries = unique(list(entries) + self.granted(unit))
+            args = ["set-property", "--runtime", unit, "IPAddressAllow="]
+            args += ["IPAddressAllow=" + " ".join(entries[i : i + CHUNK]) for i in range(0, len(entries), CHUNK)]
+            r = self.run(*args)
+        finally:
+            if fd is not None:
+                os.close(fd)
+        if r.returncode == 0:
+            return None
+        return "missing" if missing_unit(r.stderr) else (r.stderr.strip() or f"exit {r.returncode}")
+
+    def apply(self, unit, entries):
+        """Write `unit`'s static list plus `entries` (its learned addresses);
+        on success they become its learned set. True on success."""
+        entries = self.prune(entries)
+        static = self.static(unit)
+        err = self.set_allow(unit, static + [a for a in entries if a not in static])
+        if err == "missing":
+            self.learned.pop(unit, None)
+            self.dirty = True
+            return False
+        if err:
+            log(f"{unit}: {err}")
+            return False
+        self.learned[unit] = entries
+        self.dirty = True
+        return True
+
+    def unit_file_allow(self, unit):
+        """The IPAddressAllow= entries of `unit`'s own unit file and drop-ins
+        (not runtime properties); None if they can't be read, False if the
+        unit is gone."""
+        r = self.run("show", "--property=LoadState,FragmentPath,DropInPaths", unit)
+        if r.returncode != 0:
+            return False if missing_unit(r.stderr) else None
+        props = dict(l.split("=", 1) for l in r.stdout.splitlines() if "=" in l)
+        if props.get("LoadState") == "not-found":
+            return False
+        if props.get("LoadState") != "loaded" or not props.get("FragmentPath"):
+            return None
+        paths = [props["FragmentPath"]] + (props.get("DropInPaths") or "").split()
+        allow = []
+        for path in paths:
+            if path.startswith(NOT_STATIC):
+                continue
+            try:
+                with open(path) as f:
+                    lines = f.read().splitlines()
+            except OSError as e:
+                log(f"{unit}: {e}")
+                return None
+            for line in lines:
+                key, sep, value = line.strip().partition("=")
+                if not sep or key.strip() != "IPAddressAllow":
+                    continue
+                value = value.strip()
+                if value:
+                    allow += value.split()
+                else:
+                    allow = []
+        return unique(allow)
+
+    def startup(self):
+        """Write every managed unit's current full list (replacing whatever a
+        previous build left in its drop-in), with the learned addresses that
+        are still allowed; put units no rule covers any more back to their
+        unit files' list."""
+        saved = self.load()
+        nets = self.local.nets()
+        if nets is None:  # sbx-netlocal's set unknown: check the static ranges only
+            nets = self.local.static
+        managed = unique(
+            [u for r in self.rules for u in self.units(r["units"], every=True)]
+            + [u for u in saved if self.rules_for(u)]
+        )
+        for unit in managed:
+            entries = {
+                a: e
+                for a, e in saved.get(unit, {}).items()
+                if self.valid(unit, e.get("name", ""), a, nets)
+            }
+            dropped = len(saved.get(unit, {})) - len(entries)
+            if self.apply(unit, entries):
+                log(
+                    f"{unit}: {len(self.static(unit))} static, {len(self.learned[unit])} learned"
+                    + (f" ({dropped} no longer allowed)" if dropped else "")
+                )
+        for unit in saved:
+            if self.rules_for(unit):
+                continue
+            allow = self.unit_file_allow(unit)
+            err = "missing" if allow is False else self.set_allow(unit, allow) if allow is not None else "unreadable"
+            if err is None:
+                log(f"{unit}: no longer managed; back to its unit files' {len(allow)} entries")
+            elif err != "missing":
+                # Kept (with nothing learned), to try again at the next start.
+                self.learned[unit] = {}
+                log(f"{unit}: no longer managed, and its unit files' list couldn't be set ({err}); left as is")
+        self.save(force=True)
+
+    # ── state ──
+
+    def load(self):
+        if not self.state:
+            return {}
+        try:
+            with open(self.state) as f:
+                units = json.load(f)["units"]
+            return {
+                u: {a: {"name": str(e["name"]), "seen": float(e["seen"])} for a, e in entries.items()}
+                for u, entries in units.items()
+            }
+        except FileNotFoundError:
+            return {}
+        except (OSError, ValueError, KeyError, TypeError, AttributeError) as e:
+            log(f"{self.state}: {e}; starting with no learned addresses")
+            return {}
+
+    def save(self, force=False):
+        if not self.state or not (self.dirty or force):
+            return
+        if not force and self.now() - self.saved < SAVE_EVERY:
+            return
+        tmp = self.state + ".tmp"
+        try:
+            with open(tmp, "w") as f:
+                json.dump({"units": self.learned}, f)
+            os.replace(tmp, self.state)
+        except OSError as e:
+            log(f"{self.state}: {e}")
+            return
+        self.dirty = False
+        self.saved = self.now()
+
+    # ── lookups ──
 
     def handle(self, params):
         names, addrs = result_names_and_addresses(params)
@@ -209,27 +487,30 @@ class Allower:
             addrs = [a for a in addrs if a not in local]
         if not addrs:
             return
+        now = self.now()
+        changed = False
         for rule in rules:
             denied = [a for a in addrs if Local.contains(rule_deny(rule), a)]
             if denied:
                 log(f"{', '.join(names)}: not opening {' '.join(denied)}, which {' '.join(rule['units'])} deny")
             allowed = [a for a in addrs if a not in denied]
+            name = next(n for n in names if any(name_matches(n, p) for p in rule["names"]))
             for unit in self.units(rule["units"]):
-                new = [a for a in allowed if (unit, a) not in self.done]
+                old = self.learned.get(unit, {})
+                new = [a for a in allowed if a not in old]
+                for a in allowed:
+                    if a in old:
+                        old[a]["seen"] = now
+                        self.dirty = True
                 if not new:
                     continue
-                r = subprocess.run(
-                    [self.systemctl, "set-property", "--runtime", unit, "IPAddressAllow=" + " ".join(new)],
-                    capture_output=True,
-                    text=True,
-                )
-                if r.returncode == 0:
-                    if len(self.done) > 100000:
-                        self.done.clear()
-                    self.done.update((unit, a) for a in new)
-                    log(f"{unit}: {', '.join(names)} -> {' '.join(new)}")
-                elif "not loaded" not in r.stderr:
-                    log(f"{unit}: {r.stderr.strip()}")
+                entries = dict(old)
+                entries.update((a, {"name": norm(name), "seen": now}) for a in new)
+                if self.apply(unit, entries):
+                    changed = True
+                    if new:
+                        log(f"{unit}: {', '.join(names)} -> {' '.join(new)}")
+        self.save(force=changed)
 
 
 def subscribe(allower):
@@ -257,8 +538,14 @@ def subscribe(allower):
 
 
 def main():
-    with open(sys.argv[1]) as f:
-        allower = Allower(json.load(f))
+    with open(sys.argv[-1]) as f:
+        cfg = json.load(f)
+    if sys.argv[1:2] == ["--cleanup"]:
+        cfg["rules"] = []
+    allower = Allower(cfg)
+    allower.startup()
+    if sys.argv[1:2] == ["--cleanup"] or not allower.rules:
+        return
     delay = 1
     while True:
         started = time.monotonic()

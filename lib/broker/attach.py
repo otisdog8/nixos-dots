@@ -49,7 +49,10 @@ What it will do, whoever asks (the user is the only one who can):
     IPAddressAllow= of a running unit the sandbox registered as its network
     units (`systemctl set-property --runtime`), and nothing else: never
     IPAddressDeny=, never a reset, no other unit or property. (Not polkit:
-    polkit can't tell which property a set-property call changes.)
+    polkit can't tell which property a set-property call changes.) Each grant
+    is also recorded in NET_GRANTS (until reboot, as the drop-in lasts), under
+    its lock: sbx-dnsallow rewrites a unit's whole IPAddressAllow= list, and
+    includes these (lib/dnsallow.py).
 A sandbox is found from the record the host side of its launcher wrote
 (nixpak's bwrapinfo.json, which the sandbox can't reach), and, for systemd
 units, the unit's cgroup; the process must still be the one named there, run
@@ -71,6 +74,7 @@ the top, in the host's namespace.
 import array  # socket.send_fds/recv_fds import it lazily: after setns, too late
 import ctypes
 import errno
+import fcntl
 import fnmatch
 import importlib.machinery
 import ipaddress
@@ -974,15 +978,46 @@ def op_allow_ip(cfg, req):
     )
     if r.stdout.strip() != "active":
         raise Refused(f"{unit} isn't running")
-    r = subprocess.run(
-        [systemctl, "set-property", "--runtime", "--", unit, f"IPAddressAllow={net}"],
-        capture_output=True,
-        text=True,
-        timeout=10,
-    )
-    if r.returncode != 0:
-        raise Refused(f"could not update {unit}: {r.stderr.strip()}")
+    # Under sbx-dnsallow's lock, so neither's write drops the other's.
+    grants = cfg.get("netGrants", NET_GRANTS)
+    os.makedirs(grants, mode=0o755, exist_ok=True)
+    lock = os.open(os.path.join(grants, "lock"), os.O_RDWR | os.O_CREAT | os.O_CLOEXEC, 0o644)
+    try:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        r = subprocess.run(
+            [systemctl, "set-property", "--runtime", "--", unit, f"IPAddressAllow={net}"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        if r.returncode != 0:
+            raise Refused(f"could not update {unit}: {r.stderr.strip()}")
+        record_net_grant(grants, unit, str(net))
+    finally:
+        os.close(lock)
     return net
+
+
+NET_GRANTS = "/run/sbx-netgrants"
+
+
+def record_net_grant(grants, unit, net):
+    path = os.path.join(grants, "grants.json")
+    try:
+        with open(path) as f:
+            units = json.load(f)["units"]
+        if not isinstance(units, dict):
+            units = {}
+    except (OSError, ValueError, KeyError, TypeError):
+        units = {}
+    nets = units.setdefault(unit, [])
+    if net not in nets:
+        nets.append(net)
+    tmp = path + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump({"units": units}, f)
+    os.chmod(tmp, 0o644)
+    os.replace(tmp, path)
 
 
 # ── Entry ────────────────────────────────────────────────────────────────────

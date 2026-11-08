@@ -2506,6 +2506,7 @@ in
   dnsAllow = lib.optional (network' && netPolicy.names != [ ]) {
     units = [ netUnitPattern ];
     inherit (netPolicy) names deny;
+    allow = netPolicy.ipAddressAllow;
   };
 
   # For the polkit allowlist (modules/system/sandbox.nix): the user starts/stops
