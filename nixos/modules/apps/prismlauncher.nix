@@ -122,6 +122,18 @@
         { config, lib, ... }:
         {
           modules.apps.prismlauncher.sandbox.dedicatedUser = true;
+          # Its VM by default where VMs get the GPU (virtio-nvgpu: the NVIDIA
+          # desktops), so the plain command and its file/link handlers start the
+          # VM, with an X server of its own (xwayland-satellite in the guest),
+          # not the container on jrt's XWayland. Elsewhere (constitution: Intel,
+          # where a VM would render in software) the container stays the
+          # default; liveusb doesn't enable the app. The container is
+          # still there as "prismlauncher (container)" / prismlauncher-container, and it still
+          # shares jrt's X server through x11Forward (below).
+          modules.apps.prismlauncher.sandbox.mode = lib.mkIf config.modules.sandbox.vm.nvgpuAvailable (
+            lib.mkDefault "vm"
+          );
+          modules.apps.prismlauncher.sandbox.vm.x11 = lib.mkDefault true;
           # Game VM sizing, as steam.nix.
           modules.apps.prismlauncher.sandbox.vm.memory = lib.mkDefault 32768;
           modules.apps.prismlauncher.sandbox.vm.gpuMemoryMiB = lib.mkDefault 24576;

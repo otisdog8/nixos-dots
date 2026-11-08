@@ -16,8 +16,9 @@
 #
 # Not lowered yet (the app still starts, without them): device binds,
 # ./-relative binds, whatever raw nixpakModules add beyond gui/xdg/audio/D-Bus,
-# variantCommands, and file-descriptor passing over D-Bus (screen capture,
-# camera, and portal calls that hand over fds, such as OpenURI's OpenFile).
+# variantCommands, and file-descriptor passing over D-Bus (portal calls that
+# hand over fds, such as OpenURI's OpenFile). Screen capture (instance.nix's
+# zero-copy ScreenCast) and cameras (attached over USB on approval) do work.
 # File-chooser results do work: they arrive as document-portal paths, which the
 # VM sees through its by-app share. Selecting mode = "vm" for an app that uses
 # any of the unsupported ones emits a warning listing them.

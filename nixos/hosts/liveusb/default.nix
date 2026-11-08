@@ -83,6 +83,11 @@
       enable = true;
       openDrivers = false; # proprietary kernel module (widest GPU-generation support)
     };
+
+    # zoom defaults to its VM where VMs get virtio-nvgpu (apps/zoom.nix), which
+    # the NVIDIA driver above would claim here too; but on the stick's usual
+    # Intel/AMD machines its VM would have no GPU. The container works anywhere.
+    apps.zoom.sandbox.mode = "container";
   };
 
   # captive-browser is configured in networking.nix, which also enables its

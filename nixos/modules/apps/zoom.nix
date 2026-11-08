@@ -46,23 +46,30 @@
         }
       ];
 
-      # Drive Qt onto XCB/XWayland (not native Wayland): zoom's bundled Qt6 segfaulted a
-      # child on native Wayland, and a dedicated uid can only reach XWayland via the
-      # x11Forward grant (customConfig below). QT_QPA_PLATFORM=xcb + x11Forward is the
-      # working combo; the socket/auth for it is set up by the launcher.
-      nixpakModules = [
-        (
-          { ... }:
-          {
-            bubblewrap.env.QT_QPA_PLATFORM = "xcb";
-          }
-        )
-      ];
+      # Drive Qt onto XCB (not native Wayland): zoom's bundled Qt6 segfaulted a child
+      # on native Wayland. In the container, X is jrt's XWayland through the
+      # x11Forward grant (customConfig below; the launcher sets up socket and auth);
+      # in the VM, the guest's own X server (sandbox.vm.x11). app.environment, not a
+      # raw nixpak module, so the VM gets it too.
+      environment.QT_QPA_PLATFORM = "xcb";
 
       customConfig =
         { config, lib, ... }:
         {
           modules.apps.zoom.sandbox.dedicatedUser = true;
+          # Its VM by default where VMs get the GPU (virtio-nvgpu: the NVIDIA
+          # desktops), so the plain command and its file/link handlers start the
+          # VM, with an X server of its own (xwayland-satellite in the guest),
+          # not the container on jrt's XWayland. Elsewhere (constitution: Intel,
+          # where a VM would render in software; liveusb: unknown hardware,
+          # hosts/liveusb) the container stays the default. In the VM a camera comes on
+          # approval, passed through over USB (camera.nix). The container is
+          # still there as "zoom (container)" / zoom-container, and it still
+          # shares jrt's X server through x11Forward (below).
+          modules.apps.zoom.sandbox.mode = lib.mkIf config.modules.sandbox.vm.nvgpuAvailable (
+            lib.mkDefault "vm"
+          );
+          modules.apps.zoom.sandbox.vm.x11 = lib.mkDefault true;
           modules.apps.zoom.sandbox.x11Forward = true;
         };
     };
