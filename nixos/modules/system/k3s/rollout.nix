@@ -14,17 +14,21 @@
 #   machine's pin is the boot entry). Changed units restart, k3s included,
 #   whose pods keep running meanwhile. Then it waits for the node, Cilium
 #   and Ceph.
-# - Otherwise (or --reboot): cordon, drain (eviction honours PDBs: a CNPG
-#   primary waits for its switchover; 15 minutes, then it gives up and
-#   uncordons), Ceph noout, and the guest reboots itself: its unit on the
+# - Otherwise (or --reboot): cordon, live-migrate the lcm pods off (one at
+#   a time, none started after 15 minutes, none cut short: lcm-drain.nix),
+#   drain (eviction honours PDBs: a CNPG primary waits for its switchover;
+#   15 minutes, then it gives up and uncordons), hand the router VIP to
+#   another node's gateway (its players move with it; no standby: uncordon,
+#   no reboot), Ceph noout, and the guest reboots itself: its unit on the
 #   machine boots the pinned system. node-rollout-finish completes it at
 #   boot: Ready, uncordon, OSDs up, noout off, Ceph healthy, the Lease
 #   released.
 #
 # --bounce: the reboot, now. No health checks, no drain (kubelet's graceful
-# shutdown still stops pods in order); noout if Ceph answers. Still takes
-# the Lease; the finish at boot hands it over once the node is Ready and
-# its OSDs are up, without waiting for Ceph to be healthy.
+# shutdown still stops pods in order), the VIP handed off if a standby takes
+# it within 15 s; noout if Ceph answers. Still takes the Lease; the finish
+# at boot hands it over once the node is Ready and its OSDs are up, without
+# waiting for Ceph to be healthy.
 #
 # `node-rollout status` says where it is; `node-rollout abort` undoes what
 # a stuck one left (cordon, noout, the boot marker, the Lease). Across
@@ -41,6 +45,15 @@ let
   enable = config.modules.system.k3s.enable && config.modules.system.nodeVmGuest.enable;
   host = config.networking.hostName;
   state = "/persist/node-rollout";
+  lcm = config.services.lcm;
+  transferNetwork = lcm.transportTLS.transferNetwork or null;
+  # The router-path VIP gateways (lcm's docs/router-path.md): a DaemonSet,
+  # which a drain leaves alone, so the VIP would only move at kubelet's
+  # shutdown, mid-reboot.
+  vipSelector = "app=lcm-gateway-vip";
+  # Only its own namespace: a pod elsewhere carrying the label must not be
+  # able to answer for (or stall) the handoff.
+  vipNamespace = "minecraft-gw";
   # Ceph warnings that don't stand in the way: crash reports linger for two
   # weeks. Beyond these, a warning known to be harmless can be muted
   # (`ceph health mute <CHECK> <ttl>`): ceph_ok skips muted checks.
@@ -48,18 +61,23 @@ let
     "RECENT_CRASH"
     "RECENT_MGR_MODULE_CRASH"
   ];
-  inputs = with pkgs; [
-    config.services.k3s.package
-    coreutils
-    diffutils
-    jq
-    systemd
-  ];
+  inputs =
+    with pkgs;
+    [
+      config.services.k3s.package
+      coreutils
+      curl
+      diffutils
+      jq
+      systemd
+    ]
+    ++ lib.optional lcm.enable lcm.package;
 
   common = ''
     node=${host}
     state=${state}
-    k() { k3s kubectl "$@"; }
+    # Every request bounded: a stuck API server mustn't hang a step.
+    k() { k3s kubectl --request-timeout=60s "$@"; }
     ceph() { k -n rook-ceph exec deploy/rook-ceph-tools -- ceph "$@"; }
     log() { printf 'node-rollout: %s\n' "$*" >&2; }
     die() { log "$*"; exit 1; }
@@ -99,6 +117,70 @@ let
     }
     osds_up() {
       ceph osd stat -f json | jq -e '.num_up_osds == .num_osds and .num_in_osds == .num_osds'
+    }
+
+    ${import ./lcm-drain.nix}
+
+    # This node's VIP gateways, "NAMESPACE/POD IP ADMIN-PORT READY" a line
+    # (hostNetwork: the pod IP is the node's), "-" for a missing IP or port:
+    # read splits on runs of whitespace, so an empty field would shift the rest.
+    vip_gateways() {
+      k get pods -n ${vipNamespace} -l ${vipSelector} --field-selector "spec.nodeName=$node,status.phase=Running" -o json \
+        | jq -r '.items[] | [.metadata.namespace + "/" + .metadata.name, (.status.podIP // "-"),
+            ([.spec.containers[].ports[]? | select(.name == "admin") | .containerPort][0] // "-" | tostring),
+            ([.status.conditions[]? | select(.type == "Ready")][0].status == "True" | tostring)] | join(" ")'
+    }
+    # The gateway at $1:$2 answers that it doesn't hold the VIP (an error
+    # isn't an answer; vip_handoff logs the first failed request, so this
+    # one's polling stays quiet).
+    vip_inactive() { curl -fsS --max-time 5 "http://$1:$2/vip" 2>/dev/null | jq -e '.active == false' >/dev/null; }
+    # Asks gateway $1 ($2:$3) to hand the VIP to a standby (a no-op if it
+    # doesn't hold it; 409 while no standby is ready), every 20 s, until it
+    # says it no longer holds it or $4 seconds pass. A refusal is logged once.
+    # A POST that times out may still have handed it over: GET /vip says.
+    vip_handoff() {
+      local name=$1 ip=$2 port=$3 deadline next=0 now out code rc logged=0
+      deadline=$(($(date +%s) + $4))
+      while :; do
+        now=$(date +%s)
+        if [ "$now" -ge "$next" ]; then
+          rc=0
+          out=$(curl -sS --max-time 30 -w '\n%{http_code}' -X POST "http://$ip:$port/vip/handoff" 2>&1) || rc=$?
+          code=''${out##*$'\n'}
+          if [ "$logged" = 0 ] && [ "$rc" = 28 ]; then
+            log "$name: the handoff request timed out after 30 s; asking the gateway whether it still holds the VIP"
+            logged=1
+          elif [ "$logged" = 0 ] && [[ $code != 2* ]]; then
+            log "$name: handoff refused ($code): $(printf '%s' "''${out%$'\n'*}" | head -c 300)"
+            logged=1
+          fi
+          next=$(($(date +%s) + 20))
+        fi
+        vip_inactive "$ip" "$port" && return 0
+        [ "$(date +%s)" -lt "$deadline" ] || return 1
+        sleep 5
+      done
+    }
+    # Hands every VIP gateway's VIP here to a standby, $1 seconds each. One
+    # that isn't Ready (crashlooping, its admin port down) is skipped.
+    hand_off_vips() {
+      local secs=$1 gws name ip port ready rc=0
+      gws=$(vip_gateways) || { log "couldn't list the VIP gateways"; return 1; }
+      while read -r name ip port ready; do
+        [ -n "$name" ] || continue
+        if [ "$port" = - ] || [ "$ip" = - ]; then
+          log "$name: no admin port or pod IP: can't ask it"
+          rc=1
+        elif [ "$ready" != true ]; then
+          log "$name: not Ready, skipped (if it holds the VIP, the reboot drops its players)"
+        elif vip_handoff "$name" "$ip" "$port" "$secs"; then
+          log "$name: VIP not served here"
+        else
+          log "$name: still serves the VIP (no standby took it in $secs s)"
+          rc=1
+        fi
+      done <<< "$gws"
+      return "$rc"
     }
 
     holder() { k -n kube-system get lease node-rollout -o jsonpath='{.spec.holderIdentity}' 2>/dev/null || true; }
@@ -218,14 +300,35 @@ let
       if [ "$mode" = reboot ]; then
         log "draining, then rebooting into $sys"
         k cordon "$node"
+        ${lib.optionalString lcm.enable ''
+          # Before the drain: mc-no-evict forbids evicting lcm pods, and a
+          # migration keeps their players.
+          log "live-migrating lcm pods off"
+          export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
+          ${lib.optionalString (
+            (lcm.transportTLS.enable or false) && transferNetwork != null
+          ) "export LCM_TRANSFER_NETWORK=${transferNetwork}"}
+          if ! lcm_drain_by "$node" 900; then
+            k uncordon "$node"
+            die "not every lcm pod moved (none was cut short): uncordoned, nothing rebooted"
+          fi
+        ''}
         if ! k drain "$node" --ignore-daemonsets --delete-emptydir-data --timeout=900s; then
           k uncordon "$node"
           die "the drain didn't finish in 15 minutes (a PDB?): uncordoned, nothing rebooted"
+        fi
+        # Last, so the VIP is elsewhere when the node goes down. A reboot
+        # without a standby to take it would drop every player on it.
+        log "handing the router VIP to another node"
+        if ! hand_off_vips 60; then
+          k uncordon "$node"
+          die "a VIP gateway here still serves the VIP: uncordoned, nothing rebooted"
         fi
         echo "$sys reboot" > "$state/pending"
         ceph osd set noout
       else
         log "bouncing into $sys: no drain, no health checks"
+        hand_off_vips 15 || log "the VIP stays here: its gateway tries again at shutdown"
         echo "$sys bounce" > "$state/pending"
         ceph osd set noout || log "Ceph didn't answer: no noout"
       fi

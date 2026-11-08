@@ -16,8 +16,9 @@
 #     ingresses), open ones finish; Tailscale sends new ones to the others.
 #  2. cordoned (and uncordoned at the next boot, by node-shutdown-finish,
 #     unless someone else had cordoned it).
-#  3. lcm pods live-migrated off (lcm drain): mc-no-evict forbids evicting
-#     them, and a migration keeps their players.
+#  3. lcm pods live-migrated off, one at a time, none started after 60 s
+#     and none cut short by this script (lcm-drain.nix): mc-no-evict forbids
+#     evicting them, and a migration keeps their players.
 #  4. the rest drained: evictions take pods out of their endpoints before
 #     they stop, single-replica ones start on another node meanwhile, and a
 #     CNPG primary is switched over. Ceph's mons, OSDs and mgr stay for
@@ -25,7 +26,14 @@
 # Each step is bounded, and the unit powers off however it ends
 # (SuccessAction/FailureAction), so a stuck drain can only delay the power-off
 # (by up to TimeoutStartSec), never stop it. The machine waits stopTimeout
-# (node-vm.nix) for the VM.
+# (node-vm.nix) for the VM. TimeoutStartSec (360 s, inside the machine's
+# stopTimeout of 540) is the one hard deadline. The budget: no migration
+# starts after 60 s, so the last one has ~3 minutes before the drain's 120 s;
+# a normal migration takes well under a minute (blackout seconds). One that
+# runs into lcm's own worst-case bounds (minutes to park, restore or roll
+# back) is still killed at 360 s with the rest. That's accepted: the VM
+# powers off next, so its pods die anyway, and what a killed migration
+# leaves (staged images, a fence) is lcm's to clean up (lcm recover).
 #
 # node-rollout's reboots drain the node themselves; they now leave svc:k8s
 # first too (rollout.nix).
@@ -51,6 +59,7 @@ let
   inputs = [
     config.services.k3s.package
     pkgs.coreutils
+    pkgs.jq
   ]
   ++ lib.optional lcm.enable lcm.package;
 
@@ -59,8 +68,9 @@ let
     runtimeInputs = inputs;
     text = ''
       node=${host}
-      k() { k3s kubectl "$@"; }
+      k() { k3s kubectl --request-timeout=30s "$@"; }
       log() { printf 'node-prepare-shutdown: %s\n' "$*" >&2; }
+      ${lib.optionalString lcm.enable (import ./lcm-drain.nix)}
 
       ${lib.optionalString cfg.tailscaleServices ''
         log "leaving svc:k8s: open connections finish, new ones go to the other nodes"
@@ -72,7 +82,7 @@ let
       fi
       ${lib.optionalString lcm.enable ''
         log "live-migrating lcm pods off"
-        timeout 200 lcm drain "$node" || log "lcm drain didn't finish: what's left stops with the node"
+        lcm_drain_by "$node" 60 || log "not every lcm pod moved: what's left stops with the node"
       ''}
       log "draining the rest (Ceph's mons, OSDs and mgr stay for kubelet's shutdown)"
       k drain "$node" --ignore-daemonsets --delete-emptydir-data \
