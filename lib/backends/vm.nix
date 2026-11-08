@@ -161,6 +161,7 @@ let
         inherit (cfg.sandbox.vm)
           persistent
           memory
+          swap
           vcpus
           gpuMemoryMiB
           gpuMemoryProcessPercent
@@ -228,6 +229,7 @@ in
         message = "${appName}: sandbox.vm.hostKeyring is per app VM; a group VM's bus is shared by all its members.";
       };
     modules.sandbox.dnsAllow = lib.optionals (group == null) instance.dnsAllow;
+    systemd.tmpfiles.settings = lib.optionalAttrs (group == null) instance.tmpfiles;
     users.users = lib.optionalAttrs (group == null) instance.hostUsers.users;
     users.groups = lib.optionalAttrs (group == null) instance.hostUsers.groups;
     modules.sandbox.broker.sandboxes = lib.optionalAttrs (group == null) {

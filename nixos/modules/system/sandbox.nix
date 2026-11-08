@@ -166,6 +166,18 @@ in
                 default = 8192;
                 description = "Guest memory for the group's VM, in MiB.";
               };
+              swap = {
+                enable = lib.mkOption {
+                  type = lib.types.bool;
+                  default = false;
+                  description = "Swap for the group's VM; see modules.apps.<app>.sandbox.vm.swap.enable.";
+                };
+                size = lib.mkOption {
+                  type = lib.types.nullOr lib.types.ints.positive;
+                  default = null;
+                  description = "Size of the group VM's swap, in MiB; null: the same as its memory.";
+                };
+              };
               vcpus = lib.mkOption {
                 type = lib.types.ints.positive;
                 default = 8;

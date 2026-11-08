@@ -121,6 +121,11 @@
   grantCwd ? false,
   network,
   memory,
+  # { enable; size (MiB, null: memory's) }: guest swap (sandbox.vm.swap; `swapImage` below).
+  swap ? {
+    enable = false;
+    size = null;
+  },
   vcpus,
   gpuMemoryMiB ? 1024,
   gpuMemoryProcessPercent ? 50,
@@ -369,6 +374,35 @@ let
   unitRt = if perCwd then "${base}/run" else "${base}/main";
   # The prep's (and cleanup's) arguments: the project path and the stage key.
   prepArgs = lib.optionalString perCwd " \"%f\" \"%i\"";
+
+  # Guest swap (sandbox.vm.swap): with none, every guest page, the tmpfs root's
+  # included (gecko's disk cache in ~/.cache, /tmp), stays in RAM until the
+  # guest kernel kills something. The prep makes a sparse image per launch,
+  # in a folder per stage key (one per project of a per-project VM: systemd
+  # names it with %i, the VMM's bind below), deletes any crash leftover first,
+  # and the cleanup deletes it on stop, swap on or not (an image from before
+  # a rebuild that turned it off); the host empties the whole directory at
+  # boot (sandbox-vm.nix). NOCOW (btrfs): a swap image gains nothing from
+  # copy-on-write or compression (its contents are ciphertext: guest.nix
+  # sbx-swap encrypts it, and says why).
+  swapOn = swap.enable or false;
+  swapMiB = if (swap.size or null) == null then memory else swap.size;
+  swapRoot = "${toString vmHost.swapDirectory}/${name}";
+  swapImage = "${swapRoot}/${stageKey}/swap.img";
+  # Where the VMM sees it: in its own /run/sandbox-vm tmpfs (`view`).
+  swapMount = "${base}/swap.img";
+  # swap_dir: this launch's swap folder, in $sw, for the prep and the cleanup;
+  # refused (status 1) for a key that isn't a single name (root.py
+  # `stage_key` checks the same), which a user may pick as a per-project
+  # unit's instance.
+  swapDirFn = ''
+    swap_dir() {
+      case "$key" in
+        "" | . | .. | */*) echo "${unit}: bad stage key '$key': no swap folder" >&2; return 1 ;;
+        *) sw=${lib.escapeShellArg swapRoot}/"$key" ;;
+      esac
+    }
+  '';
   # The root steps (lib/vm/root.py).
   rootTool = "${import ./root.nix pkgs}/bin/sbx-vm-root";
 
@@ -840,6 +874,24 @@ let
     ${lib.optionalString docs ''
       ${co}/install -d -m 0711 -o ${username} -g ${hostUser.group} "$rt/docs"
     ''}
+    ${lib.optionalString swapOn ''
+      # The guest's swap image (swapImage): a new sparse file, the VMM's to
+      # open. Only what the guest writes takes space, so a full disk shows
+      # later, as I/O errors in the guest: said here, in the journal, first.
+      ${swapDirFn}
+      swap_dir
+      ${co}/rm -rf -- "$sw"
+      ${co}/install -d -m 0700 "$sw"
+      if [ "$(${co}/stat -f -c %T "$sw")" = btrfs ]; then
+        ${pkgs.e2fsprogs}/bin/chattr +C "$sw" || echo "${unit}: couldn't make $sw NOCOW" >&2
+      fi
+      ${co}/truncate -s ${toString swapMiB}M "$sw/swap.img"
+      ${co}/chown ${vmUser}:${vmGroup} "$sw/swap.img"
+      free=$(( $(${co}/stat -f -c '%a * %S' "$sw") / 1048576 ))
+      if [ "$free" -lt ${toString swapMiB} ]; then
+        echo "${unit}: only $free MiB free for its ${toString swapMiB} MiB of swap in $sw" >&2
+      fi
+    ''}
     # What the units bind from: the members' data (and checks the project
     # path: canonical, a folder the user can open, no symlink on the way),
     # idmapped onto the VM's uid unless it owns the data, and the launch dir.
@@ -848,13 +900,20 @@ let
 
   # Root, on stop (and after a failed start): the stage unmounted, then the
   # launch's dir removed, each folder of someone else's emptied as its owner
-  # (lib/vm/root.py `cleanup`).
+  # (lib/vm/root.py `cleanup`); and the swap image deleted, whatever the
+  # stage's teardown did (a leftover is only space: boot empties it).
   cleanupScript = pkgs.writeShellScript "${unit}-cleanup" ''
     set -euo pipefail
     dir="''${1:-}"
     key="''${2:-main}"
     ${idPrelude}
-    exec ${rootTool} cleanup ${base} "$key" "$rt"
+    rc=0
+    ${rootTool} cleanup ${base} "$key" "$rt" || rc=$?
+    ${swapDirFn}
+    if swap_dir; then
+      ${co}/rm -rf -- "$sw" || echo "${unit}: couldn't delete the swap image in $sw" >&2
+    fi
+    exit "$rc"
   '';
 
   # The VM's uid: the VMM. crosvm keeps its own sandbox on (per-device minijail
@@ -872,6 +931,13 @@ let
     # kernel's framebuffer console does, at boot. Cross-domain Wayland doesn't
     # use the display, so the guest's connector is disabled and nothing is.
     ++ lib.optional crossDomain "video=Virtual-1:d"
+    # zswap in front of the guest's swap (guest.nix sbx-swap): this kernel's
+    # compressor is zstd by default; the shrinker writes cold pages out to
+    # the disk before the pool fills.
+    ++ lib.optionals swapOn [
+      "zswap.enabled=1"
+      "zswap.shrinker_enabled=1"
+    ]
     ++ lib.optionals gameTuning [
       "transparent_hugepage=always"
       "modules_load=ntsync"
@@ -936,6 +1002,14 @@ let
     ''}
     ${lib.optionalString perCwd ''
       args+=(--shared-dir "${cwdMount}:sbx-cwd:$rw")
+    ''}
+    ${lib.optionalString swapOn ''
+      # The swap disk (swapImage), found by its serial in the guest
+      # (/dev/disk/by-id/virtio-sbx-swap). sparse: the guest's discards punch
+      # holes, so freed swap gives the space back. direct: no second copy of
+      # what the guest swaps out in the host's page cache, charged to this
+      # unit's MemoryMax; 4 KiB blocks keep every request aligned for O_DIRECT.
+      args+=(--block "path=${swapMount},sparse=true,direct=true,block-size=4096,id=sbx-swap")
     ''}
     ${lib.optionalString network' ''
       for _ in $(${co}/seq 1 200); do [ -S "$rt/net/passt.sock" ] && break; ${co}/sleep 0.05; done
@@ -1688,7 +1762,11 @@ let
       Type = "simple";
       ExecStart = "${runScript}${instArg}";
       ExecStop = "-${stopScript}${instArg}";
-      TimeoutStopSec = 20;
+      # With swap, the guest's shutdown swaps everything back in (swapoff),
+      # through dm-crypt, before it powers off: the tmpfs root's swapped-out
+      # pages too, which no process exit frees. 60 s is an estimate, not a
+      # measurement: time the stop of a VM with GBs swapped out and adjust.
+      TimeoutStopSec = if swapOn then 60 else 20;
       KillMode = "mixed";
       Restart = "no";
 
@@ -1735,7 +1813,13 @@ let
     // view {
       tmpfs =
         map (t: shareRoot "${tree}/${t}") tiers ++ lib.optional (binds != [ ]) (shareRoot "${tree}/binds");
-      binds = storageBinds ++ rwBinds ++ lib.optional perCwd (bindPair "${stage}/cwd" cwdMount);
+      binds =
+        storageBinds
+        ++ rwBinds
+        ++ lib.optional perCwd (bindPair "${stage}/cwd" cwdMount)
+        # The swap image alone, not its folder (crosvm opens it before jailing
+        # the block device, which then needs no path at all).
+        ++ lib.optional swapOn (bindPair swapImage swapMount);
       # The meta share's files are this uid's (the prep hands them over before
       # this unit starts, and nothing writes there after), but crosvm has no
       # read-only share and the guest's "ro" is its own: read-only here, so the
@@ -1774,6 +1858,7 @@ let
     # The document portal's view must exist before it can be staged.
     wants = lib.optional docs (ref "${unit}-docs-portal");
     after = lib.optional docs (ref "${unit}-docs-portal");
+    unitConfig.RequiresMountsFor = lib.optional swapOn swapRoot;
     serviceConfig =
       core.hardening.rootStep [
         "CAP_CHOWN"
@@ -1795,6 +1880,12 @@ let
         RuntimeDirectory = "sandbox-vm/${name}";
         RuntimeDirectoryMode = "0711";
         RuntimeDirectoryPreserve = true;
+        # And this VM's swap folder (tmpfiles makes it while swap is on; the
+        # cleanup deletes an image left from before it was turned off). With
+        # swap on it must be there: a missing one fails the prep at once
+        # (226/NAMESPACE; `systemd-tmpfiles --create` makes it) instead of at
+        # the image's truncate.
+        ReadWritePaths = [ (lib.optionalString (!swapOn) "-" + swapRoot) ];
         PrivateDevices = true;
         ProtectKernelTunables = true;
         # setns into the host's mount namespace; the idmap's user namespace.
@@ -2336,6 +2427,16 @@ in
   // lib.optionalAttrs grants {
     "${unit}-grantsfs${tmpl}" = grantsFsService;
     "${unit}-grants${tmpl}" = grantsHubService;
+  };
+
+  # systemd.tmpfiles.settings: this VM's swap folder (swapImage), root's
+  # alone (the directory itself, and its emptying at boot: sandbox-vm.nix).
+  tmpfiles = lib.optionalAttrs swapOn {
+    sandbox-vm-swap.${swapRoot}.d = {
+      mode = "0700";
+      user = "root";
+      group = "root";
+    };
   };
 
   # The broker's view of this VM (modules.sandbox.broker.sandboxes.<brokerName>).

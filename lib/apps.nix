@@ -122,6 +122,25 @@
               default = 4096;
               description = "Guest memory for ${appName}'s VM, in MiB.";
             };
+            swap = {
+              enable = lib.mkOption {
+                type = lib.types.bool;
+                default = false;
+                description = ''
+                  Give ${appName}'s VM swap (with zswap in front of it): a sparse
+                  disk image made for each launch under
+                  modules.sandbox.vm.swapDirectory and deleted when the VM stops.
+                  The guest encrypts it with a key that never leaves its RAM.
+                  Without swap every page of the guest's, its tmpfs root
+                  included, stays in RAM, and the guest kernel kills processes
+                  when that runs out. Group members use their group's vm.swap.'';
+              };
+              size = lib.mkOption {
+                type = lib.types.nullOr lib.types.ints.positive;
+                default = null;
+                description = "Size of ${appName}'s VM swap, in MiB; null: the same as its memory. Only what the guest writes takes space on the host.";
+              };
+            };
             vcpus = lib.mkOption {
               type = lib.types.ints.positive;
               default = 4;

@@ -49,6 +49,7 @@ let
       inherit (g) network;
       inherit (g.vm)
         memory
+        swap
         vcpus
         gpuMemoryMiB
         gpuMemoryProcessPercent
@@ -237,6 +238,20 @@ in
       '';
     };
 
+    swapDirectory = lib.mkOption {
+      type = lib.types.externalPath;
+      default = if config.fileSystems ? "/cache" then "/cache/sandbox-vm" else "/var/cache/sandbox-vm";
+      defaultText = lib.literalExpression ''if config.fileSystems ? "/cache" then "/cache/sandbox-vm" else "/var/cache/sandbox-vm"'';
+      description = ''
+        Where VMs with sandbox.vm.swap keep their swap images
+        (<name>/<instance>/swap.img), one per launch, deleted when the VM
+        stops and, for crash leftovers, at boot. Disposable data on a local
+        disk: the guest encrypts it with a key of its own. Every folder on the
+        way must be root's and writable by nobody else (root's prep works in
+        it).
+      '';
+    };
+
     dbusProxy = lib.mkOption {
       type = lib.types.package;
       readOnly = true;
@@ -317,5 +332,28 @@ in
     # created and removed by each VM's root prep/cleanup (lib/vm/instance.nix).
     # Traversable, never listable or writable by unprivileged users.
     systemd.tmpfiles.rules = [ "d /run/sandbox-vm 0711 root root -" ];
+    # Swap images (sandbox.vm.swap; lib/vm/instance.nix `swapImage`): each VM
+    # with swap adds its own folder. What's in the directory is deleted at
+    # boot only ("!"; removal runs before the folders are made again): a
+    # rebuild's tmpfiles run must not delete running VMs' images. Whether or
+    # not any VM has swap now, so a VM's leftovers go once it no longer does;
+    # but only on hosts with VM-capable apps at all (a host that drops its
+    # last one keeps any old images until they're removed by hand).
+    systemd.tmpfiles.settings = lib.mkIf (cfg.members != { }) (lib.mkMerge (
+      [
+        {
+          sandbox-vm-swap = {
+            ${toString cfg.swapDirectory}.d = {
+              mode = "0700";
+              user = "root";
+              group = "root";
+            };
+            "${toString cfg.swapDirectory}/*"."R!" = { };
+          };
+        }
+      ]
+      # The groups' VMs' own folders.
+      ++ map (i: i.tmpfiles) (lib.attrValues cfg.groupInstances)
+    ));
   };
 }

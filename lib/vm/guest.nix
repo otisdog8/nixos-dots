@@ -41,6 +41,11 @@ let
   );
   userRuntimeDir = "/run/user/${toString sbxHost.uid}";
 
+  # The swap disk a VM with sandbox.vm.swap gets (lib/vm/instance.nix
+  # `swapImage`), by the serial crosvm gives it, and its device unit.
+  swapDisk = "/dev/disk/by-id/virtio-sbx-swap";
+  swapDiskUnit = "dev-disk-by\\x2did-virtio\\x2dsbx\\x2dswap.device";
+
   # Mount everything the spec describes. Runs as root before any SSH session.
   setup = pkgs.writeShellScript "sbx-setup" ''
     set -euo pipefail
@@ -327,6 +332,43 @@ in
       Type = "oneshot";
       RemainAfterExit = true;
       ExecStart = setup;
+    };
+  };
+
+  # Swap, in VMs given the disk for it (the host makes a new one for every
+  # launch and deletes it on stop); started by the disk's appearing, so a VM
+  # without one waits for nothing. Encrypted with a key read from the kernel's
+  # RNG at every boot, which never leaves this VM's RAM, as the host's own
+  # swap is (randomEncryption): deleting the image doesn't erase its blocks
+  # on the host's SSD, where the app's memory (cookies, tokens) would
+  # otherwise outlive the VM. Discards pass through (crosvm punches holes in
+  # the image, so freed swap gives the host its space back); with a
+  # throwaway key they only tell the host which blocks are free. zswap in
+  # front of it comes from the VM's own kernel command line (instance.nix
+  # guestKernelParams).
+  systemd.services.sbx-swap = {
+    description = "Encrypted swap on the host's disk for this launch";
+    wantedBy = [ swapDiskUnit ];
+    bindsTo = [ swapDiskUnit ];
+    after = [ swapDiskUnit ];
+    path = with pkgs; [
+      cryptsetup
+      util-linux
+      kmod
+    ];
+    script = ''
+      modprobe -a dm_mod dm_crypt
+      # AES-NI's xts(aes) before the table asks for it (else the aes module's,
+      # from the kernel's AES library, may do).
+      modprobe -q -a xts aesni_intel || true
+      cryptsetup plainOpen -c aes-xts-plain64 --key-size 512 --sector-size 4096 \
+        -d /dev/urandom --allow-discards ${swapDisk} sbx-swap
+      mkswap /dev/mapper/sbx-swap
+      swapon --discard /dev/mapper/sbx-swap
+    '';
+    serviceConfig = {
+      Type = "oneshot";
+      RemainAfterExit = true;
     };
   };
 
