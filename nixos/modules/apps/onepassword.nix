@@ -56,6 +56,9 @@
         '';
       };
       packageName = "1password";
+      # 1Password keeps keys in the kernel keyring (keyctl/add_key), which the
+      # sandbox's seccomp filter denies by default (lib/backends/bwrap-syscalls.nix).
+      capabilities.seccomp.keyrings = true;
       desktopFileName = "1password.desktop";
 
       # The Electron profile + local vault. chromium.nix supplies the .config/1Password

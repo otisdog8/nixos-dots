@@ -43,6 +43,13 @@ helper.mkApp (
       # the normal ~ paths — host-visible, and no risk of shadowing any
       # home-manager-managed ~/.config/nvim.
       defaultBackend = "nixpak";
+      # No nested user namespaces, though system-bin.nix would give them
+      # (lib/backends/bwrap-syscalls.nix): nvim and nixd don't make any, and a
+      # sandboxed host command run from here (opencode for codecompanion,
+      # `:!claude`) fails anyway, on its stash binds, which this sandbox
+      # doesn't have (lib/features/agent-peers.nix).
+      capabilities.nestedUserns = false;
+
       storage = [
         {
           path = ".config/nvim";

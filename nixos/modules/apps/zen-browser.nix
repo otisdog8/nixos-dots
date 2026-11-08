@@ -26,6 +26,15 @@
       # so that's the binary the systemd launcher must wrap.
       packageName = "zen-beta";
       desktopFileName = "zen-beta.desktop";
+      # Nested user namespaces (lib/backends/bwrap-syscalls.nix): the content
+      # processes' own sandbox puts each in its own user, PID and network
+      # namespaces and chroots it, on top of its seccomp-bpf filter. Without
+      # them (as under Flatpak) only that filter is left. A compromised
+      # content process does get a user namespace with full capabilities, but
+      # the sandbox's seccomp filter still keeps it from NETLINK_NETFILTER,
+      # XFRM, AF_PACKET/AF_XDP and the other families behind much of that
+      # kernel surface (NETLINK_ROUTE, mounts and namespaced sysctls remain).
+      capabilities.nestedUserns = true;
       # gecko registers org.mozilla.<app>.<profile-instance> on the session bus
       # (MOZ_DBUS_REMOTE, set by open-links.nix); the launcher resolves the live
       # instance from this prefix to forward URLs to a running window. Verify with

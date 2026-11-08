@@ -196,4 +196,19 @@ lib.mkMerge [
   { bubblewrap.bind.dev = caps.binds.dev; }
 
   { dbus.policies = caps.dbus.policies; }
+
+  # Nested user namespaces and the seccomp filter (lib/backends/bwrap-syscalls.nix).
+  # Only the permissive values are set, over the module's strict defaults, so
+  # a group sandbox gets the most permissive of its members' (it runs them all).
+  {
+    sbx.syscalls = lib.mkMerge [
+      (lib.mkIf caps.nestedUserns { nestedUserns = true; })
+      (lib.mkIf (!caps.seccomp.enable) { seccomp.enable = false; })
+      (lib.mkIf caps.seccomp.i386 { seccomp.i386 = true; })
+      (lib.mkIf caps.seccomp.modifyLdt { seccomp.modifyLdt = true; })
+      (lib.mkIf caps.seccomp.perf { seccomp.perf = true; })
+      (lib.mkIf caps.seccomp.keyrings { seccomp.keyrings = true; })
+      { seccomp = { inherit (caps.seccomp) socketFamilies netlinkProtocols; }; }
+    ];
+  }
 ]

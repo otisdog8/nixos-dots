@@ -28,6 +28,16 @@
       # (`mangohud %command%`) and pressure-vessel find it.
       package = pkgs.steam.override { extraPkgs = p: [ p.mangohud ]; };
       packageName = "steam";
+      # The kernel surface Steam needs (lib/backends/bwrap-syscalls.nix):
+      # pressure-vessel is bwrap and steamwebhelper is Chromium (user
+      # namespaces), the client and many games are 32-bit (the i386 ABI;
+      # their socket families then go unchecked), and Proton/Wine sets up
+      # segments with modify_ldt.
+      capabilities.nestedUserns = true;
+      capabilities.seccomp = {
+        i386 = true;
+        modifyLdt = true;
+      };
 
       # Every storage entry is location = "home" (host-visible at ~, NOT a hidden
       # stash). Two reasons this is mandatory:

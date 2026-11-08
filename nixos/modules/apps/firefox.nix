@@ -41,6 +41,15 @@
       # runs `firefox-devedition`: that's the binary the systemd launcher wraps.
       packageName = "firefox-devedition";
       desktopFileName = "firefox-devedition.desktop";
+      # Nested user namespaces (lib/backends/bwrap-syscalls.nix): the content
+      # processes' own sandbox puts each in its own user, PID and network
+      # namespaces and chroots it, on top of its seccomp-bpf filter. Without
+      # them (as under Flatpak) only that filter is left. A compromised
+      # content process does get a user namespace with full capabilities, but
+      # the sandbox's seccomp filter still keeps it from NETLINK_NETFILTER,
+      # XFRM, AF_PACKET/AF_XDP and the other families behind much of that
+      # kernel surface (NETLINK_ROUTE, mounts and namespaced sysctls remain).
+      capabilities.nestedUserns = true;
       # gecko remote name: org.mozilla.<RemotingName>.<profile-instance>, the
       # RemotingName (firefox-devedition, see application.ini) made D-Bus-safe
       # ('-' → '_'). Lets the launcher forward URLs to a running window (and is

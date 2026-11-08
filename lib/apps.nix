@@ -493,7 +493,9 @@
                       storage
                       ;
                     appCfg = appCfg // {
-                      capabilities = appCfg.capabilities // v.capabilities;
+                      # Recursive, so a variant can set one knob of a
+                      # nested capability (seccomp.enable) and keep the rest.
+                      capabilities = lib.recursiveUpdate appCfg.capabilities v.capabilities;
                       nixpakModules = appCfg.nixpakModules ++ v.nixpakModules;
                     };
                     joinGroup = false;

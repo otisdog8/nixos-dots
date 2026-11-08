@@ -105,6 +105,20 @@ let
         '    "--unshare-user-try"' \
         '    "--unshare-user-try"
     (optionals (config.bubblewrap.uid != null) [ "--unshare-user" "--uid" (toString config.bubblewrap.uid) "--gid" (toString config.bubblewrap.gid) ])'
+      # bubblewrap.disableUserns: bwrap --disable-userns, so the app can't make
+      # nested user namespaces (bwrap-syscalls.nix sets it from
+      # capabilities.nestedUserns). It needs a definite --unshare-user (with
+      # only --unshare-user-try bwrap refuses it); a second one, with uid set,
+      # is harmless. The anchor is the uid/gid patch's own line above (which
+      # it leaves unindented: this string's common indentation is stripped).
+      substituteInPlace modules/bubblewrap.nix --replace-fail \
+        'dieWithParent = mkOption {' \
+        '    disableUserns = mkOption { default = false; type = types.bool; description = "bwrap --disable-userns: no nested user namespaces."; };
+    dieWithParent = mkOption {'
+      substituteInPlace modules/launch.nix --replace-fail \
+        '    (optionals (!config.bubblewrap.shareIpc) "--unshare-ipc")' \
+        '    (optionals config.bubblewrap.disableUserns [ "--unshare-user" "--disable-userns" ])
+    (optionals (!config.bubblewrap.shareIpc) "--unshare-ipc")'
       # Mount tmpfs entries BEFORE the binds (upstream mounts them after), so a
       # bind under a tmpfs path — $PWD under /tmp, /tmp/.X11-unix, anything under a
       # tmpfs $HOME — stays visible instead of being hidden by it.
@@ -129,6 +143,9 @@ let
   };
   mkNixPak = (import "${patchedNixpak}/modules") { inherit lib pkgs; };
   bindPath = import ../paths.nix { inherit lib; };
+  # Nested user namespaces and the seccomp filter (sbx.syscalls, set from the
+  # capabilities in capabilities-nixpak.nix).
+  syscallsModule = (import ./bwrap-syscalls.nix { inherit lib pkgs; }).module;
 
   # ── Git guard ──────────────────────────────────────────────────────────────
   # A folder the sandbox gets read-write must not let it change what the HOST's
@@ -294,6 +311,7 @@ let
             { inherit lib; } // lib.optionalAttrs (gpuDevices != null) { inherit gpuDevices; }
           ) (appCfg.capabilities // { x11 = appCfg.capabilities.x11 || x11Forward; }))
           gitGuardModule
+          syscallsModule
         ]
         ++ cfg.sandbox.nixpakModules;
 

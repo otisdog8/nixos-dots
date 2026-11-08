@@ -50,6 +50,10 @@
       #   - $XDG_RUNTIME_DIR/hypr (hyprctl) allows `dispatch exec` — running any
       #     command on the host outside the sandbox — and rewriting live config.
       # Use it only for those test sessions.
+      # It is also where sandboxes get tested, so it runs without the seccomp
+      # filter (lib/backends/bwrap-syscalls.nix). Nested user namespaces it has
+      # like plain claude (system-bin.nix).
+      variantCommands.claude-nesbox.capabilities.seccomp.enable = false;
       variantCommands.claude-nesbox.nixpakModules = [
         (
           { sloth, ... }:

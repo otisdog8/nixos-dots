@@ -26,6 +26,9 @@
       name = "obsidian";
       package = pkgs.obsidian;
       packageName = "obsidian";
+      # Electron: its zygote sandbox makes user namespaces
+      # (lib/backends/bwrap-syscalls.nix).
+      capabilities.nestedUserns = true;
 
       defaultBackend = "systemd";
 

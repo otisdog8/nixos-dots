@@ -55,6 +55,9 @@
       # camera (browser.nix adds those; this browser runs on hostile networks,
       # and ScreenCast would also give its VM the capture bridge).
       capabilities.microphone = lib.mkForce false;
+      # Chromium's zygote sandbox makes user namespaces
+      # (lib/backends/bwrap-syscalls.nix).
+      capabilities.nestedUserns = true;
       portalInterfaces = lib.mkForce [
         "FileChooser"
         "OpenURI"

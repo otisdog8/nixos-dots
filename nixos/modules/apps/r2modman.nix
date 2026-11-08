@@ -23,6 +23,9 @@
       name = "r2modman";
       package = pkgs.r2modman;
       packageName = "r2modman";
+      # Electron: its zygote sandbox makes user namespaces
+      # (lib/backends/bwrap-syscalls.nix).
+      capabilities.nestedUserns = true;
 
       # location = "home" (NOT a hidden stash) is load-bearing: r2modman's mod data
       # is SHARED with steam (steam binds ~/.config/r2modmanPlus-local rw so it can

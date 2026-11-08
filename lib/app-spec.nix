@@ -27,7 +27,7 @@
             capabilities = lib.mkOption {
               type = lib.types.attrs;
               default = { };
-              description = "Capability overrides, merged over app.capabilities.";
+              description = "Capability overrides, merged (recursively) over app.capabilities.";
             };
             nixpakModules = lib.mkOption {
               type = lib.types.listOf lib.types.deferredModule;
@@ -346,6 +346,59 @@
           type = lib.types.listOf lib.types.str;
           default = [ ];
           description = "Device binds.";
+        };
+      };
+      # Kernel surface of the bwrap sandboxes (nixpak, systemd, and in a VM
+      # the app's nested container, sandbox.vm.nested; the VM itself has its
+      # guest kernel as the boundary). What each one is for, and what the
+      # filter denies: lib/backends/bwrap-syscalls.nix.
+      nestedUserns = lib.mkOption {
+        type = lib.types.bool;
+        default = false;
+        description = ''
+          Let the app make nested user namespaces (no bwrap --disable-userns):
+          Chromium/Electron/CEF/QtWebEngine's zygote sandbox, Firefox's
+          content-process sandbox, a nested bwrap (Steam's pressure-vessel,
+          running another sandboxed app).
+        '';
+      };
+      seccomp = {
+        enable = lib.mkOption {
+          type = lib.types.bool;
+          default = true;
+          description = "Load the sandbox's seccomp filter.";
+        };
+        i386 = lib.mkOption {
+          type = lib.types.bool;
+          default = false;
+          description = "Allow the i386 syscall ABI (32-bit binaries; without it they are killed).";
+        };
+        modifyLdt = lib.mkOption {
+          type = lib.types.bool;
+          default = false;
+          description = "Allow modify_ldt (Wine/Proton).";
+        };
+        perf = lib.mkOption {
+          type = lib.types.bool;
+          default = false;
+          description = "Allow perf_event_open (profilers).";
+        };
+        keyrings = lib.mkOption {
+          type = lib.types.bool;
+          default = false;
+          description = "Allow the kernel keyring syscalls: add_key, keyctl, request_key (1Password).";
+        };
+        socketFamilies = lib.mkOption {
+          type = lib.types.listOf lib.types.str;
+          default = [ ];
+          example = [ "AF_BLUETOOTH" ];
+          description = "socket() families allowed besides AF_UNIX, AF_INET, AF_INET6 and AF_NETLINK.";
+        };
+        netlinkProtocols = lib.mkOption {
+          type = lib.types.listOf lib.types.str;
+          default = [ ];
+          example = [ "NETLINK_SOCK_DIAG" ];
+          description = "Netlink protocols allowed besides NETLINK_ROUTE and NETLINK_KOBJECT_UEVENT.";
         };
       };
       dbus.policies = lib.mkOption {

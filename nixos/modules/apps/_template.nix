@@ -24,7 +24,11 @@
     #
     # Common features (see lib/features/ for the full list):
     #   - gui.nix:         GUI apps (Wayland, fonts, theming, portals via xdg-desktop.nix)
-    #   - chromium.nix:    Chromium/Electron apps (imports gui, profile + cache storage)
+    #   - chromium.nix:    Chromium/Electron apps (imports gui, profile + cache storage,
+    #                      capabilities.nestedUserns). A Chromium/Electron/CEF/QtWebEngine
+    #                      app that doesn't import it needs `capabilities.nestedUserns =
+    #                      true;` itself: its sandbox makes user namespaces, which the
+    #                      bwrap sandboxes deny by default (lib/backends/bwrap-syscalls.nix).
     #   - network.nix:     Network access
     #   - audio.nix:       Audio in/out (not implied by gui)
     #   - needs-gpu.nix:   GPU acceleration (NVIDIA, Vulkan, Mesa)

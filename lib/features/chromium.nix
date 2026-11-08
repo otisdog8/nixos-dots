@@ -116,6 +116,10 @@ in
   };
 
   config.app = {
+    # Chromium's zygote sandbox makes its own user namespaces; without them it
+    # refuses to start (lib/backends/bwrap-syscalls.nix).
+    capabilities.nestedUserns = lib.mkDefault true;
+
     # Unified storage: persistRoot on /persist, caches on /cache.
     storage = [
       {

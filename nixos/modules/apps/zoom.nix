@@ -23,6 +23,9 @@
       name = "zoom";
       package = pkgs.zoom-us;
       packageName = "zoom";
+      # QtWebEngine (Chromium): its sandbox makes user namespaces
+      # (lib/backends/bwrap-syscalls.nix).
+      capabilities.nestedUserns = true;
 
       # Dedicated-uid, persistent: login/settings (.zoom + .config) run as app-zoom —
       # hidden from a compromised jrt — and kept across reboots. Screen share rides

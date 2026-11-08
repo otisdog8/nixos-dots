@@ -29,6 +29,9 @@
         ];
       };
       packageName = "obs";
+      # The browser source is CEF (Chromium), whose sandbox makes user
+      # namespaces (lib/backends/bwrap-syscalls.nix).
+      capabilities.nestedUserns = true;
 
       # Dedicated-uid, persistent: scenes + settings AND stream keys (.config/
       # obs-studio) run as app-obs-studio, hidden from a compromised jrt, kept across
