@@ -56,6 +56,40 @@ bounding set, no network).
       thread group gets the VMM's core-scheduling cookie. Both are pinned with
       pidfds and checked to be their units' main processes.
 
+The sandboxes' Nix store (modules/system/sandbox-nix.nix, sbx-nix):
+  nix-up BASE                   (sbx-nix-store) in the host's mount namespace:
+      as sbx-nix, under root's BASE (opened from it without following a link
+      or leaving its filesystem), in its own upper layer (BASE/upper/store,
+      0755: the merged store's root; BASE/upper is 0700) the overlay
+      whiteouts at its top go, .links is made
+      and the remount flag cleared; root marks that .links (the fd sbx-nix
+      opened) opaque, so the host's .links never shows through. The overlay is
+      made by a child that kept only CAP_SYS_ADMIN, CAP_DAC_OVERRIDE and
+      CAP_FOWNER (the overlay works with its creator's credentials:
+      NIX_MOUNTER_CAPS), from the upper layer's fd sbx-nix opened and root's
+      BASE/work; the parent has dropped those two. Then the base (a read-only clone of /nix/store, made
+      private before it's attached, so it is no peer of the host's store),
+      the overlay (/run/sbx-nix/private/rw, in a private mount: it propagates
+      nowhere) and its read-only clone on top of the base
+      (/run/sbx-nix/nix/store, which propagates into the sandboxes holding
+      /run/sbx-nix/nix).
+  nix-down                      (sbx-nix-store, on stop) takes the overlay and
+      its view down (lazily); the base stays.
+  nix-snapshot BASE             (sbx-nix-snapshot) a consistent copy of the
+      host's Nix DB into BASE/lower/db, renamed into place, when the host's
+      has changed since the last one (SQLite's backup with a WAL, a copy
+      checked unchanged across it without).
+
+  nix-pin BASE                  (sbx-nix-pin) the host-GC roots for sbx-nix:
+      the list sbx-nix wrote (BASE/pins/want, opened as sbx-nix without
+      following a link, leaving BASE's filesystem or blocking) is read as
+      data; only store-path names are taken (anything else, or too many,
+      refuses the whole list), as symlinks into the store in root's flat
+      /nix/var/nix/gcroots/sbx-nix.
+
+The nix-* steps' mount and propagation behaviour is tested in a user
+namespace (test_root.py NixStore), with user.* overlay xattrs.
+
 Every path root works on is checked first: each of its directories is root's
 and writable by nobody else (open_trusted), so only root could have put
 anything there.
@@ -107,6 +141,7 @@ MOUNT_ATTR_IDMAP = 0x00100000
 MS_PRIVATE = 1 << 18
 FSOPEN_CLOEXEC = 1
 FSMOUNT_CLOEXEC = 1
+FSCONFIG_SET_FLAG = 0
 FSCONFIG_SET_STRING = 1
 FSCONFIG_CMD_CREATE = 6
 MNT_DETACH = 2
@@ -114,6 +149,8 @@ UMOUNT_NOFOLLOW = 8
 RESOLVE_NO_MAGICLINKS = 0x02
 RESOLVE_NO_SYMLINKS = 0x04
 CLONE_NEWNS = 0x20000
+CAP_DAC_OVERRIDE = 1
+CAP_FOWNER = 3
 CAP_SETGID = 6
 CAP_SETUID = 7
 CAP_SETPCAP = 8
@@ -450,13 +487,14 @@ def restrict_caps(keep):
     check(libc.capset(ctypes.byref(hdr), data), "capset")
 
 
-def enter_host_mount_ns():
+def enter_host_mount_ns(keep=HOST_NS_CAPS):
     """Into PID 1's mount namespace, where systemd resolves BindPaths=. That
     leaves the unit's read-only view of the host behind, so first everything
-    but HOST_NS_CAPS goes (CAP_SYS_PTRACE was only needed to open it)."""
+    but `keep` (HOST_NS_CAPS) goes (CAP_SYS_PTRACE was only needed to open
+    it)."""
     fd = os.open("/proc/1/ns/mnt", os.O_RDONLY | os.O_CLOEXEC)
     try:
-        restrict_caps(HOST_NS_CAPS)
+        restrict_caps(keep)
         os.setns(fd, CLONE_NEWNS)
     finally:
         os.close(fd)
@@ -1381,6 +1419,515 @@ def coresched(backend_unit, vmm_unit, systemctl):
         os.close(vfd)
 
 
+# ── The sandboxes' Nix store (sbx-nix) ───────────────────────────────────────
+
+NIX_USER = "sbx-nix"
+NIX_RUN = "/run/sbx-nix"
+NIX_VIEW = f"{NIX_RUN}/nix"
+NIX_PRIVATE = f"{NIX_RUN}/private"
+NIX_HOST_DB = "/nix/var/nix/db"
+NIX_GCROOTS = "/nix/var/nix/gcroots/sbx-nix"
+NIX_FLAG = "remount-needed"
+NIX_STORE_DIR = "/nix/store"
+# The overlay's upper layer: BASE/upper (sbx-nix's, 0700: nobody else reaches
+# a file in it straight, a setuid one say) holds the store's upper half.
+NIX_UPPER = "upper/store"
+# Hooks for the tests (test_root.py NixStore), which mount the overlay in a
+# user namespace: user.* xattrs, "userxattr".
+NIX_OPAQUE_XATTR = "trusted.overlay.opaque"
+NIX_OVERLAY_EXTRA = ()
+# What the overlay's mounter keeps. overlayfs does its upper-layer work with
+# its creator's credentials (Documentation/filesystems/overlayfs.rst,
+# "Permission model"): CAP_SYS_ADMIN for the mount; CAP_DAC_OVERRIDE to make
+# work/work (mode 0) and write into sbx-nix's upper folders (0700 BASE/upper,
+# Nix's 0555 store dirs); CAP_FOWNER for the setattr on sbx-nix's files that
+# Nix does through the overlay (canonical modes and mtime 1, restorePath's
+# fchmod, the GC making dirs writable to delete them). That doesn't let
+# sbx-nix change host files: the caller is checked first, on the overlay's own
+# inode (owner and mode as they are), so chmod/utime of root's files fails for
+# sbx-nix before the mounter's credentials are used. (A copy-up runs as fsuid
+# 0 and needs none of CAP_CHOWN/CAP_FSETID; it only happens when the caller
+# may modify the file anyway.)
+NIX_MOUNTER_CAPS = frozenset({CAP_SYS_ADMIN, CAP_DAC_OVERRIDE, CAP_FOWNER})
+FSCONFIG_SET_FD = 5
+# A store path's name (nix32 hash, then up to Nix's 211 name characters, not
+# starting with a dot).
+STORE_NAME = re.compile(r"[0-9a-df-np-sv-z]{32}-(?!\.)[A-Za-z0-9+._?=-]{1,211}")
+PIN_LIST_MAX = 64 << 20
+PIN_LIST_MAX_NAMES = 1_000_000
+RESOLVE_NO_XDEV = 0x01
+BENEATH = RESOLVE_NO_SYMLINKS | RESOLVE_NO_MAGICLINKS | RESOLVE_NO_XDEV
+
+
+def nix_creds():
+    pw = pwd.getpwnam(NIX_USER)
+    return pw.pw_uid, pw.pw_gid, []
+
+
+def top_fstype(path):
+    """The fstype of the topmost mount on `path` in this namespace, or None."""
+    entries = []
+    with open("/proc/self/mountinfo") as f:
+        for line in f:
+            pre, _, post = line.partition(" - ")
+            fields = pre.split()
+            if fields[4] == path:
+                entries.append((int(fields[0]), int(fields[1]), post.split()[0]))
+    parents = {p for _, p, _ in entries}
+    tops = [e for e in entries if e[0] not in parents]
+    return tops[-1][2] if tops else None
+
+
+def umount_lazy(path):
+    if libc.umount2(os.fsencode(path), MNT_DETACH | UMOUNT_NOFOLLOW) < 0:
+        e = ctypes.get_errno()
+        raise OSError(e, f"umount {path}: {os.strerror(e)}")
+
+
+def open_beneath(dir_fd, name, flags):
+    """`name` under `dir_fd`: no link followed, no other filesystem entered,
+    never blocking on a FIFO."""
+    # (openat2 refuses any flag but O_DIRECTORY/O_NOFOLLOW with O_PATH, which
+    # never opens a FIFO anyway.)
+    fd = openat2(dir_fd, name, flags if flags & os.O_PATH else flags | os.O_NONBLOCK, BENEATH)
+    if fd < 0:
+        e = ctypes.get_errno()
+        if e in (errno.ELOOP, errno.EXDEV):
+            raise Refused(f"{name}: a symlink or another filesystem is in the way")
+        raise OSError(e, f"{name}: {os.strerror(e)}")
+    return fd
+
+
+def subdir(parent_fd, name, mode=0o755):
+    """O_PATH fd for root's folder `name` in root's `parent_fd`, made if missing."""
+    try:
+        os.mkdir(name, mode, dir_fd=parent_fd)
+    except FileExistsError:
+        pass
+    fd = os.open(name, os.O_PATH | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC, dir_fd=parent_fd)
+    try:
+        trusted_dir(fd, name, 0)
+    except BaseException:
+        os.close(fd)
+        raise
+    return fd
+
+
+def drop_whiteouts(dir_fd):
+    """Remove the overlay whiteouts (0:0 character devices) in `dir_fd`. Only
+    what readdir doesn't call a folder, file or link is stat'ed."""
+    with os.scandir(dir_fd) as it:
+        for e in it:
+            if e.is_dir(follow_symlinks=False) or e.is_file(follow_symlinks=False) or e.is_symlink():
+                continue
+            st = e.stat(follow_symlinks=False)
+            if stat.S_ISCHR(st.st_mode) and st.st_rdev == 0:
+                os.unlink(e.name, dir_fd=dir_fd)
+
+
+def nix_upper_prep(base_fd):
+    """As sbx-nix, with the overlay down, under root's BASE (`base_fd`): in its
+    upper layer the store's half is made (0755, whatever the umask: it is the
+    merged store's root, which every sandbox reads), the whiteouts at its top
+    (they only ever hide host paths) go, .links is made, the remount flag is
+    cleared. Returns .links, opened by sbx-nix. (Whiteouts inside .links don't
+    matter: it's opaque.)"""
+    ufd = open_beneath(base_fd, "upper", os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        try:
+            os.mkdir("store", 0o755, dir_fd=ufd)
+        except FileExistsError:
+            pass
+        sfd = open_beneath(ufd, "store", os.O_RDONLY | os.O_DIRECTORY)
+    finally:
+        os.close(ufd)
+    try:
+        os.fchmod(sfd, 0o755)
+        drop_whiteouts(sfd)
+        try:
+            os.mkdir(".links", 0o755, dir_fd=sfd)
+        except FileExistsError:
+            pass
+        lfd = open_beneath(sfd, ".links", os.O_RDONLY | os.O_DIRECTORY)
+        os.fchmod(lfd, 0o755)
+    finally:
+        os.close(sfd)
+    gfd = open_beneath(base_fd, "signal", os.O_PATH | os.O_DIRECTORY)
+    try:
+        os.unlink(NIX_FLAG, dir_fd=gfd)
+    except FileNotFoundError:
+        pass
+    finally:
+        os.close(gfd)
+    return lfd
+
+
+def nix_teardown():
+    """(In the host's namespace.) The overlay's view and the overlay go; the
+    base under the view stays."""
+    os.close(open_trusted(NIX_VIEW))
+    os.close(open_trusted(NIX_PRIVATE))
+    view = f"{NIX_VIEW}/store"
+    while top_fstype(view) == "overlay":
+        umount_lazy(view)
+    rw = f"{NIX_PRIVATE}/rw"
+    while top_fstype(rw) is not None:
+        umount_lazy(rw)
+
+
+def overlay_mount(lower, upper_fd, work_fd):
+    """A detached overlay mount (fd). The upper and work layers by the fds
+    their owners opened (nothing is resolved again by path), the lower by its
+    path: what Nix's check-mount compares against (source "overlay",
+    lowerdir=, upperdir=). No redirects (nofollow: never made, never followed)
+    and no metacopy."""
+    fs = check(libc.syscall(SYS_fsopen, b"overlay", FSOPEN_CLOEXEC), "fsopen overlay")
+    try:
+        opts = [
+            (b"source", b"overlay"),
+            (b"lowerdir", lower),
+            (b"upperdir", upper_fd),
+            (b"workdir", work_fd),
+            (b"index", b"off"),
+            (b"redirect_dir", b"nofollow"),
+            (b"metacopy", b"off"),
+            *NIX_OVERLAY_EXTRA,
+        ]
+        for k, v in opts:
+            if v is None:
+                r = libc.syscall(SYS_fsconfig, fs, FSCONFIG_SET_FLAG, k, None, 0)
+            elif isinstance(v, int):
+                r = libc.syscall(SYS_fsconfig, fs, FSCONFIG_SET_FD, k, None, v)
+            else:
+                r = libc.syscall(SYS_fsconfig, fs, FSCONFIG_SET_STRING, k, os.fsencode(v), 0)
+            check(r, f"fsconfig {k.decode()}")
+        check(libc.syscall(SYS_fsconfig, fs, FSCONFIG_CMD_CREATE, None, None, 0), "fsconfig create (overlay)")
+        return check(libc.syscall(SYS_fsmount, fs, FSMOUNT_CLOEXEC, MOUNT_ATTR_NOSUID | MOUNT_ATTR_NODEV), "fsmount")
+    finally:
+        os.close(fs)
+
+
+def start_mounter():
+    """A child that keeps NIX_MOUNTER_CAPS (the overlay records its creator's
+    credentials, and uses them for every upper access), forked before the
+    parent drops CAP_DAC_OVERRIDE. Given the layers' fds over the socket, it
+    makes the overlay and sends the mount back. (child, socket)."""
+    a, b = socket.socketpair(socket.AF_UNIX, socket.SOCK_SEQPACKET)
+    child = os.fork()
+    if child == 0:
+        a.close()
+        try:
+            for name in os.listdir("/proc/self/fd"):
+                if int(name) not in (0, 1, 2, b.fileno()):
+                    try:
+                        os.close(int(name))
+                    except OSError:
+                        pass
+            signal.alarm(CHILD_TIMEOUT * 3)
+            restrict_caps(NIX_MOUNTER_CAPS)
+            prctl(PR_SET_DUMPABLE, 0)
+            msg, fds, _flags, _addr = socket.recv_fds(b, 4096, 2)
+            if len(fds) != 2:
+                os._exit(1)
+            mnt = overlay_mount(os.fsdecode(msg), fds[0], fds[1])
+            socket.send_fds(b, [b"ok"], [mnt])
+            os._exit(0)
+        except BaseException as e:
+            try:
+                b.send(f"err:{e}".encode()[:600])
+            finally:
+                os._exit(1)
+    b.close()
+    return child, a
+
+
+def mounter_mount(mounter, lower, upper_fd, work_fd):
+    child, a = mounter
+    try:
+        socket.send_fds(a, [os.fsencode(lower)], [upper_fd, work_fd])
+        if reap(child, a.fileno()):
+            msg, fds, _flags, _addr = socket.recv_fds(a, 700, 1)
+        else:
+            msg, fds = b"", []
+    finally:
+        a.close()
+        os.waitpid(child, 0)
+    if msg == b"ok" and fds:
+        return fds[0]
+    for fd in fds:
+        os.close(fd)
+    raise Refused(f"the overlay: {msg.decode('utf-8', 'replace')[4:] or 'mounter died'}")
+
+
+def ro_clone_onto(src_fd, dst_fd):
+    """A read-only clone of the mount at `src_fd`, private before it's attached
+    on `dst_fd` (a clone of a shared mount is its peer: what is mounted on one
+    would show on the other). Attached under the shared /run it gets a peer
+    group of its own, which is what carries it into the sandboxes."""
+    tree = open_tree(src_fd, recursive=False)
+    try:
+        mount_setattr(tree, MOUNT_ATTR_RDONLY | MOUNT_ATTR_NOSUID | MOUNT_ATTR_NODEV, MS_PRIVATE, recursive=False)
+        move_mount(tree, dst_fd)
+    finally:
+        os.close(tree)
+
+
+def nix_up(base):
+    creds = nix_creds()
+    # Into the host's namespace with HOST_NS_CAPS plus what the two last
+    # restrictions need: CAP_DAC_OVERRIDE and CAP_FOWNER (the mounter's) and
+    # CAP_SETPCAP (dropping anything from the bounding set takes it). The
+    # mounter then keeps NIX_MOUNTER_CAPS, this process HOST_NS_CAPS: both
+    # drop CAP_SETPCAP last, before any work.
+    enter_host_mount_ns(HOST_NS_CAPS | {CAP_DAC_OVERRIDE, CAP_FOWNER, CAP_SETPCAP})
+    mounter = start_mounter()
+    try:
+        restrict_caps(HOST_NS_CAPS)
+        bfd = open_trusted(base)
+    except BaseException:
+        os.kill(mounter[0], signal.SIGKILL)
+        os.waitpid(mounter[0], 0)
+        raise
+    run_fd = view_fd = priv_fd = None
+    try:
+        dev = os.fstat(bfd).st_dev
+        nix_teardown()
+        os.close(open_trusted(f"{NIX_VIEW}/var/nix"))
+        links = as_user(creds, lambda: nix_upper_prep(bfd), (bfd,))
+        try:
+            os.setxattr(links, NIX_OPAQUE_XATTR, b"y")
+        finally:
+            os.close(links)
+        upper = as_user(creds, lambda: open_beneath(bfd, NIX_UPPER, os.O_PATH | os.O_DIRECTORY), (bfd,))
+        work = os.open("work", os.O_PATH | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC, dir_fd=bfd)
+        try:
+            trusted_dir(work, f"{base}/work", 0)
+            for fd, what in ((upper, NIX_UPPER), (work, "work")):
+                if os.fstat(fd).st_dev != dev:
+                    raise Refused(f"{base}/{what}: not on {base}'s filesystem")
+            # mounter_mount reaps the mounter and closes its socket, whatever
+            # happens: not ours to clean up any more.
+            m, mounter = mounter, None
+            mnt = mounter_mount(m, NIX_STORE_DIR, upper, work)
+        finally:
+            os.close(upper)
+            os.close(work)
+        run_fd = open_trusted(NIX_RUN)
+        # Mounted under the private folder (a bind onto itself), the overlay
+        # propagates nowhere. Opened after that, so it's the bind's.
+        private_mount_root(run_fd, "private")
+        view_fd = open_trusted(NIX_VIEW)
+        priv_fd = open_trusted(NIX_PRIVATE)
+        view = f"{NIX_VIEW}/store"
+        try:
+            if top_fstype(view) is None:
+                # The view's mount point (root's, in root's view folder), then
+                # the base: the host's store, read-only.
+                os.close(subdir(view_fd, "store"))
+                store_mp = os.open("store", os.O_PATH | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC, dir_fd=view_fd)
+                host = open_exact(NIX_STORE_DIR, "dir")
+                try:
+                    ro_clone_onto(host, store_mp)
+                finally:
+                    os.close(host)
+                    os.close(store_mp)
+            # The base's root (the walk crosses into the mount).
+            store_mp = os.open("store", os.O_PATH | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC, dir_fd=view_fd)
+            rw_mp = subdir(priv_fd, "rw", 0o700)
+            try:
+                move_mount(mnt, rw_mp)
+                mount_setattr(mnt, propagation=MS_PRIVATE, recursive=False)
+                ro_clone_onto(mnt, store_mp)
+            finally:
+                os.close(store_mp)
+                os.close(rw_mp)
+        finally:
+            os.close(mnt)
+        # When it was mounted: the refresh remounts once the host's DB is newer.
+        fd = os.open("mounted", os.O_WRONLY | os.O_CREAT | os.O_NOFOLLOW | os.O_CLOEXEC, 0o644, dir_fd=run_fd)
+        try:
+            os.utime(fd)
+        finally:
+            os.close(fd)
+    finally:
+        if mounter is not None:
+            os.kill(mounter[0], signal.SIGKILL)
+            os.waitpid(mounter[0], 0)
+            mounter[1].close()
+        for fd in (bfd, run_fd, view_fd, priv_fd):
+            if fd is not None:
+                os.close(fd)
+
+
+def nix_down():
+    enter_host_mount_ns()
+    nix_teardown()
+
+
+def _exists(dir_fd, name):
+    try:
+        os.stat(name, dir_fd=dir_fd, follow_symlinks=False)
+        return True
+    except FileNotFoundError:
+        return False
+
+
+def copy_quiet_db(hfd, dfd, tmp):
+    """The host's DB with no WAL (nothing writing it): a plain copy, checked
+    unchanged (inode, size, mtime, still no WAL) across it; retried a few
+    times, else Refused."""
+    for _ in range(5):
+        src = os.open("db.sqlite", os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC, dir_fd=hfd)
+        try:
+            before = os.fstat(src)
+            if not stat.S_ISREG(before.st_mode):
+                raise Refused(f"{NIX_HOST_DB}/db.sqlite: not a file")
+            dst = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600, dir_fd=dfd)
+            try:
+                while os.sendfile(dst, src, None, 1 << 24):
+                    pass
+            finally:
+                os.close(dst)
+            after = os.fstat(src)
+            now = os.stat("db.sqlite", dir_fd=hfd, follow_symlinks=False)
+        finally:
+            os.close(src)
+        same = lambda x: (x.st_ino, x.st_size, x.st_mtime_ns)
+        wal = _exists(hfd, "db.sqlite-wal") and os.stat("db.sqlite-wal", dir_fd=hfd).st_size > 0
+        if same(before) == same(after) == same(now) and not wal:
+            return
+        time.sleep(1)
+    raise Refused(f"{NIX_HOST_DB}/db.sqlite kept changing while being copied")
+
+
+def nix_snapshot(base):
+    """Copy the host's DB when it has changed since the last copy (mtime: the
+    copy gets the time its backup began). Root's folders only. With a WAL,
+    SQLite's online backup (through the read-only mount SQLite reads it with a
+    private index); without one (SQLite couldn't open it read-only: no -shm
+    to share) a checked plain copy."""
+    import sqlite3
+
+    hfd = open_trusted(NIX_HOST_DB)
+    dfd = open_trusted(f"{base}/lower/db")
+    try:
+        # An empty WAL (just checkpointed: db.sqlite changed with it, or made by
+        # a reader) says nothing.
+        stats = [os.stat(n, dir_fd=hfd, follow_symlinks=False) for n in ("db.sqlite", "db.sqlite-wal") if _exists(hfd, n)]
+        newest = max((st.st_mtime_ns for i, st in enumerate(stats) if i == 0 or st.st_size > 0), default=0)
+        try:
+            if os.stat("db.sqlite", dir_fd=dfd, follow_symlinks=False).st_mtime_ns >= newest:
+                return False
+        except FileNotFoundError:
+            pass
+        began = time.time_ns()
+        tmp = ".snapshot.sqlite"
+        for n in (tmp, f"{tmp}-journal", f"{tmp}-wal", f"{tmp}-shm", ".schema"):
+            try:
+                os.unlink(n, dir_fd=dfd)
+            except FileNotFoundError:
+                pass
+        try:
+            wal = _exists(hfd, "db.sqlite-wal") and os.stat("db.sqlite-wal", dir_fd=hfd).st_size > 0
+            if wal:
+                src = sqlite3.connect(f"file:/proc/self/fd/{hfd}/db.sqlite?mode=ro", uri=True)
+                try:
+                    dst = sqlite3.connect(f"/proc/self/fd/{dfd}/{tmp}")
+                    try:
+                        src.backup(dst)
+                    finally:
+                        dst.close()
+                finally:
+                    src.close()
+            else:
+                copy_quiet_db(hfd, dfd, tmp)
+            # Rollback mode: the daemon opens it immutable.
+            dst = sqlite3.connect(f"/proc/self/fd/{dfd}/{tmp}")
+            try:
+                dst.execute("PRAGMA journal_mode=DELETE")
+                if dst.execute("PRAGMA quick_check").fetchone()[0] != "ok":
+                    raise Refused("the copy of the host's DB isn't sound")
+            finally:
+                dst.close()
+        except sqlite3.Error as e:
+            raise Refused(f"copying the host's DB: {e}")
+        sfd = os.open("schema", os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC, dir_fd=hfd)
+        with os.fdopen(sfd, "rb") as f:
+            schema = f.read(64)
+        wfd = os.open(".schema", os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC, 0o644, dir_fd=dfd)
+        with os.fdopen(wfd, "wb") as f:
+            f.write(schema)
+            os.fchmod(f.fileno(), 0o644)  # the daemon reads it; the unit's umask is 077
+        sfd = os.open(tmp, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC, dir_fd=dfd)
+        try:
+            os.fchmod(sfd, 0o644)
+            os.utime(sfd, ns=(began, began))
+        finally:
+            os.close(sfd)
+        os.rename(".schema", "schema", src_dir_fd=dfd, dst_dir_fd=dfd)
+        os.rename(tmp, "db.sqlite", src_dir_fd=dfd, dst_dir_fd=dfd)
+        return True
+    finally:
+        os.close(hfd)
+        os.close(dfd)
+
+
+def read_pin_list(data):
+    """The names in sbx-nix's pin list (one per line, "\n"-separated); anything
+    but store-path names, or too many, refuses the whole list (the old pins
+    stay)."""
+    if len(data) > PIN_LIST_MAX:
+        raise Refused("pin list too large")
+    lines = data.split(b"\n")
+    if lines and lines[-1] == b"":
+        lines.pop()
+    if len(lines) > PIN_LIST_MAX_NAMES:
+        raise Refused("pin list: too many names")
+    names = set()
+    for raw in lines:
+        line = raw.decode("ascii", "replace")
+        if not STORE_NAME.fullmatch(line):
+            raise Refused(f"pin list: {line[:80]!r} is not a store path name")
+        names.add(line)
+    return names
+
+
+def nix_pin(base, gcroots=NIX_GCROOTS):
+    creds = nix_creds()
+    bfd = open_trusted(base)
+    try:
+        fd = as_user(creds, lambda: open_beneath(bfd, "pins/want", os.O_RDONLY), (bfd,))
+        try:
+            st = os.fstat(fd)
+            if not stat.S_ISREG(st.st_mode) or st.st_dev != os.fstat(bfd).st_dev:
+                raise Refused(f"{base}/pins/want: not a file on {base}'s filesystem")
+            os.set_blocking(fd, True)
+            with os.fdopen(os.dup(fd), "rb") as f:
+                want = read_pin_list(f.read(PIN_LIST_MAX + 1))
+        finally:
+            os.close(fd)
+    finally:
+        os.close(bfd)
+    gfd = open_trusted(gcroots)
+    try:
+        rfd = os.open(".", os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC, dir_fd=gfd)
+        try:
+            have = set(os.listdir(rfd))
+        finally:
+            os.close(rfd)
+        # Add before removing: nothing still wanted is ever unpinned.
+        for n in sorted(want - have):
+            os.symlink(STORE + n, n, dir_fd=gfd)
+        for n in sorted(have - want):
+            if stat.S_ISLNK(os.lstat(n, dir_fd=gfd).st_mode):
+                os.unlink(n, dir_fd=gfd)
+            else:
+                log(f"{gcroots}/{n}: not a link, left alone")
+    finally:
+        os.close(gfd)
+    return len(want)
+
+
 # ── Entry ────────────────────────────────────────────────────────────────────
 
 
@@ -1399,11 +1946,20 @@ def main(argv):
         camera(args[0], canonical(args[1]), args[2], args[3])
     elif cmd == "coresched" and len(args) == 3:
         coresched(*args)
+    elif cmd == "nix-up" and len(args) == 1:
+        nix_up(canonical(args[0]))
+    elif cmd == "nix-down" and not args:
+        nix_down()
+    elif cmd == "nix-snapshot" and len(args) == 1:
+        log("host DB copied" if nix_snapshot(canonical(args[0])) else "host DB unchanged")
+    elif cmd == "nix-pin" and len(args) == 1:
+        log(f"{nix_pin(canonical(args[0]))} host paths pinned")
     else:
         print(
             "usage: sbx-vm-root stage CONFIG BASE KEY RT [DIR] | cleanup BASE KEY RT"
             " | gpu-open RT BACKEND PRINCIPAL [CAPTURE] SETFACL"
-            " | camera attach|detach RT PRINCIPAL CROSVM | coresched BACKEND_UNIT VMM_UNIT SYSTEMCTL",
+            " | camera attach|detach RT PRINCIPAL CROSVM | coresched BACKEND_UNIT VMM_UNIT SYSTEMCTL"
+            " | nix-up BASE | nix-down | nix-snapshot BASE | nix-pin BASE",
             file=sys.stderr,
         )
         return 2

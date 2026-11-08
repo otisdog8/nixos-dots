@@ -112,6 +112,19 @@ let
       [ "$(grep -c '^    tmpfs$' modules/launch.nix)" = 1 ] \
         && grep -A1 '^    tmpfs$' modules/launch.nix | grep -q '^    bindPaths$' \
         || { echo "nixpak launch.nix tmpfs reorder did not apply" >&2; exit 1; }
+      # bubblewrap.bind.afterStore: read-only binds (--ro-bind-try) emitted
+      # AFTER the entire-store bind, the last mount, so they can cover /nix
+      # (features/nix-store.nix: the sbx-nix daemon's view of the store). Only
+      # with bindEntireStore: otherwise nixpak appends the closure's binds
+      # after everything, and evaluation fails instead.
+      substituteInPlace modules/bubblewrap.nix --replace-fail \
+        '    bindEntireStore = mkEnableOption' \
+        '    bind.afterStore = mkOption { description = "Read-only paths bound after the entire-store bind (so they can cover /nix)."; type = bindType; default = []; };
+    bindEntireStore = mkEnableOption'
+      substituteInPlace modules/launch.nix --replace-fail \
+        '    (optionals config.bubblewrap.bindEntireStore (bindRo "/nix/store"))' \
+        '    (optionals config.bubblewrap.bindEntireStore (bindRo "/nix/store"))
+    (if config.bubblewrap.bind.afterStore != [ ] && !config.bubblewrap.bindEntireStore then throw "bubblewrap.bind.afterStore needs bindEntireStore: without it the closure binds come after it" else map bindRo config.bubblewrap.bind.afterStore)'
     '';
   };
   mkNixPak = (import "${patchedNixpak}/modules") { inherit lib pkgs; };

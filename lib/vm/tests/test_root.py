@@ -1192,5 +1192,236 @@ class GitGuardMounted(unittest.TestCase):
         self.assertEqual(os.listdir(dst), [])
 
 
+class PinList(unittest.TestCase):
+    """sbx-nix's pin list: store-path names only, one per "\n"-ended line."""
+
+    h = "0" * 32
+
+    def test_names(self):
+        ok = f"{self.h}-hello-1.0"
+        self.assertEqual(vmroot.read_pin_list(b""), set())
+        self.assertEqual(vmroot.read_pin_list(ok.encode() + b"\n"), {ok})
+        self.assertEqual(len(vmroot.read_pin_list(f"{self.h}-{'a' * 211}".encode())), 1)
+
+    def test_refused(self):
+        h = self.h
+        for data in (
+            f"{h}-a\n\n".encode(),  # blank line
+            f"{h}-a\r\n".encode(),
+            f"{h}-a\x1c{h}-b".encode(),  # not a line break here
+            b"\xff",
+            f"{h}-a/b".encode(),
+            f"{h}-..".encode(),
+            f"{h}-{'a' * 212}".encode(),
+            ("e" * 32 + "-x").encode(),  # not nix32
+            b"../../etc/shadow",
+        ):
+            with self.assertRaises(vmroot.Refused, msg=repr(data)):
+                vmroot.read_pin_list(data)
+
+    def test_too_many(self):
+        with mock.patch.object(vmroot, "PIN_LIST_MAX_NAMES", 2):
+            with self.assertRaises(vmroot.Refused):
+                vmroot.read_pin_list(b"".join(f"{i:032d}-x\n".encode() for i in range(3)))
+
+
+MS_SHARED = 1 << 20
+
+
+class NixStore(unittest.TestCase):
+    """nix-up and nix-down for real, in a user and mount namespace of our own
+    (the overlay with user.* xattrs, as unprivileged overlays need), from the
+    unit's bounding set and umask: the capability drops succeed and leave
+    HOST_NS_CAPS; the base is no peer of the host's store; the overlay's rw
+    mount propagates nowhere while its read-only view does; sbx-nix's
+    whiteouts and flag go, .links is opaque, the store root is 0755 under a
+    0700 upper folder; writes, chmod and utime go through the rw mount.
+
+    Not proven here: the mounter's credentials against files of ANOTHER uid
+    (why the mounter keeps CAP_DAC_OVERRIDE and CAP_FOWNER). The namespace maps
+    one uid, so the mounter owns everything; a second mapped uid needs
+    newuidmap with subordinate ids, which this test doesn't rely on."""
+
+    def test_in_a_namespace(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        d = os.path.realpath(tmp.name)
+        r, w = os.pipe()
+        pid = os.fork()
+        if pid == 0:
+            os.close(r)
+            res = {}
+            try:
+                res.update(self.child(d))
+            except BaseException as e:
+                res.setdefault("error", repr(e))
+            os.write(w, json.dumps(res).encode())
+            os._exit(0)
+        os.close(w)
+        out = b""
+        while chunk := os.read(r, 65536):
+            out += chunk
+        os.close(r)
+        os.waitpid(pid, 0)
+        res = json.loads(out)
+        if "skip" in res:
+            self.skipTest(f"no unprivileged user namespaces or overlays here: {res['skip']}")
+        self.assertNotIn("error", res, res.get("error"))
+        self.assertEqual(res["view"], "overlay")
+        self.assertEqual(res["host store top"], res["host store fs"])
+        self.assertEqual(res["slave view"], "overlay")
+        self.assertIsNone(res["slave rw"])
+        self.assertEqual(res["whiteout"], False)
+        self.assertEqual(res["flag"], False)
+        self.assertEqual(res["opaque"], "y")
+        self.assertEqual(res["host path"], "host")
+        self.assertEqual(res["view write"], "EROFS")
+        self.assertEqual(res["rw write"], "ok")
+        self.assertEqual(res["rw setattr"], "ok")
+        self.assertEqual(res["after down"], "tmpfs")
+        self.assertEqual(res["upper mode"], "0o700")
+        self.assertEqual(res["store root mode"], "0o755")
+        self.assertEqual(res["view root mode"], "0o755")
+        # HOST_NS_CAPS alone left: no CAP_DAC_OVERRIDE, no CAP_SETPCAP.
+        self.assertEqual(int(res["caps after"], 16), sum(1 << c for c in vmroot.HOST_NS_CAPS))
+
+    def child(self, d):
+        M = vmroot
+        uid, gid = os.getuid(), os.getgid()
+        try:
+            os.unshare(os.CLONE_NEWUSER | os.CLONE_NEWNS)
+        except OSError as e:
+            return {"skip": str(e)}
+        for f, text in (("setgroups", "deny"), ("uid_map", f"0 {uid} 1"), ("gid_map", f"0 {gid} 1")):
+            with open(f"/proc/self/{f}", "w") as fh:
+                fh.write(text)
+
+        def tmpfs_at(path, propagation):
+            fs = M.check(M.libc.syscall(M.SYS_fsopen, b"tmpfs", M.FSOPEN_CLOEXEC), "fsopen")
+            M.check(M.libc.syscall(M.SYS_fsconfig, fs, M.FSCONFIG_SET_STRING, b"mode", b"0755", 0), "fsconfig")
+            M.check(M.libc.syscall(M.SYS_fsconfig, fs, M.FSCONFIG_CMD_CREATE, None, None, 0), "create")
+            mnt = M.check(M.libc.syscall(M.SYS_fsmount, fs, M.FSMOUNT_CLOEXEC, 0), "fsmount")
+            M.move_mount(mnt, os.open(path, os.O_PATH | os.O_DIRECTORY))
+            M.mount_setattr(mnt, propagation=propagation, recursive=False)
+
+        # The tree: /run stand-in (shared), BASE, the host's store (a shared
+        # mount of its own, as /nix/store under systemd).
+        tmpfs_at(d, MS_SHARED)
+        run, base, host = f"{d}/run/sbx-nix", f"{d}/cache/sbx-nix", f"{d}/hoststore"
+        for p in (f"{run}/nix/var/nix", f"{base}/lower/db", f"{base}/state", f"{base}/signal", f"{base}/work", host):
+            os.makedirs(p)
+        os.makedirs(f"{run}/private", 0o700)
+        os.makedirs(f"{base}/upper", 0o700)
+        os.chmod(f"{base}/upper", 0o700)
+        tmpfs_at(host, MS_SHARED)
+        os.makedirs(f"{host}/{'a' * 32}-host", exist_ok=True)
+        with open(f"{host}/{'a' * 32}-host/f", "w") as fh:
+            fh.write("host")
+        os.makedirs(f"{base}/upper/store")
+        os.mknod(f"{base}/upper/store/{'a' * 32}-host", stat.S_IFCHR, 0)
+        open(f"{base}/signal/remount-needed", "w").close()
+        res = {"host store fs": M.top_fstype(host)}
+
+        # A service's namespace: a slave of this one, made before nix-up.
+        sr, sw = os.pipe()
+        gr, gw = os.pipe()
+        slave = os.fork()
+        if slave == 0:
+            __import__("signal").alarm(60)  # never outlives a failed test
+            os.unshare(os.CLONE_NEWNS)
+            M.mount_setattr(os.open("/", os.O_PATH), propagation=1 << 19, recursive=True)  # MS_SLAVE
+            os.write(sw, b"1")
+            os.read(gr, 1)
+            out = {"slave view": M.top_fstype(f"{run}/nix/store"), "slave rw": M.top_fstype(f"{run}/private/rw")}
+            os.write(sw, json.dumps(out).encode())
+            os._exit(0)
+        os.read(sr, 1)
+
+        patches = [
+            mock.patch.multiple(
+                M,
+                NIX_RUN=run,
+                NIX_VIEW=f"{run}/nix",
+                NIX_PRIVATE=f"{run}/private",
+                NIX_STORE_DIR=host,
+                NIX_OPAQUE_XATTR="user.overlay.opaque",
+                NIX_OVERLAY_EXTRA=((b"userxattr", None),),
+                nix_creds=lambda: (0, 0, []),
+                drop_to=lambda *a: None,
+                # The real capability drops, without the setns (PID 1's
+                # namespace isn't ours to enter here).
+                enter_host_mount_ns=lambda keep=M.HOST_NS_CAPS: M.restrict_caps(keep),
+                # Above d, the folders are the host's (nobody's, here).
+                trusted_dir=lambda fd, path, uid: None,
+            )
+        ]
+        for pt in patches:
+            pt.start()
+        # As the unit runs it: its bounding set (sandbox-nix.nix sbx-nix-store)
+        # and rootStep's umask.
+        M.restrict_caps(
+            {
+                M.CAP_SYS_ADMIN,
+                M.CAP_SYS_CHROOT,
+                M.CAP_SYS_PTRACE,
+                M.CAP_SETPCAP,
+                M.CAP_SETUID,
+                M.CAP_SETGID,
+                M.CAP_DAC_OVERRIDE,
+                M.CAP_FOWNER,
+            }
+        )
+        os.umask(0o077)
+        try:
+            M.nix_up(base)
+        except vmroot.Refused as e:
+            # Only the kernel refusing an unprivileged overlay skips; anything
+            # else (a capability drop failing, say) is a failure.
+            if "overlay" in str(e) and ("fsopen" in str(e) or "No such device" in str(e)):
+                return {"skip": f"overlay: {e}"}
+            raise
+        finally:
+            os.write(gw, b"1")
+            os.waitpid(slave, 0)
+        res.update(json.loads(os.read(sr, 4096)))
+        res["view"] = M.top_fstype(f"{run}/nix/store")
+        res["host store top"] = M.top_fstype(host)
+        res["whiteout"] = os.path.exists(f"{base}/upper/store/{'a' * 32}-host")
+        res["flag"] = os.path.exists(f"{base}/signal/remount-needed")
+        res["opaque"] = os.getxattr(f"{base}/upper/store/.links", "user.overlay.opaque").decode()
+        with open(f"{run}/nix/store/{'a' * 32}-host/f") as fh:
+            res["host path"] = fh.read()
+        res["upper mode"] = oct(os.stat(f"{base}/upper").st_mode & 0o777)
+        res["store root mode"] = oct(os.stat(f"{base}/upper/store").st_mode & 0o777)
+        res["view root mode"] = oct(os.stat(f"{run}/nix/store").st_mode & 0o777)
+        with open("/proc/self/status") as fh:
+            res["caps after"] = next(l.split()[1] for l in fh if l.startswith("CapBnd:"))
+
+        def attempt(key, fn):
+            try:
+                fn()
+                res[key] = "ok"
+            except OSError as e:
+                res[key] = errno.errorcode.get(e.errno, str(e.errno))
+
+        attempt("view write", lambda: os.mkdir(f"{run}/nix/store/x"))
+        attempt("rw write", lambda: os.mkdir(f"{run}/private/rw/{'b' * 32}-upper"))
+
+        def canonicalise():
+            # What Nix does to a new path: 0444 file, 0555 dir, mtime 1.
+            f = f"{run}/private/rw/{'b' * 32}-upper/f"
+            with open(f, "w") as fh:
+                fh.write("x")
+            os.chmod(f, 0o444)
+            os.utime(f, (1, 1))
+            os.chmod(f"{run}/private/rw/{'b' * 32}-upper", 0o555)
+            os.utime(f"{run}/private/rw/{'b' * 32}-upper", (1, 1))
+
+        attempt("rw setattr", canonicalise)
+        M.nix_down()
+        res["after down"] = M.top_fstype(f"{run}/nix/store")
+        return res
+
+
 if __name__ == "__main__":
     unittest.main()

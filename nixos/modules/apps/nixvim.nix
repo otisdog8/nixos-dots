@@ -27,6 +27,10 @@ helper.mkApp (
       ../../../lib/features/system-bin.nix
       ../../../lib/features/cwd.nix
       ../../../lib/features/network.nix
+      # Nix for nixd (it evaluates the flakes it edits, copying them into the
+      # store) through sbx-nix's unprivileged daemon, never the host's root
+      # nix-daemon; see the /nix note below.
+      ../../../lib/features/nix-store.nix
     ];
 
     config.app = {
@@ -97,9 +101,16 @@ helper.mkApp (
                   # sandbox (core.fsmonitor, core.pager, ...).
                   (sloth.concat' sloth.homeDir "/.config/git")
                   "/bin" # Required for nixd LSP to access nix store and evaluate nix expressions
-                  "/nix" # Required for nixd LSP to access nix store and evaluate nix expressions
-                  "/etc/nix" # Required for nixd LSP to access nix configuration
-                  "/etc/static/nix" # Required for nixd LSP to access nix configuration
+                  # Not all of /nix: that held the host's nix-daemon socket
+                  # (/nix/var/nix/daemon-socket/socket; read-only doesn't stop
+                  # connect()), and nvim runs as jrt, a trusted user of that
+                  # root daemon. The store comes from nixpak's entire-store
+                  # bind; Nix itself from nix-store.nix: sbx-nix's view and
+                  # daemon where the host runs it. Elsewhere it would fall back
+                  # to the chroot store, which needs the nested user namespaces
+                  # nixvim doesn't get, so nixd then evaluates without a store
+                  # it can write (no flake evaluation).
+                  # /etc/nix and /etc/static/nix: from nix-store.nix too.
                   "/etc/passwd" # Required for nixd LSP to access nix configuration
                   "/etc/localtime" # Required for nixd LSP to access nix configuration
                   "/etc/zoneinfo" # Required for nixd LSP to access nix configuration

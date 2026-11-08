@@ -101,7 +101,10 @@ in
             ".cache/uv" # Python uv cache
             ".npm" # npm cache
             ".cache/pnpm" # pnpm cache
-            ".local/share/nix/root" # shared on-disk Nix store for sandboxed apps (lib/features/nix-store.nix)
+            # The sandboxes' shared chroot store (lib/features/nix-store.nix),
+            # on hosts without sbx-nix (modules/system/sandbox-nix.nix). Where
+            # sbx-nix runs nothing uses it: delete the data there by hand.
+            ".local/share/nix/root"
           ];
         };
       };

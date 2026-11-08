@@ -1,49 +1,89 @@
-# Persistent, shared on-disk Nix store for sandboxed apps.
+# Nix inside the sandbox, through sbx-nix (modules/system/sandbox-nix.nix).
 #
-# Inside a nixpak/bubblewrap sandbox there is no /nix/var/nix (no daemon socket,
-# no SQLite db) and the host /nix/store is bind-mounted read-only. As a non-root
-# user Nix therefore can't use the local store directly and falls back to a
-# private "chroot store" at ~/.local/share/nix/root (made to appear at /nix/store
-# via a user namespace).
+# Inside a nixpak/bubblewrap sandbox there is no /nix/var/nix, and the host's
+# nix-daemon is never exposed: it runs as root, and any client reaches its
+# whole protocol. Where the host runs sbx-nix (/etc/sbx-nix/enabled), the
+# sandbox talks to that instead: an unprivileged daemon serving a local-overlay
+# store, the host's /nix/store as the read-only lower layer (so the host's
+# paths are there already, not fetched again), its own upper layer for what
+# sandboxes build or substitute. Only the daemon writes that layer; a sandbox
+# can't change what another one later runs.
 #
-# The bwrap root is a tmpfs, so by default that chroot store is RAM-backed: any
-# `nix build`/`develop`/`shell`/`flake` realises closures into RAM and quickly
-# exhausts tmpfs.
+#   - /run/sbx-nix/nix is bound read-only at /nix: the merged store at
+#     /nix/store (the host's paths plus the upper layer's, so outputs that exist
+#     only in the upper layer run), and the daemon's socket at
+#     /nix/var/nix/daemon-socket/socket. It is the PARENT of the store's mount
+#     point that is bound, so a remount (sbx-nix-refresh) reaches running
+#     sandboxes too. bubblewrap.bind.afterStore (our nixpak patch,
+#     backends/nixpak-pkg.nix) puts it after nixpak's own --ro-bind of the
+#     host /nix/store, which it covers.
+#   - A sandbox started inside one (nested bwrap) binds the outer one's /nix
+#     the same way: the view carries a marker (/nix/var/nix/sbx-nix-view).
+#   - Only when sbx-nix is up: the wrapper checks for the socket and that the
+#     view's store holds a path of this sandbox's own closure (the base layer
+#     is mounted). Otherwise the sandbox keeps nixpak's plain read-only host
+#     store and `nix` fails to connect, loudly (NIX_REMOTE=daemon), instead of
+#     falling back to a store every sandbox can write.
+#   - The sandboxes run as the user (no write access to /nix/var/nix, which
+#     `auto` would also find), and allowed-users admits them
+#     (modules.sandbox.nixDaemon.allowedUsers).
 #
-# This feature fixes that without exposing the host nix-daemon:
-#   - Bind-mounts ~/.local/share/nix/root rw into the sandbox so the chroot store
-#     lands on the host's real (on-disk) home rather than the tmpfs bwrap root.
-#   - The backing path is a single per-user location, so every sandboxed app that
-#     imports this feature shares one store instead of each rebuilding its own.
-#   - Mounts host /etc/nix read-only so client-side experimental-features
-#     (nix-command, flakes) and substituters are honoured inside the sandbox.
-#     On NixOS /etc/nix/{nix.conf,registry.json} are symlinks into /etc/static,
-#     so /etc/static/nix is bound too — otherwise they dangle and nix runs with
-#     built-in defaults ("experimental Nix feature 'nix-command' is disabled").
+# Hosts without sbx-nix (servers, k3s nodes) keep what was there before: each
+# sandbox runs nix against the per-user chroot store ~/.local/share/nix/root,
+# bound read-write (its on-disk backing: modules/system/developer-tools.nix,
+# declared once there, never per app). Every sandbox can write it.
 #
-# The on-disk backing of ~/.local/share/nix/root (on the compressed /cache
-# subvolume) is declared ONCE in modules/system/developer-tools.nix. It must not
-# be added per-app via app.storage: a stash entry would give each app its own
-# store, and a location = "home" entry in several apps would register the same
-# user dir twice (impermanence asserts on duplicates).
-#
-# Note: because the daemon/db are not exposed, the store still can't see the
-# host's existing /nix/store paths, so closures are fetched from substituters on
-# first use. They then persist on /cache and are reused across runs and apps.
-{ config, lib, ... }:
+# Either way host /etc/nix is mounted read-only so client-side
+# experimental-features (nix-command, flakes) are honoured inside the sandbox.
+# On NixOS /etc/nix/{nix.conf,registry.json} are symlinks into /etc/static, so
+# /etc/static/nix is bound too — otherwise they dangle and nix runs with
+# built-in defaults ("experimental Nix feature 'nix-command' is disabled").
+{ pkgs, ... }:
 {
   imports = [ ../app-spec.nix ];
+
+  config.app.usesSandboxNix = true;
 
   config.app.nixpakModules = [
     (
       { sloth, ... }:
       {
+        bubblewrap.preLaunch = ''
+          unset SBX_NIX_VIEW SBX_NIX_CHROOT
+          if [ -e /nix/var/nix/sbx-nix-view ]; then
+            # Started inside a sandbox that has sbx-nix's view at /nix (only
+            # that view has the marker; the host's /nix/var/nix never does):
+            # the same view, the same daemon, never the chroot store.
+            export SBX_NIX_REMOTE=daemon
+            if [ -S /nix/var/nix/daemon-socket/socket ]; then
+              export SBX_NIX_VIEW=/nix
+            fi
+          elif [ -e /etc/sbx-nix/enabled ] || [ -e /run/sbx-nix/nix/var/nix/sbx-nix-view ]; then
+            export SBX_NIX_REMOTE=daemon
+            if [ -S /run/sbx-nix/nix/var/nix/daemon-socket/socket ] \
+              && [ -e /run/sbx-nix${pkgs.coreutils} ]; then
+              export SBX_NIX_VIEW=/run/sbx-nix/nix
+            fi
+          else
+            export SBX_NIX_REMOTE=auto SBX_NIX_CHROOT="$HOME/.local/share/nix/root"
+          fi
+        '';
+        bubblewrap.bind.afterStore = [
+          [
+            (sloth.envOr "SBX_NIX_VIEW" "/var/empty/.sbx-no-nix")
+            "/nix"
+          ]
+        ];
+        bubblewrap.env.NIX_REMOTE = sloth.envOr "SBX_NIX_REMOTE" "daemon";
         bubblewrap.bind.rw = [
-          # Chroot store, backed on-disk + persisted via developer-tools.nix.
-          (sloth.concat' sloth.homeDir "/.local/share/nix/root")
+          # Hosts without sbx-nix: the chroot store.
+          [
+            (sloth.envOr "SBX_NIX_CHROOT" "/var/empty/.sbx-no-nix")
+            (sloth.concat' sloth.homeDir "/.local/share/nix/root")
+          ]
         ];
         bubblewrap.bind.ro = [
-          # Enables experimental-features / substituters config inside the sandbox.
+          # Enables experimental-features config inside the sandbox.
           "/etc/nix"
           # Targets of the /etc/nix symlinks (nix.conf, registry.json, …).
           "/etc/static/nix"

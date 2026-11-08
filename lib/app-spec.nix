@@ -360,6 +360,15 @@
       };
     };
 
+    # Set by lib/features/nix-store.nix: the host runs sbx-nix for this app's
+    # sandbox (modules/system/sandbox-nix.nix enables itself on it).
+    usesSandboxNix = lib.mkOption {
+      type = lib.types.bool;
+      default = false;
+      internal = true;
+      description = "Whether the app's sandbox uses Nix through sbx-nix (lib/features/nix-store.nix).";
+    };
+
     # Nixpak sandbox configuration
     # Features and apps add modules to this list, which are composed by nixpak's module system
     nixpakModules = lib.mkOption {

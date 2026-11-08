@@ -36,6 +36,7 @@
     modules/system/sandbox-agents.nix
     modules/system/sandbox-broker.nix
     modules/system/sandbox-dnsallow.nix
+    modules/system/sandbox-nix.nix
     modules/system/sandbox-resolv.nix
     modules/system/agent-vm.nix
     modules/system/agent-auth-daemons.nix
@@ -167,6 +168,17 @@
     ];
     substituters = [ "https://hyprland.cachix.org" ];
     trusted-public-keys = [ "hyprland.cachix.org-1:a7pgxzMz7+chwVL3/pzj6jIBMioiJM7ypFP8PwtkuGc=" ];
+    # Only root and wheel may talk to the root daemon (the default lets every
+    # uid in: service users, sandbox VM uids). The daemon has had several
+    # client-to-root bugs. This only keeps other uids out: a sandbox that runs
+    # as a wheel user and can see /nix/var/nix/daemon-socket still reaches the
+    # root daemon, so sandboxes don't bind it; those that need Nix use
+    # sbx-nix's own daemon (lib/features/nix-store.nix), and the agent VM
+    # runs its own.
+    allowed-users = [
+      "root"
+      "@wheel"
+    ];
   };
 
   nix.gc = {
