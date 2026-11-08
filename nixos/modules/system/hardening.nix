@@ -435,6 +435,8 @@ let
   hardenSysctls = attrs: lib.mapAttrs (_: lib.mkOverride 900) (removeAttrs attrs cfg.skipSysctls);
 in
 {
+  imports = [ ./modprobe-census.nix ];
+
   options.modules.system.hardening = {
     enable = lib.mkEnableOption "system hardening baseline";
 
