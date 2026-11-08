@@ -117,6 +117,10 @@
   # No Bluetooth on this host, so af_alg can go too.
   modules.system.hardening = {
     enable = true;
+    # No 32-bit here (server profile: ia32_emulation=0, no i686
+    # extra-platforms), so recusant can't build a desktop's closure: those
+    # have uncached i686 derivations (unfree 32-bit driver and Steam parts).
+    # rebuild-remote.sh doesn't offer it for hosts whose closure has any.
     profile = "server";
     blacklistAfAlg = true;
   };

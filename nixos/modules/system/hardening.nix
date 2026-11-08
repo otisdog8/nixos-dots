@@ -151,11 +151,42 @@ let
   ];
 
   mkInstallFalse = mods: lib.concatMapStringsSep "\n" (m: "install ${m} /bin/false") mods;
+  isGuest = cfg.profile == "vm-guest";
+  isK3s = cfg.profile == "k3s-node";
+
+  nodeVmGuest = config.modules.system.nodeVmGuest.enable or false;
+
+  # devices/global_filter for lvm.conf, or null to leave it alone. Hosts with
+  # LVM (the *-hv machines) have their PV on the root LUKS mapper
+  # (cryptarquitens...), and accept that alone: the node VMs' disks are LVs
+  # on it, and what a guest writes inside them (Ceph's LVM) stays the
+  # guest's. Hosts without LVM accept nothing. The k3s roles are left alone:
+  # the bare-metal nodes' Ceph OSDs are ceph-volume LVM on the host, the node
+  # VMs' are on their passthrough disk, and k3s-sensitive.nix sets its own.
+  hasLvm = (config.disko.devices.lvm_vg or { }) != { };
+  lvmFilter =
+    let
+      accept = map (n: ''"a|^/dev/mapper/${n}$|"'') (lib.attrNames config.boot.initrd.luks.devices);
+    in
+    if isK3s then
+      null
+    # A rescue stick: every PV visible, none activated unasked (an empty
+    # auto-activation list stops -aay, udev's and the boot's); `vgchange -ay`
+    # still works.
+    else if cfg.lvmRescue then
+      ''
+        activation/auto_activation_volume_list = [ ]
+      ''
+    else
+      ''
+        devices/global_filter = [ ${lib.concatStringsSep " " (lib.optionals hasLvm accept ++ [ ''"r|.*|"'' ])} ]
+      '';
 
   # Sit between NixOS's mkDefault (1000) and a normal value (100): wins over
   # upstream defaults but per-host overrides via bare value or lib.mkForce
   # still take precedence.
-  hardenSysctls = lib.mapAttrs (_: lib.mkOverride 900);
+  # Ones the kernel lacks (skipSysctls) are left out.
+  hardenSysctls = attrs: lib.mapAttrs (_: lib.mkOverride 900) (removeAttrs attrs cfg.skipSysctls);
 in
 {
   options.modules.system.hardening = {
@@ -166,18 +197,37 @@ in
         "workstation"
         "server"
         "k3s-node"
+        # The crosvm app and agent VMs (lib/vm/guest.nix, agent-guest.nix).
+        "vm-guest"
       ];
       default = "workstation";
       description = "Profile that adjusts toggle defaults; finer knobs below still win.";
     };
 
+    ia32Emulation = lib.mkOption {
+      type = lib.types.bool;
+      # Workstations need 32-bit for Steam, Proton and Wine, and so do the
+      # game VMs (one guest system serves every app VM).
+      # TODO: per-VM ia32_emulation=0 (instance.nix guestKernelParams) for
+      # app VMs without Steam/Wine, and for the agent VM once nothing there
+      # builds i686.
+      default = cfg.profile == "workstation" || isGuest;
+      description = ''
+        Keep the 32-bit syscall ABI. Off (ia32_emulation=0), the compat
+        syscall table and every compat ioctl/setsockopt path are gone, and
+        32-bit binaries don't run: a local nix build of an i686 derivation
+        fails there too.
+      '';
+    };
+
     ipForward = lib.mkOption {
       type = lib.types.bool;
-      default = true;
+      default = !isGuest;
       description = ''
         Enable net.ipv4.ip_forward. Required for K3s/CNI, routers, and any
         host that may act as a Tailscale exit node or subnet router. On by
-        default since most hosts here should be exit-node-capable.
+        default since most hosts here should be exit-node-capable. Off in
+        the VM guests, which route nothing.
       '';
     };
 
@@ -229,6 +279,32 @@ in
       '';
     };
 
+    skipSysctls = lib.mkOption {
+      type = lib.types.listOf lib.types.str;
+      default = [ ];
+      example = [
+        "kernel.io_uring_disabled"
+        "kernel.io_uring_group"
+        "net.mptcp.enabled"
+        "kernel.kexec_load_disabled"
+      ];
+      description = ''
+        Sysctls this host's kernel doesn't have (a minimal guest kernel
+        without io_uring, MPTCP or kexec): left out instead of failing to
+        write at boot. kernel.kexec_load_disabled here also leaves
+        security.protectKernelImage off.
+      '';
+    };
+
+    lvmRescue = lib.mkOption {
+      type = lib.types.bool;
+      default = false;
+      description = ''
+        A rescue system (liveusb): LVM sees every PV, so `vgchange -ay` can
+        bring up another host's volumes, but nothing is activated on its own.
+      '';
+    };
+
     debugfs = lib.mkOption {
       type = lib.types.bool;
       default = false;
@@ -241,19 +317,20 @@ in
 
     zeroMemory = lib.mkOption {
       type = lib.types.bool;
-      default = true;
+      default = !isGuest;
       description = ''
         Zero memory on every allocation and free (init_on_alloc=1,
         init_on_free=1): no stale data in fresh pages, at a CPU cost that
         grows with allocation churn (JVMs, databases, the page cache). Off on
-        the node VMs, whose CPU is the scarce resource (node-vm.nix).
+        the node VMs, whose CPU is the scarce resource (node-vm.nix), and
+        in the app and agent VMs for the same reason (games, JVMs, builds).
       '';
     };
 
     hardenMounts = lib.mkOption {
       type = lib.types.bool;
-      default = cfg.profile != "k3s-node";
-      description = "Enable /tmp on tmpfs (nosuid,nodev). Off by default for k3s nodes.";
+      default = cfg.profile != "k3s-node" && !isGuest;
+      description = "Enable /tmp on tmpfs (nosuid,nodev). Off by default for k3s nodes and VM guests (whose / is a tmpfs).";
     };
 
     preferSystemBinaries = lib.mkOption {
@@ -339,7 +416,39 @@ in
         "net.ipv6.conf.default.accept_redirects" = 0;
         "net.ipv6.conf.all.accept_source_route" = 0;
         "net.ipv6.conf.default.accept_source_route" = 0;
+
+        # io_uring only for root (CAP_SYS_ADMIN) and the io_uring group, which
+        # has no members: a service that ever needs it joins the group.
+        # Nothing here does (crosvm's executor is epoll, Ceph's bluestore uses
+        # libaio, Postgres' io_method defaults to worker); the sandboxes'
+        # seccomp filter already refuses it (lib/backends/bwrap-syscalls.nix).
+        "kernel.io_uring_disabled" = 1;
+        "kernel.io_uring_group" = config.users.groups.io_uring.gid;
+
+        # Line disciplines (TIOCSETD) load for root only: the n_hdlc/n_gsm
+        # LPE class, reachable from any pty, sandboxes included.
+        "dev.tty.ldisc_autoload" = 0;
+
+        # No MPTCP. Go >= 1.24 listeners open MPTCP sockets by default and
+        # fall back to TCP. Per network namespace: pods and other namespaces
+        # start at 1 whatever this says.
+        "net.mptcp.enabled" = 0;
       })
+
+      # kernel.nix's, which the guests don't import. No keyboard in a VM, so no
+      # SysRq at all.
+      (lib.mkIf isGuest (hardenSysctls {
+        "kernel.sysrq" = 0;
+        "fs.suid_dumpable" = 0;
+        "dev.tty.legacy_tiocsti" = 0;
+      }))
+
+      # Reboot 10s after a panic instead of hanging (panic_on_oops=1 above,
+      # and softdog can't fire after panic()). Not in VMs: they boot with
+      # panic=-1, which this sysctl would override.
+      (lib.mkIf (cfg.profile == "server" || (isK3s && !nodeVmGuest)) (hardenSysctls {
+        "kernel.panic" = 10;
+      }))
 
       (lib.mkIf (!cfg.allowUserns) (hardenSysctls {
         "kernel.unprivileged_userns_clone" = 0;
@@ -360,7 +469,24 @@ in
 
       # Disable obsolete/dangerous interfaces
       "vsyscall=none"
+
+      # No writes to a block device a filesystem has mounted (the
+      # crafted-image-under-a-live-mount class). Breaks dd, tune2fs, e2label
+      # and offline-style fsck on mounted filesystems; test recusant's
+      # bcachefs tools (fsck, set-option on the mounted fs) first.
+      "bdev_allow_write_mounted=0"
     ]
+    # No IOMMU params, on purpose. The AMD hosts run AMD-Vi in the kernel's
+    # default lazy mode (CONFIG_IOMMU_DEFAULT_DMA_LAZY=y); strict
+    # (iommu.strict=1) would close the short window in which a device can
+    # still DMA into a just-unmapped buffer, at some I/O cost. Plain USB
+    # devices can't DMA at all (the host controller does); the DMA-capable
+    # external paths are Thunderbolt/USB4 PCIe tunnels (authorized per the
+    # thunderbolt security level) and FireWire (blocked, netModules).
+    # TODO: constitution is Intel, and CONFIG_INTEL_IOMMU_DEFAULT_ON is unset,
+    # so its VT-d is there but off; consider intel_iommu=on there (and on
+    # liveusb).
+    ++ lib.optional (!cfg.ia32Emulation) "ia32_emulation=0"
     ++ lib.optional (!cfg.debugfs) "debugfs=off"
     ++ lib.optionals cfg.zeroMemory [
       "init_on_alloc=1"
@@ -383,9 +509,57 @@ in
       + lib.optionalString cfg.blacklistAfAlg (mkInstallFalse afAlgModules + "\n")
       + lib.optionalString cfg.blacklistMisc (mkInstallFalse miscModules + "\n");
 
+    # LVM activates only this host's own PVs: a hotplugged or loop-attached
+    # PV, or one a VM wrote inside the disk it was given, would otherwise
+    # make root activate dm-thin/cache/raid/integrity targets parsing its
+    # metadata. In the initrd too (its lvm.conf is separate). services.lvm
+    # stays on: it carries the dm udev rules cryptsetup needs.
+    environment.etc."lvm/lvm.conf".text = lib.mkIf (lvmFilter != null) lvmFilter;
+    boot.initrd.systemd.contents = lib.mkIf (lvmFilter != null) {
+      "/etc/lvm/lvm.conf".text = lvmFilter;
+    };
+
+    # Without the 32-bit ABI nothing i686 runs: Nix stops offering to build
+    # it (its default extra-platforms is i686-linux on x86_64), and no 32-bit
+    # graphics drivers (nixos-hardware's GPU modules turn them on).
+    nix.settings.extra-platforms = lib.mkIf (!cfg.ia32Emulation && config.nix.enable) [ ];
+    hardware.graphics.enable32Bit = lib.mkIf (!cfg.ia32Emulation) (lib.mkForce false);
+
+    # The io_uring sysctl's group. A fixed gid (unused by nixpkgs' ids.nix,
+    # below the dynamic 400-999 range), since sysctl.d needs the number.
+    users.groups.io_uring.gid = 390;
+
+    # /dev/kvm and vhost: root:kvm 0660 instead of systemd's 0666, so a local
+    # uid or a sandbox can't reach KVM or vhost. Every opener has the group:
+    # the VMM units and nvgpu backends as SupplementaryGroups=kvm
+    # (lib/vm/core/hardening.nix), jrt as a member (nixos/default.nix, and so
+    # claude-nesbox), and below libvirt's QEMU and nix's build users. /dev/vfio/vfio to root alone (vfio is blocked anyway).
+    services.udev.extraRules = ''
+      KERNEL=="kvm", GROUP="kvm", MODE="0660", OPTIONS+="static_node=kvm"
+      KERNEL=="vhost-net", GROUP="kvm", MODE="0660", OPTIONS+="static_node=vhost-net"
+      KERNEL=="vhost-vsock", GROUP="kvm", MODE="0660", OPTIONS+="static_node=vhost-vsock"
+      KERNEL=="vfio", GROUP="root", MODE="0600", OPTIONS+="static_node=vfio/vfio"
+    '';
+    users.users = lib.mkMerge [
+      # libvirt's guests run as qemu-libvirtd (virt.nix), which nixpkgs doesn't
+      # put in kvm.
+      (lib.mkIf (
+        config.virtualisation.libvirtd.enable && !config.virtualisation.libvirtd.qemu.runAsRoot
+      ) { qemu-libvirtd.extraGroups = [ "kvm" ]; })
+      # Builds that require the kvm feature (NixOS VM tests) get /dev/kvm in
+      # their sandbox, and run as these users, with their supplementary groups.
+      (lib.mkIf (config.nix.enable && !isGuest && !(config.nix.settings.auto-allocate-uids or false)) (
+        lib.genAttrs (map (n: "nixbld${toString n}") (lib.range 1 config.nix.nrBuildUsers)) (_: {
+          extraGroups = [ "kvm" ];
+        })
+      ))
+    ];
+
     # Kernel image / page table protections
-    security.protectKernelImage = lib.mkDefault true;
-    security.forcePageTableIsolation = lib.mkDefault true;
+    security.protectKernelImage = lib.mkDefault (!lib.elem "kernel.kexec_load_disabled" cfg.skipSysctls);
+    # Not forced in a guest: the kernel turns PTI on itself where the CPU is
+    # vulnerable, and forcing it on the AMD hosts' guests only costs syscalls.
+    security.forcePageTableIsolation = lib.mkDefault (!isGuest);
     # security.lockKernelModules intentionally left default (false) so DKMS
     # modules (nvidia, openrazer, virtualbox) can still load at runtime.
 

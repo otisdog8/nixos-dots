@@ -58,6 +58,8 @@
       enable = true;
       profile = "workstation";
       blacklistAfAlg = true;
+      # A rescue stick: other hosts' LVM visible, activated by hand only.
+      lvmRescue = true;
     };
 
     # Harmless on desktops (battery thresholds no-op without a battery); gives

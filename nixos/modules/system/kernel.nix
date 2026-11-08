@@ -52,7 +52,12 @@
     kernel.sysctl = {
       "fs.suid_dumpable" = 0;
       "vm.swappiness" = 10;
-      "kernel.sysrq" = 1;
+      # SysRq from the keyboard: R (4: unraw, SAK), S (16: sync), U (32:
+      # remount read-only), E/I/F (64: term, kill, OOM-kill) and B/O (128:
+      # reboot, power off): REISUB plus O and F. Not log level (2), the
+      # process/memory dumps (8) or nicing RT tasks (256). /proc/sysrq-trigger
+      # stays root-only whatever this says.
+      "kernel.sysrq" = 244;
       "dev.tty.legacy_tiocsti" = 0;
       # Raise inotify limits: large modpacks (PrismLauncher) open many config
       # file watchers and exhaust the defaults, crashing the game at startup.
