@@ -10,7 +10,9 @@
 #     can't use TPM/PCR), plain systemd-boot instead.
 #   - One universal GPU stack: open Intel/AMD + proprietary NVIDIA in the base,
 #     so the same entry drives any machine the stick is plugged into.
-#   - LTS kernel (decouples the build from NVIDIA-vs-bleeding-edge-kernel breakage).
+#   - The fleet's kernel (kernel.nix), like the other desktops. It was the LTS
+#     to keep the closed NVIDIA module off the _latest cliff; 595.104.02's
+#     closed module builds for 7.3 (2026-10-31).
 {
   inputs,
   lib,
@@ -114,9 +116,6 @@
       libva-vdpau-driver
     ];
   };
-
-  # ---- LTS kernel: keep the whole-stick build off the NVIDIA-vs-_latest cliff ----
-  boot.kernelPackages = lib.mkForce pkgs.linuxPackages;
 
   # A roaming USB must carry its own USB host-controller + mass-storage + input
   # drivers in the initrd, or it can't even see the stick to unlock LUKS and
