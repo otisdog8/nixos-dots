@@ -60,6 +60,15 @@
       blacklistAfAlg = true;
       # A rescue stick: other hosts' LVM visible, activated by hand only.
       lvmRescue = true;
+      # Unknown laptops: old PCI sound (AC'97 Intel, SB Live/Audigy), the
+      # gadget stack (dwc3 is the host controller on some), and amd-pmf's
+      # Smart PC TEE.
+      keepModules = [
+        "snd_intel8x0"
+        "snd_emu10k1"
+        "udc_core"
+        "amdtee"
+      ];
     };
 
     # Harmless on desktops (battery thresholds no-op without a battery); gives

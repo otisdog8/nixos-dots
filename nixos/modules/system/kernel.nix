@@ -21,10 +21,10 @@
     };
 
     extraModprobeConfig = ''
-      install esp4 /bin/false
-      install esp6 /bin/false
-      install rxrpc /bin/false
-      install algif_aead /bin/false
+      install esp4 ${pkgs.coreutils}/bin/false
+      install esp6 ${pkgs.coreutils}/bin/false
+      install rxrpc ${pkgs.coreutils}/bin/false
+      install algif_aead ${pkgs.coreutils}/bin/false
     '';
 
     # Quiet boot

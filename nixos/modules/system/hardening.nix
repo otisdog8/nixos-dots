@@ -33,10 +33,11 @@ let
     "ocfs2"
     "nilfs2"
     "coda"
-    # In-kernel NTFS read/write driver. Userspace ntfs-3g (FUSE) still works
-    # if added to environment.systemPackages; this only blocks the kernel
-    # driver's auto-load on external-drive insert.
+    # In-kernel NTFS read/write drivers (ntfs3, and 7.x's new ntfs). Userspace
+    # ntfs-3g (FUSE) still works if added to environment.systemPackages; this
+    # only blocks the kernel drivers' auto-load on external-drive insert.
     "ntfs3"
+    "ntfs"
   ];
 
   netModules = [
@@ -150,9 +151,214 @@ let
     "floppy"
   ];
 
-  mkInstallFalse = mods: lib.concatMapStringsSep "\n" (m: "install ${m} /bin/false") mods;
   isGuest = cfg.profile == "vm-guest";
   isK3s = cfg.profile == "k3s-node";
+  # This machine runs cluster node VMs (node-vm.nix): their NICs are macvtaps,
+  # moved by vhost-net. (No such option in the VM guests' configurations.)
+  runsNodeVms = (config.modules.system.nodeVms or { }) != { };
+
+  # Kernel-surface blocks (blacklistSurface). Each group says why nothing here
+  # needs it; the census (modprobe-census.nix) shows what the kernel still
+  # asks for (hotplug and explicit loads don't go through it).
+  surfaceModules =
+    # PCI passthrough. No VM here gets a host device (crosvm's get virtio
+    # ones, the GPU through virtio-nvgpu; nothing in the repo uses vfio).
+    # Opening /dev/vfio/vfio would load them.
+    [
+      "vfio"
+      "vfio_pci"
+      "vfio_pci_core"
+      "vfio_iommu_type1"
+      "iommufd"
+    ]
+    # vhost backends no VM uses: crosvm serves its own disks, and there's no
+    # vDPA hardware.
+    ++ [
+      "vhost_scsi"
+      "vhost_vdpa"
+    ]
+    # vhost-net is the node VMs' (node-vm.nix vhostNet); the app and agent VMs'
+    # network is passt. libvirt guests fall back to QEMU's own virtio-net.
+    ++ lib.optional (!runsNodeVms) "vhost_net"
+    # A guest runs no VMs of its own.
+    ++ lib.optional isGuest "vhost_vsock"
+    # Generic-netlink families a user namespace's root can autoload. No Open
+    # vSwitch, GTP, B.A.T.M.A.N. or in-kernel OpenVPN here (OpenVPN falls back
+    # to tun without ovpn). IPVS (ip_vs*, generated below, and xt_ipvs) is
+    # kube-proxy's ipvs mode; k3s runs its default iptables mode (no
+    # proxy-mode flag in k3s/default.nix or k3s-sensitive.nix).
+    ++ [
+      "openvswitch"
+      "gtp"
+      "batman_adv"
+      "ovpn"
+      "xt_ipvs"
+    ]
+    # IPsec's control plane (esp4/esp6: kernel.nix). No IKE daemon here,
+    # Tailscale is WireGuard, and Cilium's encryption is off (WireGuard if it
+    # is ever turned on: k3s/default.nix). xfrm_user stays on k3s nodes until
+    # the census shows Cilium never touches XFRM state with encryption off.
+    ++ lib.optional (!isK3s) "xfrm_user"
+    ++ [
+      "af_key"
+      "xfrm_interface"
+      "ip_vti"
+      "ip6_vti"
+      "ipcomp"
+      "ipcomp6"
+      "xfrm4_tunnel"
+      "xfrm6_tunnel"
+      "xfrm_ipcomp"
+    ]
+    # Other hypervisors' vsock transports (VMware, Hyper-V) and the loopback
+    # one. The VMs here use vhost_vsock on the host, virtio in the guest.
+    ++ [
+      "vmw_vsock_vmci_transport"
+      "vmw_vmci"
+      "hv_sock"
+      "vsock_loopback"
+    ]
+    # Netlink-reachable cores nothing here uses: the crypto API's config
+    # netlink; RDMA (Ceph and NFS run over TCP); iSCSI (Rook's RBD/CephFS, no
+    # initiator or Longhorn in the repo); MPLS.
+    ++ [
+      "crypto_user"
+      "ib_core"
+      "ib_cm"
+      "iw_cm"
+      "rdma_cm"
+      "rdma_ucm"
+      "ib_uverbs"
+      "ib_umad"
+      "ib_ipoib"
+      "rdma_rxe"
+      "siw"
+      "rpcrdma"
+      "scsi_transport_iscsi"
+      "libiscsi"
+      "libiscsi_tcp"
+      "iscsi_tcp"
+      "mpls_router"
+      "mpls_iptunnel"
+      "mpls_gso"
+    ]
+    # Conntrack helpers. The firewall loads none (autoLoadConntrackHelpers is
+    # off), and neither kube-proxy's iptables mode nor Cilium uses them.
+    ++ [
+      "nf_conntrack_ftp"
+      "nf_conntrack_sip"
+      "nf_conntrack_h323"
+      "nf_conntrack_irc"
+      "nf_conntrack_pptp"
+      "nf_conntrack_tftp"
+      "nf_conntrack_amanda"
+      "nf_conntrack_sane"
+      "nf_conntrack_netbios_ns"
+      "nf_conntrack_snmp"
+      "nf_conntrack_broadcast"
+      "nf_nat_ftp"
+      "nf_nat_sip"
+      "nf_nat_h323"
+      "nf_nat_irc"
+      "nf_nat_pptp"
+      "nf_nat_tftp"
+      "nf_nat_amanda"
+      "nf_nat_snmp_basic"
+    ]
+    # Virtual netdevs a user namespace's root can create (rtnl-link-*), unused
+    # here (vcan/vxcan: netModules).
+    ++ [
+      "bareudp"
+      "team"
+      "team_mode_activebackup"
+      "team_mode_broadcast"
+      "team_mode_loadbalance"
+      "team_mode_random"
+      "team_mode_roundrobin"
+      "netdevsim"
+      "nlmon"
+      "ifb"
+      "vrf"
+    ]
+    # Cilium's tunnel (VXLAN; geneve if it's ever switched) and lcm-gateway's
+    # ipvlan are the k3s nodes'. macvlan stays there too: k3s ships the
+    # macvlan CNI plugin and the workloads live in the homelab repo, so only
+    # the census can clear it.
+    ++ lib.optionals (!isK3s) [
+      "vxlan"
+      "geneve"
+      "ipvlan"
+    ]
+    # The node VMs' NICs are macvtaps (node-vm.nix).
+    ++ lib.optionals (!isK3s && !runsNodeVms) [
+      "macvlan"
+      "macvtap"
+    ];
+
+  # Autoload aliases pointed at an install-false name, instead of an install
+  # rule on the module itself: macsec and tls are also symbol dependencies of
+  # NIC drivers (atlantic and the mscc PHYs need macsec; bonding, cxgb4, nfp
+  # and funeth need tls), and an install rule on them would stop those
+  # drivers loading. With these, the drivers still load; what a user
+  # namespace could trigger (a macsec link, its genl family, kTLS's
+  # TCP_ULP "tls") doesn't. nginx and the NFS mounts don't enable kTLS.
+  aliasBlocks = {
+    macsec = [
+      "rtnl-link-macsec"
+      "net-pf-16-proto-16-family-macsec"
+    ];
+    tls = lib.optionals (!role.ktls) [ "tcp-ulp-tls" ];
+  };
+
+  # Servers, k3s and guests: radio cores (every Wi-Fi, Bluetooth, 802.15.4
+  # and 6LoWPAN driver depends on one; nfc: netModules). No server has a
+  # radio in use; recusant has no Bluetooth (its default.nix).
+  radioModules = [
+    "bluetooth"
+    "cfg80211"
+    "mac80211"
+    "ieee802154"
+    "mac802154"
+    "6lowpan"
+  ];
+  # Servers and k3s: the media (V4L2, media controller, DVB) and sound cores.
+  # Jellyfin's transcoding on recusant is VA-API on the iGPU's render node
+  # (DRM), not V4L2; no GPU driver depends on these (cec, which i915 and
+  # amdgpu do, stays). Not the guests: cameras attach to app VMs as USB
+  # devices (uvcvideo).
+  mediaModules = [
+    "videodev"
+    "mc"
+    "dvb_core"
+    "soundcore"
+    "snd"
+  ];
+
+  # Modules something here loads by name are never blocked by the surface,
+  # radio and media lists (node-vm.nix's macvtap/vhost_net, the guests'
+  # virtio set, ...). Not the older lists: af_alg is in the initrd's
+  # availableKernelModules (LUKS), and blocked on purpose. tls is the
+  # exception (hardening-modules.nix blacklistOnly).
+  norm = lib.replaceStrings [ "-" ] [ "_" ];
+  loadedByName = lib.remove "tls" (
+    map norm (config.boot.kernelModules ++ config.boot.initrd.kernelModules)
+  );
+  unlessLoaded = lib.filter (m: !lib.elem (norm m) loadedByName);
+
+  blocked =
+    lib.optionals cfg.blacklistFs fsModules
+    ++ lib.optionals cfg.blacklistNet netModules
+    ++ lib.optionals cfg.blacklistTty ttyModules
+    ++ lib.optionals cfg.blacklistAfAlg afAlgModules
+    ++ lib.optionals cfg.blacklistMisc miscModules
+    ++ unlessLoaded (
+      lib.optionals cfg.blacklistSurface surfaceModules
+      ++ lib.optionals cfg.blacklistRadio radioModules
+      ++ lib.optionals cfg.blacklistMedia mediaModules
+    );
+
+  false' = "${pkgs.coreutils}/bin/false";
+  mkInstallFalse = mods: lib.concatMapStringsSep "\n" (m: "install ${m} ${false'}") mods;
 
   nodeVmGuest = config.modules.system.nodeVmGuest.enable or false;
 
@@ -180,6 +386,46 @@ let
     else
       ''
         devices/global_filter = [ ${lib.concatStringsSep " " (lib.optionals hasLvm accept ++ [ ''"r|.*|"'' ])} ]
+      '';
+
+  role = {
+    inherit isGuest isK3s;
+    isWorkstation = cfg.profile == "workstation";
+    laptop = config.modules.system.laptop.enable or false;
+    sensitive = config.modules.system.k3sSensitive.enable or false;
+    nfsServer = config.services.nfs.server.enable;
+    nfsClient =
+      isK3s || lib.any (fs: lib.hasPrefix "nfs" fs.fsType) (lib.attrValues config.fileSystems);
+    ktls = lib.any (v: v.kTLS or false) (lib.attrValues config.services.nginx.virtualHosts);
+  };
+  generated = import ./hardening-modules.nix { inherit lib role; };
+
+  # hardening-modules.nix's blocks, against this kernel's tree (its
+  # modules.order) and the system's modules.dep (out-of-tree modules
+  # included), at build time: hardening-blocks.py.
+  generatedBlocks =
+    pkgs.runCommand "modprobe-hardening-generated.conf"
+      {
+        request = builtins.toJSON {
+          inherit (generated)
+            names
+            prefixes
+            exclude
+            keepPatterns
+            blacklistOnly
+            ;
+          keep =
+            generated.keep
+            ++ cfg.keepModules
+            ++ loadedByName
+            ++ map norm config.boot.initrd.availableKernelModules;
+        };
+        passAsFile = [ "request" ];
+        order = lib.getOutput "modules" config.boot.kernelPackages.kernel;
+        tree = config.system.modulesTree;
+      }
+      ''
+        ${pkgs.python3}/bin/python3 -I ${./hardening-blocks.py} "$requestPath" "$order" "$tree" ${false'} "$out"
       '';
 
   # Sit between NixOS's mkDefault (1000) and a normal value (100): wins over
@@ -279,6 +525,19 @@ in
       '';
     };
 
+    blacklistSurface = lib.mkOption {
+      type = lib.types.bool;
+      default = true;
+      description = ''
+        Block kernel surface nothing here uses but a user namespace or an
+        unprivileged user can autoload: PCI passthrough, unused vhost
+        backends, generic-netlink families, IPsec's control plane, foreign
+        vsock transports, RDMA/iSCSI/MPLS, conntrack helpers, unused virtual
+        netdevs and most of traffic control (per role; see surfaceModules),
+        plus the generated blocks of hardening-modules.nix.
+      '';
+    };
+
     skipSysctls = lib.mkOption {
       type = lib.types.listOf lib.types.str;
       default = [ ];
@@ -303,6 +562,29 @@ in
         A rescue system (liveusb): LVM sees every PV, so `vgchange -ay` can
         bring up another host's volumes, but nothing is activated on its own.
       '';
+    };
+
+    keepModules = lib.mkOption {
+      type = lib.types.listOf lib.types.str;
+      default = [ ];
+      example = [ "snd_oxygen" ];
+      description = ''
+        Modules (and their dependencies) the generated blocks
+        (hardening-modules.nix) must leave alone on this host, e.g. a sound
+        card's legacy PCI driver.
+      '';
+    };
+
+    blacklistRadio = lib.mkOption {
+      type = lib.types.bool;
+      default = cfg.profile != "workstation";
+      description = "Block the Wi-Fi, Bluetooth, 802.15.4 and 6LoWPAN cores (servers, k3s, VM guests).";
+    };
+
+    blacklistMedia = lib.mkOption {
+      type = lib.types.bool;
+      default = cfg.profile == "server" || isK3s;
+      description = "Block the V4L2/media-controller, DVB and sound cores (servers and k3s).";
     };
 
     debugfs = lib.mkOption {
@@ -493,21 +775,30 @@ in
       "init_on_free=1"
     ];
 
-    boot.blacklistedKernelModules =
-      lib.optionals cfg.blacklistFs fsModules
-      ++ lib.optionals cfg.blacklistNet netModules
-      ++ lib.optionals cfg.blacklistTty ttyModules
-      ++ lib.optionals cfg.blacklistAfAlg afAlgModules
-      ++ lib.optionals cfg.blacklistMisc miscModules;
+    boot.blacklistedKernelModules = blocked;
 
-    # Defense in depth alongside blacklistedKernelModules — matches the existing
-    # install-bin pattern in modules/system/kernel.nix for esp4/esp6/rxrpc.
-    boot.extraModprobeConfig =
-      lib.optionalString cfg.blacklistFs (mkInstallFalse fsModules + "\n")
-      + lib.optionalString cfg.blacklistNet (mkInstallFalse netModules + "\n")
-      + lib.optionalString cfg.blacklistTty (mkInstallFalse ttyModules + "\n")
-      + lib.optionalString cfg.blacklistAfAlg (mkInstallFalse afAlgModules + "\n")
-      + lib.optionalString cfg.blacklistMisc (mkInstallFalse miscModules + "\n");
+    # Defense in depth alongside blacklistedKernelModules: the kernel's own
+    # requests (request_module) don't honour blacklist, install rules they do.
+    # Same pattern as kernel.nix's esp4/esp6/rxrpc.
+    boot.extraModprobeConfig = ''
+      ${mkInstallFalse blocked}
+    ''
+    + lib.optionalString cfg.blacklistSurface (
+      lib.concatStrings (
+        lib.mapAttrsToList (name: aliases: ''
+          ${lib.concatMapStrings (a: "alias ${a} blocked-${name}\n") aliases}install blocked-${name} ${false'}
+        '') (lib.filterAttrs (_: aliases: aliases != [ ]) aliasBlocks)
+      )
+    );
+    environment.etc."modprobe.d/hardening-generated.conf" = lib.mkIf cfg.blacklistSurface {
+      source = generatedBlocks;
+    };
+
+    # No bcache: NixOS's udev rule registers any block device (a loop image
+    # too) that carries a bcache superblock, unasked, and nothing uses it.
+    # bcachefs (recusant) is a separate module and stays. The module is
+    # blocked in hardening-modules.nix.
+    boot.bcache.enable = lib.mkDefault false;
 
     # LVM activates only this host's own PVs: a hotplugged or loop-attached
     # PV, or one a VM wrote inside the disk it was given, would otherwise
