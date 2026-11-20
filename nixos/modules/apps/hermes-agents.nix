@@ -52,10 +52,28 @@ let
         // {
           inherit (pkgs) nodejs_26;
           inherit callPackage;
+          # Upstream's nix/pm-packages.nix patches `patchelf` with
+          # NixOS/patchelf 59acc3d9 (the header-move fix, patchelf#674),
+          # written against a nixpkgs whose patchelf was 0.19.2. nixpkgs has
+          # since gone back to 0.15.2, where the patch doesn't apply. Its
+          # patchelfUnstable is 0.19.2 plus that very commit, so it gets that,
+          # with the patch not applied a second time. Drop once upstream's
+          # patchelf override is gone or matches nixpkgs again.
+          patchelf = pkgs.patchelfUnstable // {
+            overrideAttrs = _: pkgs.patchelfUnstable;
+          };
         }
       );
     in
-    inputs.hermes-agent.packages.${system}.default.override { inherit callPackage; };
+    inputs.hermes-agent.packages.${system}.default.override {
+      inherit callPackage;
+      # Upstream's packages.nix builds these with its own pkgs.callPackage
+      # and passes them in, so they're rebuilt here through the one above
+      # (its patchelf). Same filter as upstream's.
+      pmPackages = lib.filterAttrs (_: lib.isDerivation) (
+        callPackage "${inputs.hermes-agent}/nix/pm-packages.nix" { }
+      );
+    };
   configMergeScript = pkgs.callPackage "${inputs.hermes-agent}/nix/configMergeScript.nix" { };
 
   # Upstream's deep-merge settings type: attrsets from multiple definitions
