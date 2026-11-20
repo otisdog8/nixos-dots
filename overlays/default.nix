@@ -19,6 +19,7 @@
     };
   };
   custom-packages = import ./custom-packages.nix { inherit inputs; };
+  security-pins = import ./security-pins.nix;
 
   # crosvm as the init of its pid namespace (the sandbox VMs' PrivatePIDs=,
   # lib/vm/instance.nix) survives its own kill of its process group; without
