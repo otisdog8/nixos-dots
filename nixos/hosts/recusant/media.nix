@@ -26,6 +26,20 @@ in
   modules.apps.jellyfin = {
     enable = true;
     openFirewall = false;
+    sandbox = {
+      enable = true;
+      # Read-only: it plays, scans and transcodes from here, and what it would
+      # save next to the media (NFO, artwork, downloaded subtitles) fails
+      # instead. Move it to writablePaths if that's wanted.
+      mediaPaths = [ "/media" ];
+      # The tailnet: anything that talks to :8096 directly rather than
+      # through nginx (k8s apps arrive masqueraded to their node's tailnet
+      # address). Dropping it shuts the tailnet out, both ways.
+      allowAddresses = [
+        "100.64.0.0/10"
+        "fd7a:115c:a1e0::/48"
+      ];
+    };
   };
 
   modules.apps.sabnzbd = {

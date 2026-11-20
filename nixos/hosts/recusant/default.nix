@@ -46,6 +46,7 @@
     ./attic.nix
     ./minecraft.nix
     ./media.nix
+    ./nginx.nix
     ./secrets.nix
     ./backups.nix
     ./s4-backups.nix
