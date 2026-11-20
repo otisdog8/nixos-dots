@@ -70,7 +70,12 @@ in
 
   services.garage = {
     enable = true;
-    package = pkgs.garage;
+    # pkgs.garage is garage_1, EOL (nixpkgs marks 1.3.1 insecure). 2.x reworked
+    # the admin API (/v2/; nothing here calls it) and
+    # dropped replication_mode (this config never had it). The 1 -> 2 upgrade
+    # was a repair, a metadata snapshot and a restart on the new binary
+    # (garagehq.deuxfleurs.fr, "Migrating from 1.0 to 2.0").
+    package = pkgs.garage_2;
 
     environmentFile = config.sops.secrets."garage/env".path;
 
