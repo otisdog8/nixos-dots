@@ -48,7 +48,7 @@
       '';
       outputHashMode = "flat";
       outputHashAlgo = "sha256";
-      outputHash = "sha256-1nO3GMdwqoUG5kvObj/a6pTKZumcZTOTpa2dpx6UGwo=";
+      outputHash = "sha256-urEFPOVjpTSIwsGZecVQSiwyOLfo83/uHs50/l7vOdg=";
     };
 
     gsd-pi = pkgs.buildNpmPackage {
@@ -64,7 +64,7 @@
         cp ${gsd-pi-lockfile} package-lock.json
       '';
 
-      npmDepsHash = "sha256-7xOPtTTVMcAd9woPhou7pb/9BWw+It2joQq8ksvCghQ=";
+      npmDepsHash = "sha256-B02JnxQ+QM0hI1OZGW8SeN8OSOoi5OMhABxo3EsDJnI=";
       npmDepsFetcherVersion = 2;
       makeCacheWritable = true;
 

@@ -15,27 +15,27 @@ the main thread until they return. That only moves kernel events into
 libinput's own growable queue; they are handled afterwards by the normal
 dispatch (scheduled as an idle event, since the fd no longer polls readable).
 ---
- include/aquamarine/backend/DRM.hpp     |  1 +
- include/aquamarine/backend/Session.hpp |  8 ++++
- src/backend/Session.cpp                | 58 ++++++++++++++++++++++++++
- src/backend/drm/DRM.cpp                | 26 +++++++++++-
- src/backend/drm/impl/Atomic.cpp        |  8 +++-
- 5 files changed, 98 insertions(+), 3 deletions(-)
+  include/aquamarine/backend/DRM.hpp     |  1 +
+  include/aquamarine/backend/Session.hpp |  8 +++++
+  src/backend/Session.cpp                | 58 ++++++++++++++++++++++++++++++++++
+  src/backend/drm/DRM.cpp                | 26 +++++++++++++--
+  src/backend/drm/impl/Atomic.cpp        |  8 ++++-
+  5 files changed, 98 insertions(+), 3 deletions(-)
 
 diff --git a/include/aquamarine/backend/DRM.hpp b/include/aquamarine/backend/DRM.hpp
-index cd99f4f..c4376bf 100644
+index 25e27da..e53e207 100644
 --- a/include/aquamarine/backend/DRM.hpp
 +++ b/include/aquamarine/backend/DRM.hpp
-@@ -468,6 +468,7 @@ namespace Aquamarine {
-         bool grabFormats();
-         bool shouldBlit();
-         void scanConnectors();
-+        void runBufferingInput(const std::function<int()>& fn);
-         void scanLeases();
-         void restoreAfterVT();
-         void recheckOutputs();
+@@ -506,6 +506,7 @@ namespace Aquamarine {
+         bool     grabFormats();
+         bool     shouldBlit();
+         void     scanConnectors();
++        void     runBufferingInput(const std::function<int()>& fn);
+         void     scanLeases();
+         void     restoreAfterVT();
+         void     recheckOutputs();
 diff --git a/include/aquamarine/backend/Session.hpp b/include/aquamarine/backend/Session.hpp
-index 5d072b5..d1ba0f3 100644
+index 431c971..6c16ad5 100644
 --- a/include/aquamarine/backend/Session.hpp
 +++ b/include/aquamarine/backend/Session.hpp
 @@ -4,6 +4,7 @@
@@ -46,9 +46,9 @@ index 5d072b5..d1ba0f3 100644
  #include <vector>
  
  struct udev;
-@@ -223,6 +224,13 @@ namespace Aquamarine {
-         bool                                                            switchVT(uint32_t vt);
-         void                                                            onReady();
+@@ -227,6 +228,13 @@ namespace Aquamarine {
+         void                                                            dispatchLibinputEvents();
+         void                                                            dispatchLibseatEvents();
  
 +        /* Runs fn on a helper thread and, until it returns, keeps moving kernel input into libinput's own queue.
 +           For slow blocking DRM ioctls (modesets, forced connector probes) on the compositor's main thread: while
@@ -61,7 +61,7 @@ index 5d072b5..d1ba0f3 100644
              std::string path;
          };
 diff --git a/src/backend/Session.cpp b/src/backend/Session.cpp
-index bc84a69..491a6a2 100644
+index 27abc30..41993dc 100644
 --- a/src/backend/Session.cpp
 +++ b/src/backend/Session.cpp
 @@ -1,6 +1,8 @@
@@ -82,7 +82,7 @@ index bc84a69..491a6a2 100644
  }
  
  using namespace Aquamarine;
-@@ -498,6 +502,60 @@ void Aquamarine::CSession::dispatchLibinputEvents() {
+@@ -501,6 +505,60 @@ void Aquamarine::CSession::dispatchLibinputEvents() {
      }
  }
  
@@ -144,10 +144,10 @@ index bc84a69..491a6a2 100644
      if (libseat_dispatch(libseatHandle, 0) == -1)
          backend->log(AQ_LOG_ERROR, "Couldn't dispatch libseat events");
 diff --git a/src/backend/drm/DRM.cpp b/src/backend/drm/DRM.cpp
-index df61bee..07bc5d7 100644
+index e2e9b7c..5a6464d 100644
 --- a/src/backend/drm/DRM.cpp
 +++ b/src/backend/drm/DRM.cpp
-@@ -1009,7 +1009,11 @@ void Aquamarine::CDRMBackend::recheckOutputs() {
+@@ -1233,7 +1233,11 @@ void Aquamarine::CDRMBackend::recheckOutputs() {
  
              backend->log(AQ_LOG_DEBUG, std::format("drm: Connector {} connected", conn->szName));
  
@@ -160,7 +160,7 @@ index df61bee..07bc5d7 100644
  
              // ??? was valid 5 sec ago...
              if (!drmConn) {
-@@ -1026,6 +1030,15 @@ void Aquamarine::CDRMBackend::recheckOutputs() {
+@@ -1250,6 +1254,15 @@ void Aquamarine::CDRMBackend::recheckOutputs() {
          backend->log(AQ_LOG_ERROR, std::format("drm: Failed to update renderer state for {}", gpu->path));
  }
  
@@ -176,7 +176,7 @@ index df61bee..07bc5d7 100644
  void Aquamarine::CDRMBackend::scanConnectors() {
      backend->log(AQ_LOG_DEBUG, std::format("drm: Scanning connectors for {}", gpu->path));
  
-@@ -1035,11 +1048,20 @@ void Aquamarine::CDRMBackend::scanConnectors() {
+@@ -1259,11 +1272,20 @@ void Aquamarine::CDRMBackend::scanConnectors() {
          return;
      }
  
@@ -199,10 +199,10 @@ index df61bee..07bc5d7 100644
          backend->log(AQ_LOG_DEBUG, std::format("drm: Scanning connector id {}", connectorID));
  
 diff --git a/src/backend/drm/impl/Atomic.cpp b/src/backend/drm/impl/Atomic.cpp
-index 421acaf..de9ccf1 100644
+index 4bd5a2b..01ae642 100644
 --- a/src/backend/drm/impl/Atomic.cpp
 +++ b/src/backend/drm/impl/Atomic.cpp
-@@ -378,7 +378,13 @@ bool Aquamarine::CDRMAtomicRequest::commit(uint32_t flagssss) {
+@@ -363,7 +363,13 @@ bool Aquamarine::CDRMAtomicRequest::commit(uint32_t flagssss) {
      const bool WANTSFLIP = conn && conn->crtc && (flagssss & DRM_MODE_PAGE_FLIP_EVENT) && !(flagssss & DRM_MODE_ATOMIC_TEST_ONLY);
      const auto FLIPID    = WANTSFLIP ? conn->crtc->armPageFlip(conn, flagssss & DRM_MODE_PAGE_FLIP_ASYNC) : uintptr_t{0};
  
@@ -217,6 +217,3 @@ index 421acaf..de9ccf1 100644
          backend->log((flagssss & DRM_MODE_ATOMIC_TEST_ONLY) ? AQ_LOG_DEBUG : AQ_LOG_ERROR,
                       std::format("atomic drm request: failed to commit: {}, flags: {}", strerror(ret == -1 ? errno : -ret), flagsToStr(flagssss)));
  
--- 
-2.55.0
-

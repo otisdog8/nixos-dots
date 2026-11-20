@@ -21,11 +21,21 @@
       inputs.nixpkgs.follows = "nixpkgs";
     };
     # virtio-nvgpu: GPU + Wayland display for the VM sandbox tier
-    # (lib/vm/nvgpu.nix). The fork's minecraft-perf branch (display-passthrough
-    # plus the performance work under review there). Update with
+    # (lib/vm/nvgpu.nix). The fork's display-passthrough branch, which has
+    # minecraft-perf's work and the tables for the host driver
+    # (nixpkgs-nvidia's release, below). Update with
     # `nix flake update virtio-nvgpu`.
     virtio-nvgpu = {
-      url = "github:otisdog8/virtio-nvgpu/minecraft-perf";
+      url = "github:otisdog8/virtio-nvgpu/display-passthrough";
+      flake = false;
+    };
+    # NVIDIA's own driver packaging (modules/system/hardware/nvidia.nix),
+    # which tracks their Unix driver releases ahead of nixpkgs. Every host
+    # driver must be one virtio-nvgpu measured (its device/src/release.rs),
+    # so update this together with virtio-nvgpu:
+    # `nix flake update nixpkgs-nvidia`.
+    nixpkgs-nvidia = {
+      url = "github:NVIDIA/nixpkgs-nvidia/trunk";
       flake = false;
     };
     # Standalone guest D-Bus transport adapter (lib/vm). Update with
@@ -105,19 +115,9 @@
       inputs.home-manager.follows = "home-manager";
     };
     hyprland = {
-      url = "github:hyprwm/Hyprland/v0.56.2?submodules=1";
-      # The hyprland flake builds nixpkgs' hyprtoolkit (for guiutils, the
-      # permission dialogs) against its own pinned hyprutils 0.14.0. nixpkgs
-      # after ~2026-09 ships hyprtoolkit 0.6.0, which requires hyprutils >=
-      # 0.14.2 — and hyprutils v0.14.2 is gcc16-built, ABI-incompatible with
-      # the rest of this gcc15-built v0.56.2 set. So pin the whole hyprland
-      # set to the last known-good nixpkgs snapshot; this reproduces the
-      # already-running closure exactly (no rebuilds) and keeps the set
-      # self-consistent. Drop this pin (back to follows = "nixpkgs") and the
-      # nixpkgs-hyprland input on the next hyprland version bump.
-      inputs.nixpkgs.follows = "nixpkgs-hyprland";
+      url = "github:hyprwm/Hyprland/v0.57.2";
+      inputs.nixpkgs.follows = "nixpkgs";
     };
-    nixpkgs-hyprland.url = "github:NixOS/nixpkgs/f13ff45afd1bb73e640eaa08a7066dbed07e3238";
     # Last nixpkgs snapshot whose agent-browser (0.27.0) is on cache.nixos.org;
     # 0.38.1 fails a flaky test in checkPhase (so Hydra never caches it) and is
     # slow to build locally. See overlays/custom-packages.nix. Drop once a

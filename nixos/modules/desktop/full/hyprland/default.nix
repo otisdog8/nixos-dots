@@ -11,57 +11,18 @@ let
   cfg = config.modules.desktop.full.hyprland;
   system = pkgs.stdenv.hostPlatform.system;
 
-  # v0.56.2's CMake pins glaze 7...<8, but current nixpkgs (including
-  # Hyprland's own pin) ships glaze 8.0.0 — find_package rejects it and CMake
-  # falls back to a build-time git clone, which the Nix sandbox forbids.
-  # Upstream dropped the constraint on main (91f29f2, no code changes needed);
-  # backport that one-liner here. Drop on the next hyprland input bump.
-  # guiutils forces GCC 15 upstream, but its hyprtoolkit dependency uses the
-  # followed nixpkgs default compiler. When those libstdc++ ABIs differ the
-  # guiutils executables fail to link, so build both with this package set's
-  # stdenv and pass the corrected dependency into Hyprland.
-  hyprlandGuiutilsPkg =
-    inputs.hyprland.inputs.hyprland-guiutils.packages.${system}.hyprland-guiutils.override
-      { stdenv = pkgs.stdenv; };
   # aquamarine patch: blocking DRM ioctls (the DPMS-on modesets, the forced
   # connector probes on every monitor-wake hotplug uevent) stall the main loop
   # for ~1s on nvidia; the keyboard's evdev buffer overflows meanwhile and the
   # lock screen loses typed keys. The patch keeps draining input into libinput
-  # during those ioctls. Against the flake's aquamarine pin (1a10fe26).
-  hyprlandPkg =
-    (inputs.hyprland.packages.${system}.hyprland.override (old: {
-      hyprland-guiutils = hyprlandGuiutilsPkg;
-      aquamarine = old.aquamarine.overrideAttrs (a: {
-        patches = (a.patches or [ ]) ++ [ ./patches/aquamarine-buffer-input-during-blocking-drm.patch ];
-      });
-    })).overrideAttrs
-      (old: {
-        # bin/Hyprland is the target of programs.hyprland's cap_sys_nice
-        # wrapper, which nixpkgs now requires to be an ELF (a script under
-        # a capability takes its environment from the caller): the binary
-        # wrapper, as nixpkgs' own hyprland has.
-        nativeBuildInputs = map (
-          p: if (p.name or "") == "make-shell-wrapper-hook" then pkgs.makeBinaryWrapper else p
-        ) old.nativeBuildInputs;
-        postPatch = (old.postPatch or "") + ''
-          substituteInPlace CMakeLists.txt \
-            --replace-fail "find_package(glaze 7...<8 QUIET)" "find_package(glaze QUIET)"
-        '';
-      });
+  # during those ioctls. Against the flake's aquamarine pin (9887f395).
+  hyprlandPkg = inputs.hyprland.packages.${system}.hyprland.override (old: {
+    aquamarine = old.aquamarine.overrideAttrs (a: {
+      patches = (a.patches or [ ]) ++ [ ./patches/aquamarine-buffer-input-during-blocking-drm.patch ];
+    });
+  });
   hyprlandPortalPkg =
-    (inputs.hyprland.packages.${system}.xdg-desktop-portal-hyprland.override {
-      hyprland = hyprlandPkg;
-      # The compositor's older nixpkgs pin also pins the picker's Qt. Its Qt
-      # must match the host qt6ct/Kvantum plugins from theming.nix: mixing
-      # Qt 6.11.1 with QtSvg 6.11.2 fails on Qt_6_PRIVATE_API symbols, then
-      # qt6ct recurses in QProxyStyle::standardPalette. Override the whole Qt
-      # scope (including its wrapper hook), preserving the compositor pin.
-      qt6 = pkgs.qt6;
-      # ...and build with that Qt's toolchain: upstream forces the pin's
-      # gcc15Stdenv, whose glibc falls behind the host Qt's (libQt6Gui needing
-      # GLIBC_2.43 against a 2.42 link) whenever the host nixpkgs moves ahead.
-      stdenv = pkgs.stdenv;
-    }).overrideAttrs
+    inputs.hyprland.packages.${system}.xdg-desktop-portal-hyprland.overrideAttrs
       (old: {
         patches = (old.patches or [ ]) ++ [ ./patches/xdph-dequeue-busy-buffers.patch ];
       });
@@ -251,7 +212,6 @@ in
       slurp
       satty # screenshot annotation editor (SUPER+SHIFT+s)
       hyprpicker
-      hyprland-qtutils # renders the permission (ask) dialogs
       cliphist
       libnotify
       grimblast
